@@ -1,0 +1,66 @@
+{
+  "schema": "prime.planning.state.v1",
+  "product": "Prime OS",
+  "repository": "jaydumisuni/Prime-OS",
+  "planning_state": "owner_approved_baseline",
+  "implementation_state": "not_started_in_planning_workstream",
+  "implementation_entry_rule": "start_in_fresh_workstream_after_recovering_repository_authority",
+  "canonical_authority": "docs/PRIME_OS_MASTER_PLAN.md",
+  "roadmap": "docs/PRIME_OS_ROADMAP.md",
+  "handoff": "docs/AI_HANDOFF.md",
+  "current_program_phase": "P0_authority_preserved_for_implementation_handoff",
+  "next_implementation_mission": "P1_First_Light",
+  "first_proof_host": {
+    "role": "initial_physical_prime_host",
+    "model": "HP 290 G4 Microtower",
+    "architecture": "x86_64",
+    "cpu": "Intel Core i7-10700",
+    "initial_ram": "8 GB DDR4",
+    "gpu": "Intel UHD Graphics 630",
+    "primary_storage": "1 TB Samsung NVMe",
+    "secondary_storage": "500 GB Crucial SATA SSD"
+  },
+  "permanent_boundaries": {
+    "Prime": "operating_system_and_machine_authority",
+    "Prime_Host": "self_local_machine_identity_and_capability_authority",
+    "Origins": "mission_workspace_and_capability_composition",
+    "Hunter": "intelligence_and_reasoning",
+    "AgentOps": "semantic_operation_lifecycle",
+    "Ptah": "neutral_mechanical_workspace_and_execution_substrate",
+    "CodeOps": "engineering",
+    "Sergeant": "independent_engineering_review",
+    "XRay": "specialist_evidence",
+    "Oracle": "authorized_browser_and_os_control",
+    "Lumi": "downloads_and_transfers"
+  },
+  "identity_rule": "Prime Host ID != Origins Node ID != Ptah Node ID",
+  "architecture_rules": [
+    "support_broadly_activate_narrowly",
+    "build_not_equal_execute_not_equal_sign_not_equal_publish",
+    "prime_mechanical_compatibility_truth_is_separate_from_sergeant_engineering_review",
+    "prime_does_not_implement_ptah",
+    "prime_core_has_no_global_host_registry",
+    "all_execution_backends_use_prime_workload_policy",
+    "no_silent_architecture_redesign_during_implementation"
+  ],
+  "phase_order": [
+    "P0_Complete_Load",
+    "P1_First_Light",
+    "P1_5_Survival",
+    "P2_Development_Body",
+    "P3_Origins_Factory",
+    "P4A_Windows_Personality",
+    "P4B_Android_Personality",
+    "P5_Cross_Architecture",
+    "P6_Darwin_Local_Compatibility",
+    "P7_iOS_Local_Compatibility",
+    "P8_Distributed_Prime_Deployment"
+  ],
+  "resume_order": [
+    "README.md",
+    "docs/PRIME_OS_MASTER_PLAN.md",
+    "docs/PRIME_OS_ROADMAP.md",
+    "docs/AI_HANDOFF.md",
+    "planning/state.json"
+  ]
+}
