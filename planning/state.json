@@ -2,10 +2,16 @@
   "schema": "prime.planning.state.v1",
   "product": "Prime OS",
   "repository": "jaydumisuni/Prime-OS",
-  "planning_state": "owner_approved_baseline",
+  "planning_state": "owner_approved_baseline_with_storage_intelligence_supplement",
   "implementation_state": "not_started_in_planning_workstream",
   "implementation_entry_rule": "start_in_fresh_workstream_after_recovering_repository_authority",
   "canonical_authority": "docs/PRIME_OS_MASTER_PLAN.md",
+  "accepted_supplements": [
+    "docs/PRIME_STORAGE_INTELLIGENCE.md"
+  ],
+  "donor_records": [
+    "docs/donors/WINDIRSTAT.md"
+  ],
   "roadmap": "docs/PRIME_OS_ROADMAP.md",
   "handoff": "docs/AI_HANDOFF.md",
   "current_program_phase": "P0_authority_preserved_for_implementation_handoff",
@@ -20,6 +26,31 @@
     "primary_storage": "1 TB Samsung NVMe",
     "secondary_storage": "500 GB Crucial SATA SSD"
   },
+  "storage_intelligence": {
+    "implementation_target": "native_rust",
+    "generic_scanner": "linux_vfs_kernel_mediated",
+    "filesystem_strategy": [
+      "ext4_first_class",
+      "btrfs_first_class_cow_snapshot_aware",
+      "xfs_first_class",
+      "ntfs_generic_first_safe_accelerator_later",
+      "exfat_fat_generic",
+      "other_linux_filesystems_generic_then_enrich_if_justified"
+    ],
+    "windirstat": {
+      "repository": "jaydumisuni/windirstat-disk",
+      "disposition": "study_adapt_reference_oracle",
+      "license_boundary": "GPLv2_application_not_directly_incorporated_into_prime_core_by_default",
+      "code_strategy": "borrow_patterns_not_cpp"
+    },
+    "truth_rule": "distinguish_logical_allocated_shared_exclusive_reserved_and_unknown_metadata_without_false_precision",
+    "cleanup_states": [
+      "PROTECTED",
+      "RECLAIMABLE",
+      "REVIEW",
+      "UNKNOWN"
+    ]
+  },
   "permanent_boundaries": {
     "Prime": "operating_system_and_machine_authority",
     "Prime_Host": "self_local_machine_identity_and_capability_authority",
@@ -31,7 +62,8 @@
     "Sergeant": "independent_engineering_review",
     "XRay": "specialist_evidence",
     "Oracle": "authorized_browser_and_os_control",
-    "Lumi": "downloads_and_transfers"
+    "Lumi": "downloads_and_transfers",
+    "Grid_Knight": "cybersecurity_threat_interpretation_response_and_remediation_not_prime_storage_truth"
   },
   "identity_rule": "Prime Host ID != Origins Node ID != Ptah Node ID",
   "architecture_rules": [
@@ -41,6 +73,9 @@
     "prime_does_not_implement_ptah",
     "prime_core_has_no_global_host_registry",
     "all_execution_backends_use_prime_workload_policy",
+    "storage_scanning_prefers_kernel_mediated_vfs_truth_on_live_mounted_filesystems",
+    "storage_intelligence_does_not_make_malware_judgments",
+    "win_dir_stat_is_pattern_donor_and_reference_oracle_not_prime_core_code",
     "no_silent_architecture_redesign_during_implementation"
   ],
   "phase_order": [
@@ -59,7 +94,9 @@
   "resume_order": [
     "README.md",
     "docs/PRIME_OS_MASTER_PLAN.md",
+    "docs/PRIME_STORAGE_INTELLIGENCE.md",
     "docs/PRIME_OS_ROADMAP.md",
+    "docs/donors/WINDIRSTAT.md",
     "docs/AI_HANDOFF.md",
     "planning/state.json"
   ]
