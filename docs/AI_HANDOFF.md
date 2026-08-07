@@ -6,10 +6,12 @@ This file is the recovery entry point for any future chat, AI agent, engineer, o
 
 1. `README.md`
 2. `docs/PRIME_OS_MASTER_PLAN.md` — canonical product and architecture authority.
-3. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
-4. `planning/state.json` — machine-readable current state.
+3. `docs/PRIME_STORAGE_INTELLIGENCE.md` — accepted storage-intelligence supplement and filesystem strategy.
+4. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
+5. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
+6. `planning/state.json` — machine-readable current state.
 
-If any summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted amendment supersedes it.
+If any summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
 
 ---
 
@@ -17,8 +19,9 @@ If any summary conflicts with the Master Plan, the Master Plan wins unless a lat
 
 - Product name: **Prime OS**.
 - Prime is an integration-first development and execution operating system built on the Linux kernel foundation but not intended to be merely a themed distribution.
-- Prime's implementation repository was intentionally kept empty while the product/architecture plan was being reviewed.
-- The consolidated planning baseline is now stored in this repository.
+- Prime's implementation repository was intentionally kept free of product implementation while the product/architecture plan was being reviewed.
+- The consolidated planning baseline is stored in this repository.
+- Prime Storage Intelligence has an accepted planning supplement derived from WinDirStat and Linux/VFS filesystem research.
 - Product implementation has **not** been performed in this planning workstream.
 - The implementation workstream must recover the repository authority before coding.
 
@@ -28,12 +31,14 @@ If any summary conflicts with the Master Plan, the Master Plan wins unless a lat
 - **Prime Host** = one local physical or virtual machine running Prime. Prime Host authority is self-only; Prime has no global Host registry.
 - **Prime Exec** = executable/runtime/backend determination.
 - **Prime Workload Policy** = machine-level resource/security enforcement for every backend.
+- **Prime Storage Intelligence** = Host-local mechanical storage inventory/index/accounting/change/cleanup-safety truth.
 - **Origins Factory** = mission workspace and composition of capabilities.
 - **Hunter** = intelligence/reasoning.
 - **AgentOps** = semantic operation lifecycle.
 - **Ptah** = neutral mechanical Workspace/execution substrate; Prime does not implement Ptah.
 - **CodeOps** = engineering.
 - **Sergeant** = independent engineering review, not CodeOps and not a per-application runtime certification daemon.
+- **Grid-Knight** = cybersecurity interpretation/response/remediation; it may later consume Prime storage/file events but Prime Storage Intelligence does not become antivirus.
 - **X-Ray** = specialist evidence.
 - **Oracle** = authorized browser/OS control.
 - **Lumi** = downloads/transfers.
@@ -54,7 +59,7 @@ Moving Prime storage to materially different hardware does not silently preserve
 
 ## Core architecture contracts
 
-Before implementation relies on them, recover/finalize the P0 hard contracts listed in the Master Plan:
+Before implementation relies on them, recover/finalize the P0 hard contracts listed in the Master Plan and accepted supplements:
 
 - Prime Host Identity v1.
 - Prime Host capability/health model.
@@ -67,6 +72,9 @@ Before implementation relies on them, recover/finalize the P0 hard contracts lis
 - Network/resource/filesystem/device/secret policy.
 - Driver trust tiers and Developer Mode driver policy.
 - Storage/generation model.
+- Prime Storage Intelligence contracts: Storage Inventory, Storage Index, generic scanner, filesystem adapter, metric/confidence semantics, Change Engine, cleanup safety states, event boundary, and proof fixtures.
+- Filesystem strategy for ext4, Btrfs, XFS, NTFS, exFAT/FAT, generic Linux/VFS fallback, and virtual/network mounts.
+- WinDirStat donor boundary: `STUDY / ADAPT / REFERENCE ORACLE`; native Rust Prime implementation; no direct GPLv2 C++ incorporation into Prime Core by default.
 - Update/rollback/recovery architecture.
 - Workload quiescence.
 - Hardware graph/driver architecture.
@@ -76,7 +84,23 @@ Before implementation relies on them, recover/finalize the P0 hard contracts lis
 - Reference-video design study.
 - Performance/proof/research-disposition matrices.
 
-Do not silently choose technologies where the Master Plan says P0 must make an architecture decision.
+Do not silently choose technologies where the Master Plan or supplement says P0 must make an architecture decision.
+
+---
+
+## Storage Intelligence rule
+
+Prime Storage Intelligence is **not** "WinDirStat for Linux" and does not port WinDirStat's C++ application into Prime Core.
+
+The accepted route is:
+
+`WinDirStat → study capability/architecture/UX → specify Prime equivalent → native Rust implementation → Prime Storage Intelligence`
+
+Live mounted filesystems use kernel-mediated Linux/VFS truth as the default path. Prime uses a generic scanner and filesystem-specific enrichment for ext4/Btrfs/XFS/NTFS where correctness or meaningful additional semantics justify it.
+
+Prime must distinguish logical, allocated, shared/exclusive when provable, reserved, and unknown/metadata usage rather than manufacturing exact physical ownership.
+
+Cleanup uses `PROTECTED / RECLAIMABLE / REVIEW / UNKNOWN` safety classes.
 
 ---
 
@@ -86,9 +110,9 @@ The first bounded implementation mission is:
 
 > **P1 — First Light: produce the first unmistakably Prime bootable system according to the frozen authority.**
 
-P1 includes Prime identity/generation/Host identity, Prime Core, hardware graph, storage separation, base HP hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, and update-aware generation layout.
+P1 includes Prime identity/generation/Host identity, Prime Core, hardware graph, storage separation, base HP hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, and the minimum Prime Storage Intelligence foundation for capacity/reserve/generation accounting and update-space preflight.
 
-P1 does **not** include complete Windows Personality, Android Personality, Ptah, Darwin/iOS local compatibility, or full update/rollback proof.
+P1 does **not** include complete Windows Personality, Android Personality, Ptah, the full WinDirStat-equivalent storage analyzer, Darwin/iOS local compatibility, or full update/rollback proof.
 
 The next phase, P1.5 Survival, proves real update/rollback and failure recovery.
 
@@ -106,7 +130,7 @@ Ptah runtime testing occurs from the Ptah workstream when Ptah reaches its own a
 
 Do not infer completion from a successful build.
 
-Each relevant phase requires positive, negative, failure, recovery, resource, security, hardware, compatibility, and rollback evidence as applicable. Sergeant reviews engineering changes when required. Owner acceptance remains required for subjective product decisions, especially visual quality.
+Each relevant phase requires positive, negative, failure, recovery, resource, security, hardware, compatibility, storage-truth, and rollback evidence as applicable. Sergeant reviews engineering changes when required. Owner acceptance remains required for subjective product decisions, especially visual quality.
 
 If implementation exposes a real architectural contradiction:
 
@@ -120,7 +144,7 @@ Prime must look and behave like Prime from First Light. The supplied reference v
 
 ## Resource rule
 
-**Support broadly; activate narrowly.** Optional runtimes, VMs, SDKs, workers, models, and compatibility services should not stay resident merely because Prime supports them.
+**Support broadly; activate narrowly.** Optional runtimes, VMs, SDKs, workers, models, compatibility services, storage hashes, and deep filesystem scans should not consume resources merely because Prime supports them.
 
 ## Developer-platform rule
 
