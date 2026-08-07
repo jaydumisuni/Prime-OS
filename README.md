@@ -2,7 +2,7 @@
 
 Prime OS is a **lightweight, integration-first development and execution operating system** designed so a developer can stay in one environment while building, running, testing, signing, packaging, and releasing software for multiple target platforms.
 
-Prime uses the Linux kernel foundation but is not intended to be a themed Fedora/Ubuntu derivative. Prime owns the machine layer: hardware discovery, drivers, Prime Core, Prime Exec, workload policy, application profiles, capability exposure, updates, rollback, recovery, and the Prime Shell.
+Prime uses the Linux kernel foundation but is not intended to be a themed Fedora/Ubuntu derivative. Prime owns the machine layer: hardware discovery, drivers, Prime Core, Prime Exec, workload policy, application profiles, capability exposure, updates, rollback, recovery, storage intelligence, and the Prime Shell.
 
 ## Current project state
 
@@ -15,11 +15,14 @@ Do not begin implementation from assumptions or from conversation memory. Read t
 ## Recovery order
 
 1. [`docs/PRIME_OS_MASTER_PLAN.md`](docs/PRIME_OS_MASTER_PLAN.md) — canonical product, architecture, contracts, boundaries, and full roadmap.
-2. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
-3. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
-4. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
+2. [`docs/PRIME_STORAGE_INTELLIGENCE.md`](docs/PRIME_STORAGE_INTELLIGENCE.md) — accepted storage-intelligence supplement: WinDirStat donor boundary, generic Linux/VFS scanner, ext4/Btrfs/XFS/NTFS strategy, change engine, cleanup safety, and phase placement.
+3. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
+4. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
+5. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
 
-If a summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted amendment supersedes it.
+Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md).
+
+If a summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
 
 ## Permanent role boundaries
 
@@ -48,6 +51,8 @@ Prime does **not** implement Ptah, absorb Origins, or turn Sergeant into a runti
 - `Prime Host ID ≠ Origins Node ID ≠ Ptah Node ID`.
 - Prime Host authority is self-only; Prime does not maintain a global Host registry.
 - Moving Prime storage to materially different hardware requires Host rediscovery/re-enrollment.
+- Prime Storage Intelligence reports logical/allocated/shared/exclusive storage truth without false precision.
+- Storage scanning uses a generic Linux/VFS path plus filesystem-specific enrichment; WinDirStat is a donor/reference oracle, not Prime Core code.
 - No silent architecture redesign during implementation.
 
 ## Phase order
@@ -74,9 +79,9 @@ A fresh implementation workstream should begin with:
 
 > **Build P1 — First Light according to the Prime authority.**
 
-First Light includes the bootable Prime identity, Prime Host identity, Prime Core, hardware graph, storage separation, base HP 290 G4 hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, and update-aware generation layout.
+First Light includes the bootable Prime identity, Prime Host identity, Prime Core, hardware graph, storage separation, base HP 290 G4 hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, and the minimal Prime Storage Intelligence foundation required for capacity/reserve/update preflight.
 
-It does **not** begin with Ptah, complete Windows/Android compatibility, Darwin/iOS local execution, or distributed execution.
+It does **not** begin with Ptah, complete Windows/Android compatibility, the full WinDirStat-equivalent storage analyzer, Darwin/iOS local execution, or distributed execution.
 
 ## Architecture drift rule
 
