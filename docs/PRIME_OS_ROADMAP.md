@@ -1,10 +1,10 @@
 # Prime OS — Implementation Roadmap
 
-**Authority:** derived from `docs/PRIME_OS_MASTER_PLAN.md`  
+**Authority:** derived from `docs/PRIME_OS_MASTER_PLAN.md` and accepted supplements  
 **Planning baseline:** accepted for handoff  
 **Implementation:** must occur in a fresh workstream after recovering repository authority
 
-This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous.
+This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous. Narrow accepted supplements, including `docs/PRIME_STORAGE_INTELLIGENCE.md`, govern their specific subsystem where they add detail without contradicting the Master Plan.
 
 ---
 
@@ -27,6 +27,9 @@ P0 must produce/recover the concrete contract and ADR set required by the Master
 - Network/resource/filesystem/device/secret policy.
 - Driver trust tiers and Developer Mode driver policy.
 - Storage/generation model.
+- **Prime Storage Intelligence architecture:** Storage Inventory, Storage Index schema, generic scanner contract, filesystem-adapter contract, metric/confidence semantics, Change Engine, cleanup safety states, storage event boundary, and proof fixtures.
+- **Filesystem strategy:** ext4, Btrfs, XFS, NTFS, exFAT/FAT, generic Linux/VFS fallback, and rules for virtual/network filesystems.
+- **WinDirStat donor disposition:** study/adapt/reference-oracle only by default; native Rust Prime implementation; no direct GPLv2 C++ incorporation into Prime Core without a separate intentional licence decision.
 - Update, rollback, generation-retention, workload-quiescence, and recovery architecture.
 - Hardware graph and driver architecture.
 - Build/image architecture.
@@ -36,7 +39,7 @@ P0 must produce/recover the concrete contract and ADR set required by the Master
 - Prime Shell and Prime Orb specifications.
 - Reference-video design study.
 - Performance gates, proof matrix, research-disposition matrix, and implementation handoff.
-- Donor matrix covering Linux/kernel, Atomic/update systems, Wine/ReactOS, Android/AOSP/Waydroid, FEX/Box64, QEMU/KVM, VLC/libVLC, containers, Origins/Hunter/Ptah, and relevant TTG systems.
+- Donor matrix covering Linux/kernel, Atomic/update systems, Wine/ReactOS, Android/AOSP/Waydroid, FEX/Box64, QEMU/KVM, VLC/libVLC, WinDirStat, containers, Origins/Hunter/Ptah, and relevant TTG systems.
 
 P0 may run experiments to choose architecture. Those experiments are not Prime product implementation.
 
@@ -58,6 +61,13 @@ Required:
 - Prime Core.
 - Hardware graph.
 - Storage separation.
+- Minimal Prime Storage Intelligence foundation:
+  - block-device/filesystem/mount inventory;
+  - total/free/available/reserved accounting;
+  - Prime generation/rollback/recovery storage accounting;
+  - update-space preflight;
+  - storage-pressure event/reporting foundation;
+  - basic Prime Storage UI.
 - USB, Ethernet, input, audio baseline.
 - Intel graphics on the HP proof Host.
 - Prime Exec foundation.
@@ -75,7 +85,7 @@ Required:
 
 First Light is not complete merely because a GUI starts. It must provide Prime startup identity, Prime Shell, system rail, Prime Orb/launcher, functional windowing, quick controls, smooth core transitions, Prime glass/depth language, no obvious stock-distro identity, reference-video comparison, and owner visual acceptance.
 
-**Not required:** Windows Personality, Android Personality, Ptah, full updater proof, Darwin local compatibility, or iOS local compatibility.
+**Not required:** Windows Personality, Android Personality, Ptah, full updater proof, full WinDirStat-equivalent storage analyzer, Darwin local compatibility, or iOS local compatibility.
 
 ---
 
@@ -104,7 +114,10 @@ Also prove:
 - Capability Interface incompatibility after rollback;
 - active-workload enumeration, classification, and quiescence;
 - non-resumable work becomes `INTERRUPTED`, never fake success;
-- recovery remains available if Prime Shell fails.
+- recovery remains available if Prime Shell fails;
+- update staging refuses safely when it would consume protected rollback/recovery reserve;
+- low-space update/recovery behavior;
+- storage accounting remains consistent across generation changes.
 
 ---
 
@@ -131,6 +144,18 @@ Add capability-managed tooling for:
 - packaging framework;
 - release-provider framework.
 
+Build the main native Rust Prime Storage Intelligence body:
+
+- generic Linux/VFS scanner;
+- Storage Index;
+- incremental Change Engine;
+- hardlink/sparse/extent accounting;
+- duplicate/hash candidate engine;
+- build/cache ownership accounting;
+- cleanup planning;
+- resource-aware scan scheduling;
+- ext4/Btrfs/XFS enrichment required for truthful local-storage reporting.
+
 **Permanent rule:** build capability does not imply local execution capability.
 
 Prime may build APKs before Android Personality and Windows artifacts before Windows Personality.
@@ -155,7 +180,8 @@ Integrate:
 - process/terminal work;
 - Prime Capability Interface;
 - Prime Application Profiles;
-- Prime Host → Origins Node projection.
+- Prime Host → Origins Node projection;
+- Prime Storage Intelligence projections for repository/project/mission/build/cache usage without transferring ownership of the Host index to Origins.
 
 After P3, later Prime engineering should normally happen through Origins.
 
@@ -181,6 +207,8 @@ Initial runtime target: x86_64 Prime Host → x86/x86_64 Windows workloads.
 Real THETECHGUY Windows applications are compatibility fixtures.
 
 Useful Windows support may ship before complete Windows compatibility.
+
+NTFS-mounted storage uses the generic Prime scanner initially. A native Rust NTFS/MFT accelerator is a later research lane only under conditions proven safe; WinDirStat remains an NTFS behavioral reference oracle.
 
 ---
 
@@ -245,7 +273,7 @@ Local arbitrary IPA execution remains evidence-dependent and is not required for
 
 Multiple independent Prime Hosts may participate in the wider system.
 
-Each Prime Host owns only its local identity, hardware graph, generations, health, and capabilities. Prime does not own a global Host registry.
+Each Prime Host owns only its local identity, hardware graph, generations, health, capabilities, and Host-local storage truth. Prime does not own a global Host registry.
 
 Origins may aggregate Prime Hosts as Origins Nodes. Ptah may later enroll suitable Prime Hosts as Ptah Nodes/Providers.
 
@@ -257,11 +285,15 @@ Non-Prime Windows/Apple/cloud/specialist machines remain Providers rather than f
 
 ## Resource gate
 
-Measure idle RAM, idle CPU, background process count, boot time, Prime Shell ready time, runtime activation latency, runtime shutdown latency, storage pressure, and power draw where measurable.
+Measure idle RAM, idle CPU, background process count, boot time, Prime Shell ready time, runtime activation latency, runtime shutdown latency, storage pressure, scanner CPU/I/O impact, and power draw where measurable.
+
+## Storage-truth gate
+
+Prime must distinguish logical, allocated, shared/exclusive (when provable), reserved, and unknown/metadata storage instead of presenting guessed physical ownership as exact. Cleanup must respect `PROTECTED / RECLAIMABLE / REVIEW / UNKNOWN` classifications.
 
 ## Security gate
 
-All runtime backends use Prime Workload Policy. No separate weak VM/container/personality path is allowed.
+All runtime backends use Prime Workload Policy. No separate weak VM/container/personality path is allowed. Storage/file events may be consumed by Grid-Knight later, but Prime Storage Intelligence does not make malware judgments.
 
 ## Review gate
 
@@ -283,4 +315,4 @@ A fresh implementation workstream begins with:
 
 > **Build P1 — First Light from the frozen Prime authority.**
 
-Do not begin with Windows, Android, Ptah, or distributed execution before the required earlier phases are proven.
+Do not begin with Windows, Android, Ptah, the full Storage Intelligence analyzer, or distributed execution before the required earlier phases are proven.
