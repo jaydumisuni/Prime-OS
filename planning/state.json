@@ -2,15 +2,17 @@
   "schema": "prime.planning.state.v1",
   "product": "Prime OS",
   "repository": "jaydumisuni/Prime-OS",
-  "planning_state": "owner_approved_baseline_with_storage_intelligence_supplement",
+  "planning_state": "owner_approved_baseline_with_storage_and_apple_filesystem_supplements",
   "implementation_state": "not_started_in_planning_workstream",
   "implementation_entry_rule": "start_in_fresh_workstream_after_recovering_repository_authority",
   "canonical_authority": "docs/PRIME_OS_MASTER_PLAN.md",
   "accepted_supplements": [
-    "docs/PRIME_STORAGE_INTELLIGENCE.md"
+    "docs/PRIME_STORAGE_INTELLIGENCE.md",
+    "docs/PRIME_APPLE_FILESYSTEMS.md"
   ],
   "donor_records": [
-    "docs/donors/WINDIRSTAT.md"
+    "docs/donors/WINDIRSTAT.md",
+    "docs/donors/APFS.md"
   ],
   "roadmap": "docs/PRIME_OS_ROADMAP.md",
   "handoff": "docs/AI_HANDOFF.md",
@@ -34,9 +36,36 @@
       "btrfs_first_class_cow_snapshot_aware",
       "xfs_first_class",
       "ntfs_generic_first_safe_accelerator_later",
+      "apfs_first_class_foreign_read_only_first",
+      "hfsplus_explicit_legacy_apple_read_only_first",
+      "hfs_legacy_recovery_read_only",
+      "apple_disk_images_explicit_container_provider",
       "exfat_fat_generic",
       "other_linux_filesystems_generic_then_enrich_if_justified"
     ],
+    "apple_storage": {
+      "authority": "docs/PRIME_APPLE_FILESYSTEMS.md",
+      "apfs_policy": "read_only_first_no_normal_write_support_until_dedicated_corruption_recovery_proof",
+      "formats": [
+        "APFS",
+        "HFS+",
+        "HFS",
+        "DMG_UDIF",
+        "sparse_image_bundle_where_supported",
+        "GPT_Apple_partitions",
+        "legacy_Apple_Partition_Map_where_encountered"
+      ],
+      "semantic_requirements": [
+        "apfs_container_volume_space_sharing",
+        "snapshots",
+        "clones_shared_allocation",
+        "encryption_filevault_boundary",
+        "sealed_system_volume_awareness",
+        "apple_metadata_resource_forks_xattrs",
+        "time_machine_awareness"
+      ],
+      "donor_record": "docs/donors/APFS.md"
+    },
     "windirstat": {
       "repository": "jaydumisuni/windirstat-disk",
       "disposition": "study_adapt_reference_oracle",
@@ -76,6 +105,8 @@
     "storage_scanning_prefers_kernel_mediated_vfs_truth_on_live_mounted_filesystems",
     "storage_intelligence_does_not_make_malware_judgments",
     "win_dir_stat_is_pattern_donor_and_reference_oracle_not_prime_core_code",
+    "apfs_is_read_only_first_and_experimental_write_support_is_not_normal_prime_functionality",
+    "apple_storage_formats_are_explicit_prime_storage_compatibility_classes",
     "no_silent_architecture_redesign_during_implementation"
   ],
   "phase_order": [
@@ -95,8 +126,10 @@
     "README.md",
     "docs/PRIME_OS_MASTER_PLAN.md",
     "docs/PRIME_STORAGE_INTELLIGENCE.md",
+    "docs/PRIME_APPLE_FILESYSTEMS.md",
     "docs/PRIME_OS_ROADMAP.md",
     "docs/donors/WINDIRSTAT.md",
+    "docs/donors/APFS.md",
     "docs/AI_HANDOFF.md",
     "planning/state.json"
   ]
