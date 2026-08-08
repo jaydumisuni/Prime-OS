@@ -7,9 +7,11 @@ This file is the recovery entry point for any future chat, AI agent, engineer, o
 1. `README.md`
 2. `docs/PRIME_OS_MASTER_PLAN.md` — canonical product and architecture authority.
 3. `docs/PRIME_STORAGE_INTELLIGENCE.md` — accepted storage-intelligence supplement and filesystem strategy.
-4. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
-5. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
-6. `planning/state.json` — machine-readable current state.
+4. `docs/PRIME_APPLE_FILESYSTEMS.md` — accepted Apple-storage supplement covering APFS, HFS+/HFS, encryption, snapshots/clones, Time Machine awareness, and disk-image handling.
+5. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
+6. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
+7. `docs/donors/APFS.md` — APFS/Apple storage donor/reference decision.
+8. `planning/state.json` — machine-readable current state.
 
 If any summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
 
@@ -22,6 +24,7 @@ If any summary conflicts with the Master Plan, the Master Plan wins unless a lat
 - Prime's implementation repository was intentionally kept free of product implementation while the product/architecture plan was being reviewed.
 - The consolidated planning baseline is stored in this repository.
 - Prime Storage Intelligence has an accepted planning supplement derived from WinDirStat and Linux/VFS filesystem research.
+- Apple storage has an accepted planning supplement: APFS is a first-class foreign filesystem target, HFS+/HFS and Apple disk-image formats are explicit compatibility classes, and APFS is read-only-first until a dedicated write-safety proof earns more.
 - Product implementation has **not** been performed in this planning workstream.
 - The implementation workstream must recover the repository authority before coding.
 
@@ -73,8 +76,10 @@ Before implementation relies on them, recover/finalize the P0 hard contracts lis
 - Driver trust tiers and Developer Mode driver policy.
 - Storage/generation model.
 - Prime Storage Intelligence contracts: Storage Inventory, Storage Index, generic scanner, filesystem adapter, metric/confidence semantics, Change Engine, cleanup safety states, event boundary, and proof fixtures.
-- Filesystem strategy for ext4, Btrfs, XFS, NTFS, exFAT/FAT, generic Linux/VFS fallback, and virtual/network mounts.
+- Filesystem strategy for ext4, Btrfs, XFS, NTFS, APFS, HFS+/HFS, exFAT/FAT, Apple disk images, generic Linux/VFS fallback, and virtual/network mounts.
 - WinDirStat donor boundary: `STUDY / ADAPT / REFERENCE ORACLE`; native Rust Prime implementation; no direct GPLv2 C++ incorporation into Prime Core by default.
+- APFS donor boundary: Apple specifications plus independent read-only implementations as references; APFS is read-only-first; `linux-apfs-rw` experimental writes are research only and are not ordinary Prime functionality.
+- Apple-storage semantic contract: APFS container/volume space sharing, snapshots, clones/shared allocation, FileVault/encryption secret boundary, sealed/system-volume awareness, HFS+ metadata/resource-fork preservation, Time Machine awareness, and disk-image layering.
 - Update/rollback/recovery architecture.
 - Workload quiescence.
 - Hardware graph/driver architecture.
@@ -96,9 +101,15 @@ The accepted route is:
 
 `WinDirStat → study capability/architecture/UX → specify Prime equivalent → native Rust implementation → Prime Storage Intelligence`
 
-Live mounted filesystems use kernel-mediated Linux/VFS truth as the default path. Prime uses a generic scanner and filesystem-specific enrichment for ext4/Btrfs/XFS/NTFS where correctness or meaningful additional semantics justify it.
+Live mounted Linux-supported filesystems use kernel-mediated Linux/VFS truth as the default path. Prime uses a generic scanner and filesystem-specific enrichment for ext4/Btrfs/XFS/NTFS where correctness or meaningful additional semantics justify it.
 
-Prime must distinguish logical, allocated, shared/exclusive when provable, reserved, and unknown/metadata usage rather than manufacturing exact physical ownership.
+Apple storage is explicit rather than hidden under generic adapters:
+
+`APFS / HFS+ / HFS / Apple disk images → safe adapter/provider → normalized Prime Storage Intelligence truth`
+
+APFS is read-only-first. Prime must not promote experimental APFS writes as normal support. Safe modification may use a proven future Prime backend or an appropriate macOS/Apple Provider.
+
+Prime must distinguish logical, allocated, shared/exclusive when provable, reserved, and unknown/metadata usage rather than manufacturing exact physical ownership. This is especially important for Btrfs and APFS snapshots/clones/shared extents.
 
 Cleanup uses `PROTECTED / RECLAIMABLE / REVIEW / UNKNOWN` safety classes.
 
@@ -111,6 +122,8 @@ The first bounded implementation mission is:
 > **P1 — First Light: produce the first unmistakably Prime bootable system according to the frozen authority.**
 
 P1 includes Prime identity/generation/Host identity, Prime Core, hardware graph, storage separation, base HP hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, and the minimum Prime Storage Intelligence foundation for capacity/reserve/generation accounting and update-space preflight.
+
+For Apple media, P1 should safely recognize APFS/HFS+/HFS and report encrypted/locked/read-only/unsupported status honestly. It does not need APFS write support.
 
 P1 does **not** include complete Windows Personality, Android Personality, Ptah, the full WinDirStat-equivalent storage analyzer, Darwin/iOS local compatibility, or full update/rollback proof.
 
@@ -144,7 +157,7 @@ Prime must look and behave like Prime from First Light. The supplied reference v
 
 ## Resource rule
 
-**Support broadly; activate narrowly.** Optional runtimes, VMs, SDKs, workers, models, compatibility services, storage hashes, and deep filesystem scans should not consume resources merely because Prime supports them.
+**Support broadly; activate narrowly.** Optional runtimes, VMs, SDKs, workers, models, compatibility services, storage hashes, deep filesystem scans, and foreign-filesystem helpers should not consume resources merely because Prime supports them.
 
 ## Developer-platform rule
 
