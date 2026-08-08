@@ -16,13 +16,14 @@ Do not begin implementation from assumptions or from conversation memory. Read t
 
 1. [`docs/PRIME_OS_MASTER_PLAN.md`](docs/PRIME_OS_MASTER_PLAN.md) — canonical product, architecture, contracts, boundaries, and full roadmap.
 2. [`docs/PRIME_STORAGE_INTELLIGENCE.md`](docs/PRIME_STORAGE_INTELLIGENCE.md) — accepted storage-intelligence supplement: WinDirStat donor boundary, generic Linux/VFS scanner, ext4/Btrfs/XFS/NTFS strategy, change engine, cleanup safety, and phase placement.
-3. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
-4. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
-5. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
+3. [`docs/PRIME_APPLE_FILESYSTEMS.md`](docs/PRIME_APPLE_FILESYSTEMS.md) — Apple storage supplement: APFS, HFS+/HFS, FileVault/encryption boundary, snapshots/clones/space sharing, Time Machine awareness, and Apple disk-image strategy.
+4. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
+5. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
+6. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
 
-Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md).
+Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md) and [`APFS.md`](docs/donors/APFS.md).
 
-If a summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
+If a summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic. The storage supplements are part of current P0 authority and must be recovered before storage implementation.
 
 ## Permanent role boundaries
 
@@ -53,6 +54,8 @@ Prime does **not** implement Ptah, absorb Origins, or turn Sergeant into a runti
 - Moving Prime storage to materially different hardware requires Host rediscovery/re-enrollment.
 - Prime Storage Intelligence reports logical/allocated/shared/exclusive storage truth without false precision.
 - Storage scanning uses a generic Linux/VFS path plus filesystem-specific enrichment; WinDirStat is a donor/reference oracle, not Prime Core code.
+- APFS is a first-class foreign filesystem target with read-only-first policy; experimental Linux APFS write support is not ordinary Prime functionality until a dedicated corruption/recovery proof campaign earns it.
+- HFS+/HFS and Apple disk-image formats are explicit Apple-storage compatibility classes, not hidden under generic adapters.
 - No silent architecture redesign during implementation.
 
 ## Phase order
@@ -80,6 +83,8 @@ A fresh implementation workstream should begin with:
 > **Build P1 — First Light according to the Prime authority.**
 
 First Light includes the bootable Prime identity, Prime Host identity, Prime Core, hardware graph, storage separation, base HP 290 G4 hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, and the minimal Prime Storage Intelligence foundation required for capacity/reserve/update preflight.
+
+For Apple storage, P1 should safely recognize APFS/HFS+/HFS and report locked/read-only/unsupported states honestly. P1 does **not** require APFS write support.
 
 It does **not** begin with Ptah, complete Windows/Android compatibility, the full WinDirStat-equivalent storage analyzer, Darwin/iOS local execution, or distributed execution.
 
