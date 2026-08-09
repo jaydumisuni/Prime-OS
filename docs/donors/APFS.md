@@ -14,7 +14,7 @@ This donor lane covers APFS, HFS+, HFS, and Apple disk-image/container formats.
 
 ### Apple APFS documentation / Apple File System Reference
 
-Use as the primary terminology and format-semantics reference for APFS containers, volumes, snapshots, clones, space sharing, encryption, and related features.
+Use as the primary terminology and format-semantics reference for APFS containers, volumes, snapshots, clones, space sharing, encryption, volume groups, and related features.
 
 Disposition: `STUDY / SPECIFICATION REFERENCE`.
 
@@ -66,12 +66,31 @@ Observed role:
 - Linux APFS kernel module;
 - read-only by default;
 - experimental write support;
-- repository explicitly warns that write support can corrupt containers;
-- encryption support is limited.
+- repository explicitly describes the write path as experimental;
+- encryption support is limited compared with native Apple implementations.
 
 Disposition: `RESEARCH DONOR ONLY` for Linux VFS integration and APFS-driver architecture.
 
 Prime must not enable its experimental write support as ordinary safe Prime functionality.
+
+### `linux-apfs/apfsprogs`
+
+Repository: `https://github.com/linux-apfs/apfsprogs`
+
+Observed role:
+
+- experimental Linux user-space APFS tools;
+- `mkapfs` filesystem creation experiments;
+- `apfs-snap` snapshot operations;
+- `apfs-label` container/volume label inspection;
+- `apfsck` integrity-checker research;
+- companion tooling for the Linux APFS kernel-module work.
+
+Licence: GPL-2.0.
+
+Disposition: `STUDY / TEST-TOOL DONOR / REFERENCE ORACLE`.
+
+Prime should use it to understand APFS tooling, fixture creation, snapshot behavior and repair/check concepts, not as proof that writable APFS is production-safe.
 
 ## HFS+/HFS references
 
@@ -83,6 +102,8 @@ Primary references:
 - libyal `libfshfs` or similar read-only forensic implementations where useful.
 
 Disposition: `STUDY / KERNEL-MEDIATED READ PATH / READ-ONLY-FIRST FOR FOREIGN MEDIA`.
+
+The Linux HFS+ implementation is already part of the Linux kernel source tree and exposes mounted HFS+ semantics through the normal VFS path. Prime should respect its safety behavior rather than forcing unsafe journaled/unclean writes.
 
 ## Prime implementation direction
 
@@ -101,6 +122,7 @@ Prime may cross-check the same Apple test images against:
 - macOS native tools;
 - `libfsapfs` where supported;
 - `apfs-fuse` where supported;
+- `apfsprogs` where useful for test/repair semantics;
 - Linux HFS+/HFS paths;
 - later additional independent implementations.
 
