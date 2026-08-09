@@ -4,7 +4,7 @@
 **Planning baseline:** accepted for handoff  
 **Implementation:** must occur in a fresh workstream after recovering repository authority
 
-This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous. Narrow accepted supplements, including `docs/PRIME_STORAGE_INTELLIGENCE.md`, govern their specific subsystem where they add detail without contradicting the Master Plan.
+This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous. Narrow accepted supplements, including `docs/PRIME_STORAGE_INTELLIGENCE.md` and `docs/PRIME_APPLE_FILESYSTEMS.md`, govern their specific subsystems where they add detail without contradicting the Master Plan.
 
 ---
 
@@ -28,8 +28,10 @@ P0 must produce/recover the concrete contract and ADR set required by the Master
 - Driver trust tiers and Developer Mode driver policy.
 - Storage/generation model.
 - **Prime Storage Intelligence architecture:** Storage Inventory, Storage Index schema, generic scanner contract, filesystem-adapter contract, metric/confidence semantics, Change Engine, cleanup safety states, storage event boundary, and proof fixtures.
-- **Filesystem strategy:** ext4, Btrfs, XFS, NTFS, exFAT/FAT, generic Linux/VFS fallback, and rules for virtual/network filesystems.
+- **Filesystem strategy:** ext4, Btrfs, XFS, NTFS, APFS, HFS+/HFS, exFAT/FAT, Apple disk-image containers, generic Linux/VFS fallback, and rules for virtual/network filesystems.
+- **Apple storage contract:** APFS container/volume space sharing, snapshots, clones/shared allocation, encryption/FileVault secret boundary, sealed/system-volume awareness, HFS+ resource-fork/xattr/Finder metadata preservation, Time Machine awareness, disk-image layering, and read-only-first safety policy.
 - **WinDirStat donor disposition:** study/adapt/reference-oracle only by default; native Rust Prime implementation; no direct GPLv2 C++ incorporation into Prime Core without a separate intentional licence decision.
+- **APFS donor disposition:** Apple specifications plus multiple independent read-only implementations as references; APFS write support is not ordinary Prime functionality until a dedicated corruption/recovery proof earns it.
 - Update, rollback, generation-retention, workload-quiescence, and recovery architecture.
 - Hardware graph and driver architecture.
 - Build/image architecture.
@@ -39,7 +41,7 @@ P0 must produce/recover the concrete contract and ADR set required by the Master
 - Prime Shell and Prime Orb specifications.
 - Reference-video design study.
 - Performance gates, proof matrix, research-disposition matrix, and implementation handoff.
-- Donor matrix covering Linux/kernel, Atomic/update systems, Wine/ReactOS, Android/AOSP/Waydroid, FEX/Box64, QEMU/KVM, VLC/libVLC, WinDirStat, containers, Origins/Hunter/Ptah, and relevant TTG systems.
+- Donor matrix covering Linux/kernel, Atomic/update systems, Wine/ReactOS, Android/AOSP/Waydroid, FEX/Box64, QEMU/KVM, VLC/libVLC, WinDirStat, Apple APFS/HFS references, containers, Origins/Hunter/Ptah, and relevant TTG systems.
 
 P0 may run experiments to choose architecture. Those experiments are not Prime product implementation.
 
@@ -67,7 +69,10 @@ Required:
   - Prime generation/rollback/recovery storage accounting;
   - update-space preflight;
   - storage-pressure event/reporting foundation;
-  - basic Prime Storage UI.
+  - basic Prime Storage UI;
+  - safe recognition of APFS, HFS+, and HFS media;
+  - honest encrypted/locked/read-only/unsupported state reporting for Apple media;
+  - no destructive automatic mounting of foreign Apple filesystems.
 - USB, Ethernet, input, audio baseline.
 - Intel graphics on the HP proof Host.
 - Prime Exec foundation.
@@ -85,7 +90,7 @@ Required:
 
 First Light is not complete merely because a GUI starts. It must provide Prime startup identity, Prime Shell, system rail, Prime Orb/launcher, functional windowing, quick controls, smooth core transitions, Prime glass/depth language, no obvious stock-distro identity, reference-video comparison, and owner visual acceptance.
 
-**Not required:** Windows Personality, Android Personality, Ptah, full updater proof, full WinDirStat-equivalent storage analyzer, Darwin local compatibility, or iOS local compatibility.
+**Not required:** Windows Personality, Android Personality, Ptah, full updater proof, full WinDirStat-equivalent storage analyzer, APFS write support, Darwin local compatibility, or iOS local compatibility.
 
 ---
 
@@ -117,7 +122,8 @@ Also prove:
 - recovery remains available if Prime Shell fails;
 - update staging refuses safely when it would consume protected rollback/recovery reserve;
 - low-space update/recovery behavior;
-- storage accounting remains consistent across generation changes.
+- storage accounting remains consistent across generation changes;
+- attached Apple inspection/recovery media remain unchanged/read-only through update and rollback tests unless a later separately proven write path is deliberately under test.
 
 ---
 
@@ -154,7 +160,8 @@ Build the main native Rust Prime Storage Intelligence body:
 - build/cache ownership accounting;
 - cleanup planning;
 - resource-aware scan scheduling;
-- ext4/Btrfs/XFS enrichment required for truthful local-storage reporting.
+- ext4/Btrfs/XFS enrichment required for truthful local-storage reporting;
+- read-only Apple storage workflows: APFS container/volume discovery, safe read-only provider/extraction path, HFS+ read-only integration, Apple disk-image inspection, Apple metadata preservation, and authorized encryption/unlock workflow where technically supported.
 
 **Permanent rule:** build capability does not imply local execution capability.
 
@@ -181,7 +188,8 @@ Integrate:
 - Prime Capability Interface;
 - Prime Application Profiles;
 - Prime Host → Origins Node projection;
-- Prime Storage Intelligence projections for repository/project/mission/build/cache usage without transferring ownership of the Host index to Origins.
+- Prime Storage Intelligence projections for repository/project/mission/build/cache usage without transferring ownership of the Host index to Origins;
+- Apple-storage projections for developer/repair/recovery missions, while Prime retains Host-local storage truth and access policy.
 
 After P3, later Prime engineering should normally happen through Origins.
 
@@ -250,7 +258,7 @@ Allowed disposition:
 
 `ADOPT / ADAPT / DEFER / REMOTE-OFFICIAL / NOT-VIABLE / REJECT`
 
-Local Darwin compatibility does not block macOS development capability through suitable Providers.
+Local Darwin compatibility does not block macOS development capability through suitable Providers, and is separate from Prime's earlier read-only Apple-filesystem support.
 
 ---
 
@@ -285,15 +293,17 @@ Non-Prime Windows/Apple/cloud/specialist machines remain Providers rather than f
 
 ## Resource gate
 
-Measure idle RAM, idle CPU, background process count, boot time, Prime Shell ready time, runtime activation latency, runtime shutdown latency, storage pressure, scanner CPU/I/O impact, and power draw where measurable.
+Measure idle RAM, idle CPU, background process count, boot time, Prime Shell ready time, runtime activation latency, runtime shutdown latency, storage pressure, scanner CPU/I/O impact, foreign-filesystem helper cost, and power draw where measurable.
 
 ## Storage-truth gate
 
 Prime must distinguish logical, allocated, shared/exclusive (when provable), reserved, and unknown/metadata storage instead of presenting guessed physical ownership as exact. Cleanup must respect `PROTECTED / RECLAIMABLE / REVIEW / UNKNOWN` classifications.
 
+For APFS specifically, Prime must distinguish container capacity, per-volume logical usage, shared container space, snapshot-retained storage, clone/shared allocation when provable, locked/encrypted state, and unknown/metadata usage. It must not sum APFS volume capacities as though they were independent physical disks.
+
 ## Security gate
 
-All runtime backends use Prime Workload Policy. No separate weak VM/container/personality path is allowed. Storage/file events may be consumed by Grid-Knight later, but Prime Storage Intelligence does not make malware judgments.
+All runtime backends use Prime Workload Policy. No separate weak VM/container/personality path is allowed. Storage/file events may be consumed by Grid-Knight later, but Prime Storage Intelligence does not make malware judgments. Foreign Apple media remains read-only by default until a write backend has separately earned trust.
 
 ## Review gate
 
@@ -315,4 +325,4 @@ A fresh implementation workstream begins with:
 
 > **Build P1 — First Light from the frozen Prime authority.**
 
-Do not begin with Windows, Android, Ptah, the full Storage Intelligence analyzer, or distributed execution before the required earlier phases are proven.
+Do not begin with Windows, Android, Ptah, the full Storage Intelligence analyzer, APFS write support, or distributed execution before the required earlier phases are proven.
