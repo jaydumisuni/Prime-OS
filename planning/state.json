@@ -2,13 +2,14 @@
   "schema": "prime.planning.state.v1",
   "product": "Prime OS",
   "repository": "jaydumisuni/Prime-OS",
-  "planning_state": "owner_approved_baseline_with_storage_and_apple_filesystem_supplements",
+  "planning_state": "owner_approved_baseline_with_storage_apple_and_host_security_supplements",
   "implementation_state": "not_started_in_planning_workstream",
   "implementation_entry_rule": "start_in_fresh_workstream_after_recovering_repository_authority",
   "canonical_authority": "docs/PRIME_OS_MASTER_PLAN.md",
   "accepted_supplements": [
     "docs/PRIME_STORAGE_INTELLIGENCE.md",
-    "docs/PRIME_APPLE_FILESYSTEMS.md"
+    "docs/PRIME_APPLE_FILESYSTEMS.md",
+    "docs/PRIME_HOST_SECURITY_INTERFACE.md"
   ],
   "donor_records": [
     "docs/donors/WINDIRSTAT.md",
@@ -80,6 +81,23 @@
       "UNKNOWN"
     ]
   },
+  "host_security_interface": {
+    "authority": "docs/PRIME_HOST_SECURITY_INTERFACE.md",
+    "prime_role": "machine_security_mechanisms_mechanical_host_truth_and_enforcement",
+    "grid_knight_role": "cybersecurity_threat_interpretation_response_cleanup_and_retest",
+    "event_classes": [
+      "filesystem_changes",
+      "process_lifecycle",
+      "network_activity_and_policy_violations",
+      "driver_module_events",
+      "device_usb_events",
+      "persistence_changes",
+      "workload_policy_violations",
+      "generation_update_recovery_security_events"
+    ],
+    "enforcement_rule": "grid_knight_may_request_authorized_actions_but_prime_retains_machine_enforcement_and_workload_policy",
+    "first_light_rule": "minimal_prime_security_foundation_only_full_grid_knight_integration_not_p1_blocker"
+  },
   "permanent_boundaries": {
     "Prime": "operating_system_and_machine_authority",
     "Prime_Host": "self_local_machine_identity_and_capability_authority",
@@ -104,6 +122,8 @@
     "all_execution_backends_use_prime_workload_policy",
     "storage_scanning_prefers_kernel_mediated_vfs_truth_on_live_mounted_filesystems",
     "storage_intelligence_does_not_make_malware_judgments",
+    "prime_host_security_mechanisms_are_separate_from_grid_knight_cybersecurity_judgment",
+    "grid_knight_cannot_bypass_prime_workload_policy_or_machine_authority",
     "win_dir_stat_is_pattern_donor_and_reference_oracle_not_prime_core_code",
     "apfs_is_read_only_first_and_experimental_write_support_is_not_normal_prime_functionality",
     "apple_storage_formats_are_explicit_prime_storage_compatibility_classes",
@@ -127,6 +147,7 @@
     "docs/PRIME_OS_MASTER_PLAN.md",
     "docs/PRIME_STORAGE_INTELLIGENCE.md",
     "docs/PRIME_APPLE_FILESYSTEMS.md",
+    "docs/PRIME_HOST_SECURITY_INTERFACE.md",
     "docs/PRIME_OS_ROADMAP.md",
     "docs/donors/WINDIRSTAT.md",
     "docs/donors/APFS.md",
