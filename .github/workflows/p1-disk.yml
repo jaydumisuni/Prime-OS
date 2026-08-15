@@ -11,7 +11,7 @@ permissions:
 jobs:
   disk-uefi:
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v6
 
@@ -21,7 +21,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            podman skopeo qemu-utils qemu-system-x86 ovmf gdisk util-linux
+            podman skopeo fuse-overlayfs qemu-utils qemu-system-x86 ovmf gdisk util-linux
+          sudo modprobe fuse || true
+          test -e /dev/fuse
 
       - name: Assert pinned builder platform
         id: builder
@@ -46,7 +48,7 @@ jobs:
           cargo build --locked --release -p primed
           test -x target/release/primed
 
-      - name: Build exact Prime bootc image
+      - name: Build exact Prime bootc image in rootful storage
         id: prime
         shell: bash
         run: |
@@ -56,7 +58,11 @@ jobs:
           source_revision="$(git rev-parse HEAD)"
           created_at="$(git show -s --format=%cI HEAD)"
           generation_id="p1-first-light-${source_revision:0:12}"
-          docker build \
+          sudo podman pull "$base_image"
+          sudo podman build \
+            --cap-add=all \
+            --device /dev/fuse \
+            --security-opt label=disable \
             --platform linux/amd64 \
             --build-arg PRIME_BASE_IMAGE="$base_image" \
             --build-arg PRIME_BASE_DIGEST="$base_digest" \
@@ -66,24 +72,35 @@ jobs:
             --build-arg PRIME_CREATED_AT="$created_at" \
             --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
             -f image/Containerfile \
-            -t prime-os:p1 .
-          docker save prime-os:p1 -o /tmp/prime-p1.docker.tar
+            -t localhost/prime-os:p1 .
+          sudo podman image exists localhost/prime-os:p1
+          sudo podman image inspect localhost/prime-os:p1 --format '{{.Id}} {{.Os}} {{.Architecture}}'
           printf 'source_revision=%s\n' "$source_revision" >> "$GITHUB_OUTPUT"
           printf 'generation_id=%s\n' "$generation_id" >> "$GITHUB_OUTPUT"
 
-      - name: Load Prime into rootful container storage
+      - name: Prove UKI matches canonical storage digest
+        id: seal
         shell: bash
         run: |
           set -euo pipefail
-          sudo podman load --input /tmp/prime-p1.docker.tar
-          if ! sudo podman image exists localhost/prime-os:p1; then
-            sudo podman tag prime-os:p1 localhost/prime-os:p1
-          fi
-          sudo podman image exists localhost/prime-os:p1
-          sudo podman image inspect localhost/prime-os:p1 --format '{{.Id}} {{.Os}} {{.Architecture}}'
-          rm -f /tmp/prime-p1.docker.tar
-          docker image rm prime-os:p1 >/dev/null 2>&1 || true
-          docker builder prune -af >/dev/null 2>&1 || true
+          canonical_digest="$(sudo podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --tmpfs /var/tmp:size=8g \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            localhost/prime-os:p1 \
+            bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
+          case "$canonical_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $canonical_digest" >&2; exit 1 ;; esac
+          embedded_digest="$(sudo podman run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            uki="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
+            test -n "$uki"
+            grep -aoE "composefs=[0-9a-f]{128}" "$uki" | head -n1 | cut -d= -f2
+          ')"
+          test -n "$embedded_digest"
+          printf 'canonical storage digest: %s\n' "$canonical_digest"
+          printf 'UKI embedded digest:      %s\n' "$embedded_digest"
+          test "$embedded_digest" = "$canonical_digest"
+          printf 'digest=%s\n' "$canonical_digest" >> "$GITHUB_OUTPUT"
 
       - name: Prove image-builder sees unified Prime image
         shell: bash
@@ -235,6 +252,7 @@ jobs:
         env:
           SOURCE_REVISION: ${{ steps.prime.outputs.source_revision }}
           GENERATION_ID: ${{ steps.prime.outputs.generation_id }}
+          COMPOSEFS_DIGEST: ${{ steps.seal.outputs.digest }}
           BUILDER_VERSION: ${{ steps.builder.outputs.version }}
           BUILDER_DIGEST: ${{ steps.builder.outputs.digest }}
         run: |
@@ -242,6 +260,7 @@ jobs:
             echo '### Prime P1 hosted disk/UEFI rehearsal'
             echo "- source revision: \`$SOURCE_REVISION\`"
             echo "- generation: \`$GENERATION_ID\`"
+            echo "- composefs storage digest: \`$COMPOSEFS_DIGEST\`"
             echo "- image-builder: \`$BUILDER_VERSION\` / \`$BUILDER_DIGEST\`"
             echo '- target: hosted QEMU/OVMF only; **not HP/Kratos physical proof**'
             if test -f /tmp/prime-gpt.txt; then
