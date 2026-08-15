@@ -55,7 +55,7 @@ jobs:
           cargo build --locked --release -p primed
           test -x target/release/primed
 
-      - name: Build digest-pinned Prime bootc image
+      - name: Build provisional Prime bootc image
         id: build
         shell: bash
         env:
@@ -82,6 +82,49 @@ jobs:
             --build-arg PRIME_CREATED_AT="$created_at" \
             --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
             -f image/Containerfile \
+            -t localhost/prime-os:p1-provisional .
+
+      - name: Compute provisional canonical storage digest
+        id: canonical
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(sudo podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --tmpfs /var/tmp:size=8g \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            localhost/prime-os:p1-provisional \
+            bootc container compute-composefs-digest-from-storage localhost/prime-os:p1-provisional | tail -n1)"
+          case "$digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $digest" >&2; exit 1 ;; esac
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'provisional canonical storage digest: %s\n' "$digest"
+
+      - name: Rebuild Prime with canonical UKI seal
+        shell: bash
+        env:
+          PRIME_BASE_IMAGE: ${{ steps.base.outputs.image }}
+          PRIME_BASE_DIGEST: ${{ steps.base.outputs.digest }}
+          PRIME_COMPOSEFS_DIGEST: ${{ steps.canonical.outputs.digest }}
+          SOURCE_REVISION: ${{ steps.build.outputs.source_revision }}
+          CREATED_AT: ${{ steps.build.outputs.created_at }}
+          GENERATION_ID: ${{ steps.build.outputs.generation_id }}
+        run: |
+          set -euo pipefail
+          sudo podman build \
+            --cap-add=all \
+            --device /dev/fuse \
+            --security-opt label=disable \
+            --platform linux/amd64 \
+            --build-arg PRIME_BASE_IMAGE="$PRIME_BASE_IMAGE" \
+            --build-arg PRIME_BASE_DIGEST="$PRIME_BASE_DIGEST" \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg PRIME_GENERATION_ID="$GENERATION_ID" \
+            --build-arg PRIME_SOURCE_REVISION="$SOURCE_REVISION" \
+            --build-arg PRIME_CREATED_AT="$CREATED_AT" \
+            --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
+            --build-arg PRIME_COMPOSEFS_DIGEST="$PRIME_COMPOSEFS_DIGEST" \
+            -f image/Containerfile \
             -t localhost/prime-os:p1 .
 
       - name: Inspect Prime image contract
@@ -94,10 +137,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo podman run --rm \
-            -e EXPECTED_SOURCE_REVISION \
-            -e EXPECTED_CREATED_AT \
-            -e EXPECTED_GENERATION_ID \
-            -e EXPECTED_BASE_DIGEST \
+            -e EXPECTED_SOURCE_REVISION="$EXPECTED_SOURCE_REVISION" \
+            -e EXPECTED_CREATED_AT="$EXPECTED_CREATED_AT" \
+            -e EXPECTED_GENERATION_ID="$EXPECTED_GENERATION_ID" \
+            -e EXPECTED_BASE_DIGEST="$EXPECTED_BASE_DIGEST" \
             --entrypoint /bin/bash \
             localhost/prime-os:p1 -ceu '
               test -x /usr/libexec/prime/primed
@@ -123,29 +166,33 @@ jobs:
               python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == os.environ["EXPECTED_BASE_DIGEST"]; assert seed["boot_attempt_limit"] == 3'\''
             '
 
-      - name: Prove UKI matches canonical storage digest
+      - name: Prove final UKI and OCI storage share one seal
         id: seal
         shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ steps.canonical.outputs.digest }}
         run: |
           set -euo pipefail
-          canonical_digest="$(sudo podman run --rm \
+          final_digest="$(sudo podman run --rm \
             --privileged \
             --security-opt label=disable \
             --tmpfs /var/tmp:size=8g \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             localhost/prime-os:p1 \
             bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
-          case "$canonical_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $canonical_digest" >&2; exit 1 ;; esac
           embedded_digest="$(sudo podman run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
             uki="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
             test -n "$uki"
             grep -aoE "composefs=[0-9a-f]{128}" "$uki" | head -n1 | cut -d= -f2
           ')"
-          test -n "$embedded_digest"
-          printf 'canonical storage digest: %s\n' "$canonical_digest"
-          printf 'UKI embedded digest:      %s\n' "$embedded_digest"
-          test "$embedded_digest" = "$canonical_digest"
-          printf 'digest=%s\n' "$canonical_digest" >> "$GITHUB_OUTPUT"
+          case "$final_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          case "$embedded_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          printf 'provisional canonical digest: %s\n' "$EXPECTED_DIGEST"
+          printf 'final canonical digest:       %s\n' "$final_digest"
+          printf 'UKI embedded digest:          %s\n' "$embedded_digest"
+          test "$final_digest" = "$EXPECTED_DIGEST"
+          test "$embedded_digest" = "$EXPECTED_DIGEST"
+          printf 'digest=%s\n' "$final_digest" >> "$GITHUB_OUTPUT"
 
       - name: Compute OCI manifest evidence
         shell: bash
@@ -173,7 +220,7 @@ jobs:
             "oci_archive_manifest_digest": "$manifest_digest",
             "podman_image_id": "$image_id",
             "platform": "linux/amd64",
-            "deployment_backend": "COMPOSEFS_CANONICAL_SEAL_PROVEN_PENDING_DISK_PROOF",
+            "deployment_backend": "COMPOSEFS_CANONICAL_TWO_PASS_SEAL_PROVEN_PENDING_DISK_PROOF",
             "bootloader": "SYSTEMD_BOOT_EXPLICIT_BOOTC_INSTALL_POLICY_PENDING_DISK_PROOF",
             "secure_boot": "DISABLED_OR_UNPROVEN_FOR_P1"
           }
