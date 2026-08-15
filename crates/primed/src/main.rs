@@ -14,6 +14,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let socket_path = env::var_os("PRIME_CORE_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/prime/core.sock"));
+    let systemd_run = env::var_os("PRIME_SYSTEMD_RUN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/usr/bin/systemd-run"));
 
     let identity_path = state_dir.join("identity/host.json");
     let mut host = identity::load_or_create(&identity_path)?;
@@ -26,7 +29,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         probe,
         observed_at.clone(),
     )?;
-    let state = CoreState::new(host, generation, hardware, observed_at);
+    let state = CoreState::new(
+        host,
+        generation,
+        hardware,
+        state_dir,
+        systemd_run,
+        observed_at,
+    );
 
     eprintln!(
         "primed: host={} generation={} hardware_revision={} socket={}",

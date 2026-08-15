@@ -1,6 +1,6 @@
-use crate::CoreState;
+use crate::{launcher, CoreState};
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::{HeaderMap, HeaderValue, CACHE_CONTROL, CONTENT_TYPE};
 use hyper::server::conn::http1;
@@ -9,8 +9,8 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use prime_contracts::{
     CapabilitiesProjection, HardwareProjection, HealthProjection, HealthStatus, HostProjection,
-    HostProjectionBody, InterfaceError, VersionsProjection, CAPABILITY_INTERFACE,
-    CAPABILITY_INTERFACE_VERSION,
+    HostProjectionBody, InterfaceError, NativeLaunchRequest, VersionsProjection,
+    CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION, NATIVE_LAUNCH_REQUEST_SCHEMA,
 };
 use serde::Serialize;
 use std::convert::Infallible;
@@ -22,6 +22,7 @@ use tokio::net::UnixListener;
 
 const ACCEPT_HEADER: &str = "prime-interface-accept";
 const VERSION_HEADER: &str = "prime-interface-version";
+const MAX_MUTATION_BODY_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 enum NegotiationError {
@@ -49,15 +50,19 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
 
     loop {
         let (stream, _) = listener.accept().await?;
-        if let Err(error) = stream.peer_cred() {
-            eprintln!("primed rejected connection without Unix peer credentials: {error}");
-            continue;
-        }
+        let credential = match stream.peer_cred() {
+            Ok(credential) => credential,
+            Err(error) => {
+                eprintln!("primed rejected connection without Unix peer credentials: {error}");
+                continue;
+            }
+        };
+        let peer_uid = credential.uid();
         let state = state.clone();
 
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
-            let service = service_fn(move |request| route(request, state.clone()));
+            let service = service_fn(move |request| route(request, state.clone(), peer_uid));
             if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("primed connection failed: {error}");
             }
@@ -68,18 +73,9 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
 async fn route(
     request: Request<Incoming>,
     state: CoreState,
+    peer_uid: u32,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    if request.method() != Method::GET {
-        return Ok(error_response(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "PRIME_METHOD_NOT_ALLOWED",
-            "P1 core interface currently exposes read-only GET projections",
-            Vec::new(),
-            Vec::new(),
-        ));
-    }
-
-    if request.uri().path() == "/v1/versions" {
+    if request.method() == Method::GET && request.uri().path() == "/v1/versions" {
         return Ok(json_response(
             StatusCode::OK,
             &VersionsProjection {
@@ -94,6 +90,100 @@ async fn route(
         Ok(version) => version,
         Err(error) => return Ok(negotiation_error_response(error)),
     };
+
+    if request.method() == Method::POST && request.uri().path() == "/v1/exec/native/launch" {
+        if peer_uid != 0 {
+            return Ok(error_response(
+                StatusCode::FORBIDDEN,
+                "PRIME_EXEC_AUTHORIZATION_REQUIRED",
+                "P1 native launch admission requires Unix peer UID 0",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let body = match request.into_body().collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "PRIME_REQUEST_BODY_INVALID",
+                    "Prime could not read the native launch request body",
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+        };
+        if body.len() > MAX_MUTATION_BODY_BYTES {
+            return Ok(error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PRIME_REQUEST_BODY_TOO_LARGE",
+                "Native launch request exceeds the P1 body limit",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let launch_request: NativeLaunchRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "PRIME_NATIVE_LAUNCH_REQUEST_INVALID",
+                    "Native launch request is not valid prime.native-launch-request.v1 JSON",
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+        };
+        if launch_request.schema != NATIVE_LAUNCH_REQUEST_SCHEMA {
+            return Ok(error_response(
+                StatusCode::BAD_REQUEST,
+                "PRIME_NATIVE_LAUNCH_SCHEMA_INVALID",
+                "Native launch request schema is not supported",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+
+        let launch_state = state.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            launcher::launch_native(
+                &launch_state.state_dir,
+                &launch_state.systemd_run,
+                &launch_state.host,
+                &launch_state.generation,
+                &launch_request,
+            )
+        })
+        .await;
+
+        return Ok(match result {
+            Ok(Ok(evidence)) => json_response(StatusCode::OK, &evidence, true),
+            Ok(Err(error)) => error_response(
+                StatusCode::CONFLICT,
+                "PRIME_NATIVE_LAUNCH_DENIED",
+                &error.to_string(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(_) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_NATIVE_LAUNCH_TASK_FAILED",
+                "Native launch worker terminated before returning evidence",
+                Vec::new(),
+                Vec::new(),
+            ),
+        });
+    }
+
+    if request.method() != Method::GET {
+        return Ok(error_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "PRIME_METHOD_NOT_ALLOWED",
+            "This Prime route does not accept that HTTP method",
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
 
     let response = match request.uri().path() {
         "/v1/host" => json_response(

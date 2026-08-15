@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 pub const EXEC_INSPECTION_SCHEMA: &str = "prime.exec-inspection.v1";
+pub const NATIVE_LAUNCH_REQUEST_SCHEMA: &str = "prime.native-launch-request.v1";
+pub const NATIVE_LAUNCH_EVIDENCE_SCHEMA: &str = "prime.native-launch-evidence.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ArtifactFormat {
@@ -102,4 +105,49 @@ pub struct ExecInspection {
     pub native_compatible: bool,
     #[serde(default)]
     pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NativeLaunchRequest {
+    pub schema: String,
+    pub application_id: Uuid,
+    pub artifact_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LaunchEnforcementProperty {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeLaunchOutcome {
+    Admitted,
+    ExitedSuccess,
+    SystemdOrWorkloadFailure,
+    LauncherFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NativeLaunchEvidence {
+    pub schema: String,
+    pub launch_id: Uuid,
+    pub host_id: Uuid,
+    pub generation_id: String,
+    pub application_id: Uuid,
+    pub profile_revision: u64,
+    pub profile_digest: String,
+    pub policy_id: Uuid,
+    pub policy_revision: u64,
+    pub policy_digest: String,
+    pub artifact_identity: String,
+    pub staged_artifact_path: String,
+    pub unit_name: String,
+    pub requested_at: String,
+    pub completed_at: Option<String>,
+    pub outcome: NativeLaunchOutcome,
+    pub launcher_exit_code: Option<i32>,
+    #[serde(default)]
+    pub enforcement_properties: Vec<LaunchEnforcementProperty>,
 }

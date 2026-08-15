@@ -2,6 +2,7 @@ pub mod exec;
 pub mod generation;
 pub mod hardware;
 pub mod identity;
+pub mod launcher;
 pub mod policy;
 pub mod registry;
 pub mod server;
@@ -9,9 +10,10 @@ pub mod server;
 use prime_contracts::{
     CapabilityAccepts, CapabilityAvailability, CapabilityDescriptor, CapabilityHealth,
     CapabilityPlacement, CapabilityProvider, CapabilityRollback, FingerprintConfidence,
-    GenerationRecord, HardwareGraph, HealthStatus, HostIdentity,
+    GenerationRecord, HardwareGraph, HealthStatus, HostIdentity, NATIVE_LAUNCH_EVIDENCE_SCHEMA,
 };
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -21,6 +23,8 @@ pub struct CoreState {
     pub hardware: Arc<HardwareGraph>,
     pub capabilities: Arc<Vec<CapabilityDescriptor>>,
     pub health_limitations: Arc<Vec<String>>,
+    pub state_dir: Arc<PathBuf>,
+    pub systemd_run: Arc<PathBuf>,
     pub started_at: String,
 }
 
@@ -29,6 +33,8 @@ impl CoreState {
         host: HostIdentity,
         generation: GenerationRecord,
         hardware: HardwareGraph,
+        state_dir: PathBuf,
+        systemd_run: PathBuf,
         observed_at: String,
     ) -> Self {
         let provider = CapabilityProvider {
@@ -74,6 +80,29 @@ impl CoreState {
             observed_at: observed_at.clone(),
             evidence_refs: vec!["prime.capability.v1".to_owned()],
         };
+        let systemd_run_present = systemd_run.is_file();
+        let exec_limitations = if systemd_run_present {
+            vec![
+                "P1 mutation admission is Host-local UID 0 only".to_owned(),
+                "Native runtime still requires physical Host proof".to_owned(),
+                "Arguments, caller environment and unsupported policy semantics remain blocked".to_owned(),
+            ]
+        } else {
+            vec![format!(
+                "systemd-run frontend is unavailable at {}",
+                systemd_run.display()
+            )]
+        };
+        let exec_health = CapabilityHealth {
+            status: if systemd_run_present {
+                HealthStatus::Unknown
+            } else {
+                HealthStatus::Failed
+            },
+            observed_at: observed_at.clone(),
+            evidence_refs: Vec::new(),
+        };
+        let artifact_store = state_dir.join("artifacts/sha256").display().to_string();
 
         let capabilities = vec![
             CapabilityDescriptor {
@@ -151,6 +180,46 @@ impl CoreState {
                 },
             },
             CapabilityDescriptor {
+                capability_id: "prime.exec.native".to_owned(),
+                capability_version: "1.0.0".to_owned(),
+                family: "execution".to_owned(),
+                provider: provider.clone(),
+                availability: if systemd_run_present {
+                    CapabilityAvailability::Available
+                } else {
+                    CapabilityAvailability::Unavailable
+                },
+                effects: vec!["process".to_owned()],
+                accepts: CapabilityAccepts {
+                    formats: vec!["ELF".to_owned()],
+                    runtime_families: vec!["NATIVE_LINUX".to_owned()],
+                    workload_arches: vec![host.host_arch.clone()],
+                },
+                permissions: vec!["prime.exec.native.launch".to_owned()],
+                resources: json!({
+                    "artifact_store": artifact_store,
+                    "supervisor": "systemd transient service",
+                }),
+                hardware_requirements: Vec::new(),
+                limits: json!({
+                    "caller_uid": 0,
+                    "arguments": false,
+                    "caller_environment": false,
+                    "interactive_terminal": false,
+                }),
+                health: exec_health,
+                limitations: exec_limitations,
+                placement: placement.clone(),
+                expected_evidence: vec![NATIVE_LAUNCH_EVIDENCE_SCHEMA.to_owned()],
+                rollback: CapabilityRollback {
+                    supported: false,
+                    mode: None,
+                    limitations: vec![
+                        "A completed process launch is not rolled back as a generation".to_owned()
+                    ],
+                },
+            },
+            CapabilityDescriptor {
                 capability_id: "prime.capability.interface".to_owned(),
                 capability_version: "1.0.0".to_owned(),
                 family: "system".to_owned(),
@@ -180,6 +249,8 @@ impl CoreState {
             hardware: Arc::new(hardware),
             capabilities: Arc::new(capabilities),
             health_limitations: Arc::new(health_limitations),
+            state_dir: Arc::new(state_dir),
+            systemd_run: Arc::new(systemd_run),
             started_at: observed_at,
         }
     }

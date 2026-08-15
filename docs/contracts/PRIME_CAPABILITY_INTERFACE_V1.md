@@ -10,7 +10,7 @@ Transport for P1: HTTP/1.1 + JSON over `/run/prime/core.sock`.
 
 Expose mechanical Prime Host capability truth without importing Origins, Ptah or model semantics into Prime Core.
 
-## Required endpoints
+## Required read endpoints
 
 ```text
 GET /v1/versions
@@ -21,7 +21,15 @@ GET /v1/capabilities
 GET /v1/capabilities/{capability_id}
 ```
 
-Mutating endpoints are capability-specific and must pass Prime authorization and Workload Policy.
+## P1 mutation endpoint
+
+```text
+POST /v1/exec/native/launch
+```
+
+The first mutation route is defined by `PRIME_NATIVE_LAUNCH_V1.md`. In P1 it is Host-local and requires Unix peer UID `0`. Socket access alone does not imply execution authorization.
+
+No generic command/shell mutation endpoint exists. Future mutating endpoints remain capability-specific and must pass Prime authorization and Workload Policy.
 
 ## Version negotiation
 
@@ -31,6 +39,8 @@ Mutating endpoints are capability-specific and must pass Prime authorization and
 - Prime selects the highest mutually supported version;
 - zero overlap returns HTTP 409 with `PRIME_INTERFACE_INCOMPATIBLE`, Prime-supported versions and consumer-requested versions;
 - no compatibility is fabricated.
+
+All versioned reads and mutations except `GET /v1/versions` require explicit `Prime-Interface-Accept` negotiation.
 
 ## Host projection
 
