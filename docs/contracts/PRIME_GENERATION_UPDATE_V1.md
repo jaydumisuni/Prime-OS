@@ -4,11 +4,13 @@ Status: **FROZEN FOR P1 IMPLEMENTATION**
 
 Schema family: `prime.generation.v1`
 
+Image-authored seed schema: `prime.generation-seed.v1`
+
 ## Generation identity
 
 A generation is a specific bootable Prime system image deployment. It is not the Prime Host identity.
 
-Required fields:
+The completed runtime record contains:
 
 ```json
 {
@@ -25,6 +27,16 @@ Required fields:
 ```
 
 `generation_id` is opaque. Image digest and source revision provide reproducibility; the ID is not derived from mutable labels/tags.
+
+## Image/runtime identity split
+
+The final produced image digest is not embedded in the same image as an authored field because that would be self-referential.
+
+The image instead contains `/usr/lib/prime/generation-seed.json` as defined by `PRIME_GENERATION_SEED_V1.md`. The seed records build provenance including the pinned base-image digest, but not the final produced Prime image digest.
+
+At boot, Prime Core queries the stable bootc programmatic status interface and binds the seed to the immutable digest of the actual booted deployment. That binding creates or validates the completed `prime.generation.v1` record under `/var/lib/prime/generations/current.json`.
+
+The first new runtime binding enters `BOOT_TRY`; userspace reachability alone is not `KNOWN_GOOD`.
 
 ## Required Host slots
 
@@ -65,6 +77,8 @@ Before `STAGED`, Prime records at least:
 
 A tag name alone is not verification.
 
+At runtime the current generation's `image_digest` must agree with the immutable digest reported for the actual booted bootc deployment. A missing, malformed or conflicting booted image identity fails closed.
+
 ## Boot health
 
 A candidate is not marked `KNOWN_GOOD` merely because the kernel reached userspace. P1 health proof must at least confirm Prime Core, Host identity, generation identity, hardware baseline and Prime Shell/recovery reachability according to the phase proof contract.
@@ -72,6 +86,8 @@ A candidate is not marked `KNOWN_GOOD` merely because the kernel reached userspa
 ## Persistent-state rule
 
 Host identity lives under `/var/lib/prime`. Generation rollback must not silently replace it. Profile/application/user/project data are versioned or migrated independently from generation identity.
+
+The persisted generation record may retain state transitions, but its bound immutable image digest and generation ID cannot silently change underneath that history.
 
 ## Automation
 
