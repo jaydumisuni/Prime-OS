@@ -1,4 +1,4 @@
-use crate::{launcher, CoreState};
+use crate::{identity, launcher, storage, CoreState};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -9,8 +9,9 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use prime_contracts::{
     CapabilitiesProjection, HardwareProjection, HealthProjection, HealthStatus, HostProjection,
-    HostProjectionBody, InterfaceError, NativeLaunchRequest, VersionsProjection,
-    CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION, NATIVE_LAUNCH_REQUEST_SCHEMA,
+    HostProjectionBody, InterfaceError, NativeLaunchRequest, StoragePreflightRequest,
+    StorageProjection, VersionsProjection, CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION,
+    NATIVE_LAUNCH_REQUEST_SCHEMA, STORAGE_PREFLIGHT_SCHEMA,
 };
 use serde::Serialize;
 use std::convert::Infallible;
@@ -101,27 +102,10 @@ async fn route(
                 Vec::new(),
             ));
         }
-        let body = match request.into_body().collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(_) => {
-                return Ok(error_response(
-                    StatusCode::BAD_REQUEST,
-                    "PRIME_REQUEST_BODY_INVALID",
-                    "Prime could not read the native launch request body",
-                    Vec::new(),
-                    Vec::new(),
-                ));
-            }
+        let body = match collect_mutation_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return Ok(response),
         };
-        if body.len() > MAX_MUTATION_BODY_BYTES {
-            return Ok(error_response(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "PRIME_REQUEST_BODY_TOO_LARGE",
-                "Native launch request exceeds the P1 body limit",
-                Vec::new(),
-                Vec::new(),
-            ));
-        }
         let launch_request: NativeLaunchRequest = match serde_json::from_slice(&body) {
             Ok(request) => request,
             Err(_) => {
@@ -175,6 +159,110 @@ async fn route(
         });
     }
 
+    if request.method() == Method::POST && request.uri().path() == "/v1/storage/preflight" {
+        if peer_uid != 0 {
+            return Ok(error_response(
+                StatusCode::FORBIDDEN,
+                "PRIME_STORAGE_AUTHORIZATION_REQUIRED",
+                "P1 storage preflight requires Unix peer UID 0",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let body = match collect_mutation_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return Ok(response),
+        };
+        let preflight_request: StoragePreflightRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "PRIME_STORAGE_PREFLIGHT_REQUEST_INVALID",
+                    "Storage preflight request is not valid prime.storage-preflight.v1 JSON",
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+        };
+
+        if preflight_request.schema != STORAGE_PREFLIGHT_SCHEMA {
+            let observed_at = match identity::now_rfc3339() {
+                Ok(observed_at) => observed_at,
+                Err(error) => {
+                    return Ok(error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "PRIME_STORAGE_CLOCK_FAILED",
+                        &error.to_string(),
+                        Vec::new(),
+                        Vec::new(),
+                    ));
+                }
+            };
+            let snapshot = match state.storage.read() {
+                Ok(storage) => storage.clone(),
+                Err(_) => {
+                    return Ok(error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "PRIME_STORAGE_STATE_UNAVAILABLE",
+                        "Storage state lock is poisoned",
+                        Vec::new(),
+                        Vec::new(),
+                    ));
+                }
+            };
+            let result = prime_storage::preflight(&snapshot, &preflight_request, observed_at);
+            return Ok(json_response(StatusCode::BAD_REQUEST, &result, true));
+        }
+
+        let preflight_state = state.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let observed_at = identity::now_rfc3339().map_err(|error| error.to_string())?;
+            let mut refreshed = storage::observe(
+                &preflight_state.storage_mountinfo,
+                &preflight_state.storage_policy_file,
+                observed_at.clone(),
+                preflight_state.generation.generation_id.clone(),
+            );
+            if let Err(error) = storage::persist_snapshot(
+                &preflight_state.state_dir,
+                preflight_state.host.host_id,
+                &preflight_state.generation.generation_id,
+                &refreshed,
+            ) {
+                refreshed
+                    .limitations
+                    .push(format!("storage state persistence failed: {error}"));
+            }
+            let preflight = prime_storage::preflight(&refreshed, &preflight_request, observed_at);
+            let mut current = preflight_state
+                .storage
+                .write()
+                .map_err(|_| "storage state lock is poisoned".to_owned())?;
+            *current = refreshed;
+            Ok(preflight)
+        })
+        .await;
+
+        return Ok(match result {
+            Ok(Ok(preflight)) => json_response(StatusCode::OK, &preflight, true),
+            Ok(Err(error)) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_STORAGE_PREFLIGHT_FAILED",
+                &error,
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(_) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_STORAGE_PREFLIGHT_TASK_FAILED",
+                "Storage preflight worker terminated before returning a result",
+                Vec::new(),
+                Vec::new(),
+            ),
+        });
+    }
+
     if request.method() != Method::GET {
         return Ok(error_response(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -211,6 +299,26 @@ async fn route(
             },
             true,
         ),
+        "/v1/storage" => match state.storage.read() {
+            Ok(storage) => json_response(
+                StatusCode::OK,
+                &StorageProjection {
+                    interface: CAPABILITY_INTERFACE.to_owned(),
+                    interface_version: negotiated.to_owned(),
+                    host_id: state.host.host_id,
+                    generation_id: state.generation.generation_id.clone(),
+                    inventory: storage.clone(),
+                },
+                true,
+            ),
+            Err(_) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_STORAGE_STATE_UNAVAILABLE",
+                "Storage state lock is poisoned",
+                Vec::new(),
+                Vec::new(),
+            ),
+        },
         "/v1/health" => json_response(
             StatusCode::OK,
             &HealthProjection {
@@ -266,6 +374,31 @@ async fn route(
     };
 
     Ok(response)
+}
+
+async fn collect_mutation_body(
+    body: Incoming,
+) -> Result<Bytes, Response<Full<Bytes>>> {
+    let collected = body.collect().await.map_err(|_| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "PRIME_REQUEST_BODY_INVALID",
+            "Prime could not read the request body",
+            Vec::new(),
+            Vec::new(),
+        )
+    })?;
+    let bytes = collected.to_bytes();
+    if bytes.len() > MAX_MUTATION_BODY_BYTES {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PRIME_REQUEST_BODY_TOO_LARGE",
+            "Request exceeds the P1 mutation body limit",
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn negotiate(headers: &HeaderMap) -> Result<&'static str, NegotiationError> {

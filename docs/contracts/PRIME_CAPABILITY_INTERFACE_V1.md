@@ -16,18 +16,24 @@ Expose mechanical Prime Host capability truth without importing Origins, Ptah or
 GET /v1/versions
 GET /v1/host
 GET /v1/hardware
+GET /v1/storage
 GET /v1/health
 GET /v1/capabilities
 GET /v1/capabilities/{capability_id}
 ```
 
-## P1 mutation endpoint
+## P1 bounded mutation/calculation endpoints
 
 ```text
 POST /v1/exec/native/launch
+POST /v1/storage/preflight
 ```
 
-The first mutation route is defined by `PRIME_NATIVE_LAUNCH_V1.md`. In P1 it is Host-local and requires Unix peer UID `0`. Socket access alone does not imply execution authorization.
+`POST /v1/exec/native/launch` is defined by `PRIME_NATIVE_LAUNCH_V1.md`.
+
+`POST /v1/storage/preflight` is defined by `PRIME_STORAGE_INVENTORY_V1.md`. It performs a fresh mechanical storage observation and computes update-space admission only; it does not download, stage, activate, or boot an update.
+
+Both P1 routes are Host-local and require Unix peer UID `0`. Socket access alone does not imply execution or update authorization.
 
 No generic command/shell mutation endpoint exists. Future mutating endpoints remain capability-specific and must pass Prime authorization and Workload Policy.
 
@@ -58,6 +64,8 @@ All versioned reads and mutations except `GET /v1/versions` require explicit `Pr
 ```
 
 `GET /v1/hardware` returns the sanitized `prime.hardware-graph.v1` record. Raw DMI UUIDs, hardware serial numbers and raw network MAC addresses are not part of that public projection.
+
+`GET /v1/storage` returns the latest Prime `prime.storage-inventory.v1` observation. The storage preflight path refreshes mount/capacity truth before calculating admission rather than relying on a stale cached observation.
 
 ## Capability descriptor
 
@@ -110,7 +118,7 @@ Origins may later map this descriptor into its own capability compiler/Node proj
 
 `AVAILABLE` is not synonymous with `HEALTHY`. A capability may exist but be degraded. A capability requiring unavailable hardware/provider/runtime reports that limitation explicitly.
 
-Host health combines the truth required for Prime Host authority; capability health remains capability-specific. For example, an absent TPM is a valid inventory result, while an unreadable required kernel inventory source is a probe limitation.
+Host health combines the truth required for Prime Host authority; capability health remains capability-specific. An optional storage reserve policy being unconfigured degrades the storage/update-preflight capability but does not crash unrelated Host authority. Loss of root local-physical capacity truth degrades Host health because Prime can no longer prove update/storage safety.
 
 ## Evidence
 

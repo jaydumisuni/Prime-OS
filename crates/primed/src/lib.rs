@@ -6,35 +6,44 @@ pub mod launcher;
 pub mod policy;
 pub mod registry;
 pub mod server;
+pub mod storage;
 
 use prime_contracts::{
     CapabilityAccepts, CapabilityAvailability, CapabilityDescriptor, CapabilityHealth,
     CapabilityPlacement, CapabilityProvider, CapabilityRollback, FingerprintConfidence,
-    GenerationRecord, HardwareGraph, HealthStatus, HostIdentity, NATIVE_LAUNCH_EVIDENCE_SCHEMA,
+    GenerationRecord, HardwareGraph, HealthStatus, HostIdentity, StorageInventory, StorageScope,
+    NATIVE_LAUNCH_EVIDENCE_SCHEMA, STORAGE_INVENTORY_SCHEMA, STORAGE_PRESSURE_SCHEMA,
 };
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone)]
 pub struct CoreState {
     pub host: HostIdentity,
     pub generation: GenerationRecord,
     pub hardware: Arc<HardwareGraph>,
+    pub storage: Arc<RwLock<StorageInventory>>,
     pub capabilities: Arc<Vec<CapabilityDescriptor>>,
     pub health_limitations: Arc<Vec<String>>,
     pub state_dir: Arc<PathBuf>,
     pub systemd_run: Arc<PathBuf>,
+    pub storage_mountinfo: Arc<PathBuf>,
+    pub storage_policy_file: Arc<PathBuf>,
     pub started_at: String,
 }
 
 impl CoreState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         host: HostIdentity,
         generation: GenerationRecord,
         hardware: HardwareGraph,
+        storage: StorageInventory,
         state_dir: PathBuf,
         systemd_run: PathBuf,
+        storage_mountinfo: PathBuf,
+        storage_policy_file: PathBuf,
         observed_at: String,
     ) -> Self {
         let provider = CapabilityProvider {
@@ -55,8 +64,25 @@ impl CoreState {
         };
         let hardware_status = status_for(&hardware.limitations);
         let host_status = status_for(&fingerprint_limitations);
+
+        let root_storage_usable = storage.root_mount_id.and_then(|root_id| {
+            storage
+                .mounts
+                .iter()
+                .find(|mount| mount.mount_id == root_id)
+                .map(|mount| {
+                    mount.scope == StorageScope::LocalPhysical && mount.capacity.is_some()
+                })
+        }) == Some(true);
+        let storage_core_limitations = if root_storage_usable {
+            Vec::new()
+        } else {
+            vec!["Root local-physical storage capacity is unavailable".to_owned()]
+        };
+
         let mut health_limitations = hardware.limitations.clone();
         health_limitations.extend(fingerprint_limitations.clone());
+        health_limitations.extend(storage_core_limitations);
         health_limitations.sort();
         health_limitations.dedup();
 
@@ -104,6 +130,36 @@ impl CoreState {
             evidence_refs: Vec::new(),
         };
         let artifact_store = state_dir.join("artifacts/sha256").display().to_string();
+
+        let mut storage_limitations = storage.limitations.clone();
+        storage_limitations.extend(storage.reserve.limitations.clone());
+        storage_limitations.extend(storage.pressure.limitations.clone());
+        storage_limitations.extend(storage.generation_accounting.limitations.clone());
+        if let Some(root_id) = storage.root_mount_id {
+            if let Some(root) = storage.mounts.iter().find(|mount| mount.mount_id == root_id) {
+                storage_limitations.extend(root.limitations.clone());
+            }
+        }
+        storage_limitations.sort();
+        storage_limitations.dedup();
+        let storage_health = CapabilityHealth {
+            status: if !root_storage_usable {
+                HealthStatus::Failed
+            } else if storage_limitations.is_empty() {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Degraded
+            },
+            observed_at: storage.observed_at.clone(),
+            evidence_refs: vec![STORAGE_INVENTORY_SCHEMA.to_owned()],
+        };
+        let storage_availability = if !root_storage_usable {
+            CapabilityAvailability::Unavailable
+        } else if storage_limitations.is_empty() {
+            CapabilityAvailability::Available
+        } else {
+            CapabilityAvailability::Degraded
+        };
 
         let capabilities = vec![
             CapabilityDescriptor {
@@ -156,6 +212,47 @@ impl CoreState {
                     supported: false,
                     mode: None,
                     limitations: vec!["Hardware topology is observed, not rolled back".to_owned()],
+                },
+            },
+            CapabilityDescriptor {
+                capability_id: "prime.storage.inventory".to_owned(),
+                capability_version: "1.0.0".to_owned(),
+                family: "storage".to_owned(),
+                provider: provider.clone(),
+                availability: storage_availability,
+                effects: Vec::new(),
+                accepts: CapabilityAccepts::default(),
+                permissions: vec![
+                    "prime.storage.read".to_owned(),
+                    "prime.storage.preflight".to_owned(),
+                ],
+                resources: json!({
+                    "root_mount_id": storage.root_mount_id,
+                    "local_physical_filesystems": storage.local_physical_totals.filesystem_count,
+                    "local_physical_total_bytes": storage.local_physical_totals.total_bytes,
+                    "local_physical_available_bytes": storage.local_physical_totals.available_bytes,
+                    "rollback_recovery_reserve_configured": storage.reserve.policy_configured,
+                }),
+                hardware_requirements: Vec::new(),
+                limits: json!({
+                    "preflight_fresh_probe": true,
+                    "preflight_requires_explicit_reserve": true,
+                    "recursive_file_index": false,
+                }),
+                health: storage_health,
+                limitations: storage_limitations,
+                placement: placement.clone(),
+                expected_evidence: vec![
+                    STORAGE_INVENTORY_SCHEMA.to_owned(),
+                    STORAGE_PRESSURE_SCHEMA.to_owned(),
+                ],
+                rollback: CapabilityRollback {
+                    supported: false,
+                    mode: None,
+                    limitations: vec![
+                        "Storage observations are current-state evidence, not generation rollback objects"
+                            .to_owned(),
+                    ],
                 },
             },
             CapabilityDescriptor {
@@ -248,10 +345,13 @@ impl CoreState {
             host,
             generation,
             hardware: Arc::new(hardware),
+            storage: Arc::new(RwLock::new(storage)),
             capabilities: Arc::new(capabilities),
             health_limitations: Arc::new(health_limitations),
             state_dir: Arc::new(state_dir),
             systemd_run: Arc::new(systemd_run),
+            storage_mountinfo: Arc::new(storage_mountinfo),
+            storage_policy_file: Arc::new(storage_policy_file),
             started_at: observed_at,
         }
     }
