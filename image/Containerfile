@@ -38,14 +38,19 @@ RUN set -eux; \
     test -x /usr/sbin/bootc; \
     test -x /usr/sbin/systemd-run
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime /usr/lib/bootc/install
 COPY target/release/primed /usr/libexec/prime/primed
 COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
 
 RUN set -eux; \
     chmod 0755 /usr/libexec/prime/primed; \
+    chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
     systemctl enable primed.service; \
-    systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true
+    systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
+    bootc install print-configuration > /tmp/prime-install-config.json; \
+    python3 -c 'import json; c=json.load(open("/tmp/prime-install-config.json")); assert c.get("bootloader") == "systemd", c'; \
+    rm -f /tmp/prime-install-config.json
 
 RUN set -eux; \
     test -n "${PRIME_GENERATION_ID}"; \
@@ -99,5 +104,7 @@ RUN set -eux; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
     ! rpm -q bootupd >/dev/null 2>&1; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
+    test -f /usr/lib/bootc/install/10-prime.toml; \
+    bootc install print-configuration | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c.get("bootloader") == "systemd", c'; \
     test -f /usr/lib/prime/generation-seed.json; \
     test -x /usr/libexec/prime/primed
