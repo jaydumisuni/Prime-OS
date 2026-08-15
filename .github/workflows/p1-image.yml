@@ -77,18 +77,7 @@ jobs:
               test -L /etc/systemd/system/multi-user.target.wants/primed.service
               test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
               rpm -q systemd-ukify-259.8-1.fc44 systemd-boot-unsigned-259.8-1.fc44
-              python3 - <<"PY"
-import json, os
-with open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8") as handle:
-    seed = json.load(handle)
-assert seed["schema"] == "prime.generation-seed.v1"
-assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]
-assert seed["channel"] == "LAB"
-assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]
-assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]
-assert seed["base_image_digest"] == "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556"
-assert seed["boot_attempt_limit"] == 3
-PY
+              python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556"; assert seed["boot_attempt_limit"] == 3'\''
             '
 
       - name: Compute OCI manifest evidence
