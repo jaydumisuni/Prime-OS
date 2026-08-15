@@ -22,6 +22,13 @@ RUN set -eux; \
         systemd-ukify-259.8-1.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
     dnf clean all; \
+    rm -rf \
+        /run/dnf \
+        /var/cache/libdnf5 \
+        /var/lib/dnf/repos \
+        /var/lib/dnf/system-repo.lock \
+        /var/log/dnf5.log \
+        /var/cache/ldconfig/aux-cache; \
     ! rpm -q bootupd >/dev/null 2>&1; \
     test ! -x /usr/bin/bootupctl; \
     test ! -x /usr/sbin/bootupctl; \
