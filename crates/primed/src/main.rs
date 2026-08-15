@@ -1,7 +1,7 @@
-use primed::{generation, identity, server, CoreState};
+use primed::{generation, hardware, identity, server, CoreState};
 use std::env;
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -15,15 +15,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/prime/core.sock"));
 
-    let host = identity::load_or_create(&state_dir.join("identity/host.json"))?;
+    let identity_path = state_dir.join("identity/host.json");
+    let mut host = identity::load_or_create(&identity_path)?;
     let generation = generation::load(&generation_file)?;
     let observed_at = identity::now_rfc3339()?;
-    let state = CoreState::new(host, generation, observed_at);
+    let probe = prime_hardware::probe(Path::new("/"), &host.host_arch)?;
+    host = identity::reconcile_fingerprint(
+        &identity_path,
+        host,
+        &probe.fingerprint,
+        &observed_at,
+    )?;
+    let hardware = hardware::load_or_update(
+        &state_dir.join("hardware/current.json"),
+        probe,
+        observed_at.clone(),
+    )?;
+    let state = CoreState::new(host, generation, hardware, observed_at);
 
     eprintln!(
-        "primed: host={} generation={} socket={}",
+        "primed: host={} generation={} hardware_revision={} socket={}",
         state.host.host_id,
         state.generation.generation_id,
+        state.hardware.revision,
         socket_path.display()
     );
 

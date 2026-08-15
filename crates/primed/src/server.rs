@@ -8,8 +8,9 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use prime_contracts::{
-    CapabilitiesProjection, HealthProjection, HealthStatus, HostProjection, HostProjectionBody,
-    InterfaceError, VersionsProjection, CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION,
+    CapabilitiesProjection, HardwareProjection, HealthProjection, HealthStatus, HostProjection,
+    HostProjectionBody, InterfaceError, VersionsProjection, CAPABILITY_INTERFACE,
+    CAPABILITY_INTERFACE_VERSION,
 };
 use serde::Serialize;
 use std::convert::Infallible;
@@ -104,8 +105,19 @@ async fn route(
                     host_id: state.host.host_id,
                     host_arch: state.host.host_arch.clone(),
                     generation_id: state.generation.generation_id.clone(),
-                    hardware_graph_revision: 0,
+                    hardware_graph_revision: state.hardware.revision,
                 },
+            },
+            true,
+        ),
+        "/v1/hardware" => json_response(
+            StatusCode::OK,
+            &HardwareProjection {
+                interface: CAPABILITY_INTERFACE.to_owned(),
+                interface_version: negotiated.to_owned(),
+                host_id: state.host.host_id,
+                generation_id: state.generation.generation_id.clone(),
+                graph: (*state.hardware).clone(),
             },
             true,
         ),
@@ -116,11 +128,13 @@ async fn route(
                 interface_version: negotiated.to_owned(),
                 host_id: state.host.host_id,
                 generation_id: state.generation.generation_id.clone(),
-                status: HealthStatus::Degraded,
+                status: if state.health_limitations.is_empty() {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Degraded
+                },
                 observed_at: state.started_at.clone(),
-                limitations: vec![
-                    "Hardware graph has not yet advanced beyond revision 0".to_owned()
-                ],
+                limitations: (*state.health_limitations).clone(),
             },
             true,
         ),
@@ -232,7 +246,7 @@ fn json_response<T: Serialize>(
     include_version: bool,
 ) -> Response<Full<Bytes>> {
     let encoded = serde_json::to_vec(body).unwrap_or_else(|_| {
-        br#"{"error":"PRIME_SERIALIZATION_FAILURE","message":"Prime could not serialize its own response"}"#.to_vec()
+        b"{\"error\":\"PRIME_SERIALIZATION_FAILURE\",\"message\":\"Prime could not serialize its own response\"}".to_vec()
     });
     let mut response = Response::new(Full::new(Bytes::from(encoded)));
     *response.status_mut() = status;

@@ -15,6 +15,7 @@ Expose mechanical Prime Host capability truth without importing Origins, Ptah or
 ```text
 GET /v1/versions
 GET /v1/host
+GET /v1/hardware
 GET /v1/health
 GET /v1/capabilities
 GET /v1/capabilities/{capability_id}
@@ -45,6 +46,8 @@ Mutating endpoints are capability-specific and must pass Prime authorization and
   }
 }
 ```
+
+`GET /v1/hardware` returns the sanitized `prime.hardware-graph.v1` record. Raw DMI UUIDs, hardware serial numbers and raw network MAC addresses are not part of that public projection.
 
 ## Capability descriptor
 
@@ -96,6 +99,8 @@ Origins may later map this descriptor into its own capability compiler/Node proj
 ## Health truth
 
 `AVAILABLE` is not synonymous with `HEALTHY`. A capability may exist but be degraded. A capability requiring unavailable hardware/provider/runtime reports that limitation explicitly.
+
+Host health combines the truth required for Prime Host authority; capability health remains capability-specific. For example, an absent TPM is a valid inventory result, while an unreadable required kernel inventory source is a probe limitation.
 
 ## Evidence
 
