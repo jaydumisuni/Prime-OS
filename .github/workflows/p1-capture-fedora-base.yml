@@ -1,0 +1,52 @@
+name: Prime P1 Capture Fedora Base
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: build/p1-first-light
+      - name: Capture pinned Fedora bootc base evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='quay.io/fedora/fedora-bootc@sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556'
+          docker pull "$base" >/dev/null
+          mkdir -p image/evidence
+          docker run --rm --entrypoint /bin/bash "$base" -ceu '
+            printf "BASE=%s\n" "quay.io/fedora/fedora-bootc@sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556"
+            printf "OS_RELEASE="; . /etc/os-release; printf "%s %s\n" "$ID" "$VERSION_ID"
+            printf "BOOTC="; /usr/bin/bootc --version | head -n1
+            printf "SYSTEMD="; /usr/bin/systemd --version | head -n1
+            printf "BOOTC_PATH="; command -v bootc
+            printf "SYSTEMD_RUN_PATH="; command -v systemd-run
+            printf "UKIFY_PATH="; command -v ukify || printf "MISSING\n"
+            printf "SYSTEMD_BOOT_EFI_FILES="; if test -d /usr/lib/systemd/boot/efi; then find /usr/lib/systemd/boot/efi -maxdepth 1 -type f -printf "%f," | sort; else printf "MISSING"; fi; printf "\n"
+            printf "KERNEL_INSTALL_PLUGINS="; find /usr/lib/kernel/install.d -maxdepth 1 -type f -printf "%f," 2>/dev/null | sort; printf "\n"
+            printf "AUTO_UPDATE_TIMER="; systemctl is-enabled bootc-fetch-apply-updates.timer 2>/dev/null || true
+            printf "BOOT_PACKAGES="; rpm -qa | grep -E "^(bootc|kernel|systemd|grub2|shim|dracut|ukify)" | sort | paste -sd, -; printf "\n"
+          ' > image/evidence/fedora44-bootc-amd64.txt
+      - name: Commit evidence only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s image/evidence/fedora44-bootc-amd64.txt
+          if ! git diff --quiet -- . ':(exclude)image/evidence/fedora44-bootc-amd64.txt'; then
+            echo 'Probe changed an unexpected path.'
+            git status --short
+            exit 1
+          fi
+          git config user.name 'THE TECH GUY'
+          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
+          git add image/evidence/fedora44-bootc-amd64.txt
+          git commit -m 'evidence: record pinned Fedora 44 bootc base contents'
+          git push origin HEAD:build/p1-first-light
