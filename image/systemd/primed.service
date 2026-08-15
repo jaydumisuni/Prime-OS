@@ -1,0 +1,32 @@
+[Unit]
+Description=Prime Core Host Authority
+Documentation=https://github.com/jaydumisuni/Prime-OS
+After=local-fs.target
+Before=graphical.target
+ConditionPathExists=/usr/lib/prime/generation.json
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/prime/primed
+User=root
+Group=root
+RuntimeDirectory=prime
+RuntimeDirectoryMode=0755
+StateDirectory=prime
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/var/lib/prime /run/prime
+
+[Install]
+WantedBy=multi-user.target
