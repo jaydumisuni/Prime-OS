@@ -25,7 +25,9 @@ pub enum PolicyCompileError {
     Unsupported(&'static str),
 }
 
-pub fn compile_native(policy: &WorkloadPolicy) -> Result<NativeEnforcementPlan, PolicyCompileError> {
+pub fn compile_native(
+    policy: &WorkloadPolicy,
+) -> Result<NativeEnforcementPlan, PolicyCompileError> {
     verify_policy(policy)?;
     if !(1..=10_000).contains(&policy.cpu.weight) {
         return Err(PolicyCompileError::Invalid("cpu.weight must be 1..=10000"));
@@ -70,11 +72,7 @@ pub fn compile_native(policy: &WorkloadPolicy) -> Result<NativeEnforcementPlan, 
             "shared/inherited GPU or device access for non-core workloads",
         ));
     }
-    if policy
-        .process
-        .max_processes
-        .is_some_and(|value| value == 0)
-    {
+    if policy.process.max_processes.is_some_and(|value| value == 0) {
         return Err(PolicyCompileError::Invalid(
             "process.max_processes must be positive when set",
         ));
@@ -205,7 +203,9 @@ mod tests {
                 max_bytes: Some(256 * 1024 * 1024),
                 swap_max_bytes: Some(0),
             },
-            gpu: GpuPolicy { mode: GpuMode::Deny },
+            gpu: GpuPolicy {
+                mode: GpuMode::Deny,
+            },
             storage: StoragePolicy {
                 quota_bytes: None,
                 io_weight: 100,

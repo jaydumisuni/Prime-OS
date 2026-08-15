@@ -92,9 +92,8 @@ pub fn load_policy_revision(
     policy_id: Uuid,
     revision: u64,
 ) -> Result<WorkloadPolicy, RegistryError> {
-    let policy: WorkloadPolicy = serde_json::from_slice(&fs::read(policy_revision_path(
-        root, policy_id, revision,
-    ))?)?;
+    let policy: WorkloadPolicy =
+        serde_json::from_slice(&fs::read(policy_revision_path(root, policy_id, revision))?)?;
     if policy.policy_id != policy_id {
         return Err(RegistryError::IdentityMismatch);
     }
@@ -119,7 +118,10 @@ pub fn load_selected_policy(root: &Path, policy_id: Uuid) -> Result<WorkloadPoli
     load_policy_revision(root, policy_id, revision)
 }
 
-pub fn store_profile_revision(root: &Path, profile: &ApplicationProfile) -> Result<(), RegistryError> {
+pub fn store_profile_revision(
+    root: &Path,
+    profile: &ApplicationProfile,
+) -> Result<(), RegistryError> {
     verify_profile(profile)?;
     let path = profile_revision_path(root, profile.application_id, profile.profile_revision);
     create_revision(&path, &serde_json::to_vec_pretty(profile)?)
@@ -306,7 +308,9 @@ mod tests {
                 max_bytes: Some(512 * 1024 * 1024),
                 swap_max_bytes: Some(0),
             },
-            gpu: GpuPolicy { mode: GpuMode::Deny },
+            gpu: GpuPolicy {
+                mode: GpuMode::Deny,
+            },
             storage: StoragePolicy {
                 quota_bytes: None,
                 io_weight: 100,

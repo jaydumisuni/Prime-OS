@@ -192,10 +192,9 @@ fn classify_pe(bytes: &[u8]) -> Classification {
     let mut format = ArtifactFormat::Pe32;
     let mut workload_arch = None;
     if bytes.len() >= 64 {
-        let offset = u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]) as usize;
-        if offset
-            .checked_add(26)
-            .is_some_and(|end| end <= bytes.len())
+        let offset =
+            u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]) as usize;
+        if offset.checked_add(26).is_some_and(|end| end <= bytes.len())
             && bytes.get(offset..offset + 4) == Some(b"PE\0\0")
         {
             let machine = u16::from_le_bytes([bytes[offset + 4], bytes[offset + 5]]);
@@ -274,7 +273,9 @@ fn foreign(
 }
 
 fn extension(path: &Path) -> Option<String> {
-    path.extension()?.to_str().map(|value| value.to_ascii_lowercase())
+    path.extension()?
+        .to_str()
+        .map(|value| value.to_ascii_lowercase())
 }
 
 fn is_thin_macho(bytes: &[u8]) -> bool {
