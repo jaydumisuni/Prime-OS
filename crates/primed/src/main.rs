@@ -8,15 +8,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let state_dir = env::var_os("PRIME_STATE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/var/lib/prime"));
-    let generation_file = env::var_os("PRIME_GENERATION_FILE")
+    let generation_seed_file = env::var_os("PRIME_GENERATION_SEED_FILE")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/lib/prime/generation.json"));
+        .unwrap_or_else(|| PathBuf::from("/usr/lib/prime/generation-seed.json"));
     let socket_path = env::var_os("PRIME_CORE_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/prime/core.sock"));
     let systemd_run = env::var_os("PRIME_SYSTEMD_RUN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/usr/bin/systemd-run"));
+    let bootc = PathBuf::from("/usr/bin/bootc");
     let storage_mountinfo = PathBuf::from("/proc/self/mountinfo");
     let storage_policy_file = env::var_os("PRIME_STORAGE_POLICY_FILE")
         .map(PathBuf::from)
@@ -24,7 +25,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let identity_path = state_dir.join("identity/host.json");
     let mut host = identity::load_or_create(&identity_path)?;
-    let generation = generation::load(&generation_file)?;
+    let generation = generation::load_or_bind(
+        &generation_seed_file,
+        &bootc,
+        &state_dir,
+        &host.host_arch,
+    )?;
     let observed_at = identity::now_rfc3339()?;
     let probe = prime_hardware::probe(Path::new("/"), &host.host_arch)?;
     host = identity::reconcile_fingerprint(&identity_path, host, &probe.fingerprint, &observed_at)?;
