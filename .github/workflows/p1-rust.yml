@@ -15,8 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Rust components
-        run: rustup component add rustfmt clippy
+      - name: Assert Rust toolchain identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          test "$(rustc --version | awk '{print $2}')" = "1.97.1"
       - name: Require pinned dependency graph
         run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
       - name: Format
