@@ -22,6 +22,12 @@ use tokio::net::UnixListener;
 const ACCEPT_HEADER: &str = "prime-interface-accept";
 const VERSION_HEADER: &str = "prime-interface-version";
 
+#[derive(Debug, PartialEq, Eq)]
+enum NegotiationError {
+    VersionRequired,
+    Incompatible(Vec<String>),
+}
+
 pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
     if let Ok(metadata) = fs::symlink_metadata(socket_path) {
         if !metadata.file_type().is_socket() {
@@ -85,7 +91,7 @@ async fn route(
 
     let negotiated = match negotiate(request.headers()) {
         Ok(version) => version,
-        Err(response) => return Ok(response),
+        Err(error) => return Ok(negotiation_error_response(error)),
     };
 
     let response = match request.uri().path() {
@@ -158,15 +164,9 @@ async fn route(
     Ok(response)
 }
 
-fn negotiate(headers: &HeaderMap) -> Result<&'static str, Response<Full<Bytes>>> {
+fn negotiate(headers: &HeaderMap) -> Result<&'static str, NegotiationError> {
     let Some(value) = headers.get(ACCEPT_HEADER) else {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "PRIME_INTERFACE_VERSION_REQUIRED",
-            "Send Prime-Interface-Accept with supported interface versions",
-            vec![CAPABILITY_INTERFACE_VERSION.to_owned()],
-            Vec::new(),
-        ));
+        return Err(NegotiationError::VersionRequired);
     };
 
     let requested = value
@@ -184,13 +184,26 @@ fn negotiate(headers: &HeaderMap) -> Result<&'static str, Response<Full<Bytes>>>
     {
         Ok(CAPABILITY_INTERFACE_VERSION)
     } else {
-        Err(error_response(
+        Err(NegotiationError::Incompatible(requested))
+    }
+}
+
+fn negotiation_error_response(error: NegotiationError) -> Response<Full<Bytes>> {
+    match error {
+        NegotiationError::VersionRequired => error_response(
+            StatusCode::BAD_REQUEST,
+            "PRIME_INTERFACE_VERSION_REQUIRED",
+            "Send Prime-Interface-Accept with supported interface versions",
+            vec![CAPABILITY_INTERFACE_VERSION.to_owned()],
+            Vec::new(),
+        ),
+        NegotiationError::Incompatible(requested) => error_response(
             StatusCode::CONFLICT,
             "PRIME_INTERFACE_INCOMPATIBLE",
             "No mutually supported Prime Capability Interface version exists",
             vec![CAPABILITY_INTERFACE_VERSION.to_owned()],
             requested,
-        ))
+        ),
     }
 }
 
@@ -253,7 +266,17 @@ mod tests {
     fn negotiation_fails_without_overlap() {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT_HEADER, HeaderValue::from_static("2.0"));
-        let response = negotiate(&headers).expect_err("zero overlap must fail");
-        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            negotiate(&headers).expect_err("zero overlap must fail"),
+            NegotiationError::Incompatible(vec!["2.0".to_owned()])
+        );
+    }
+
+    #[test]
+    fn negotiation_requires_explicit_versions() {
+        assert_eq!(
+            negotiate(&HeaderMap::new()).expect_err("missing versions must fail"),
+            NegotiationError::VersionRequired
+        );
     }
 }
