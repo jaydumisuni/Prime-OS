@@ -1,6 +1,9 @@
+pub mod exec;
 pub mod generation;
 pub mod hardware;
 pub mod identity;
+pub mod policy;
+pub mod registry;
 pub mod server;
 
 use prime_contracts::{
