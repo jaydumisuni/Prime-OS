@@ -18,9 +18,11 @@ The exact base image is pinned by immutable OCI digest in the image build manife
 
 ### 3. Canonical system image and updates
 
-Prime P1 system generations are bootable OCI images consumed by **bootc**, with OSTree-backed transactional deployment/rollback underneath.
+Prime P1 system generations are bootable OCI images consumed by **bootc**.
 
-Prime owns the higher-level generation state machine and policy. Prime does not fork or duplicate bootc's transaction engine.
+P1 uses bootc's **Composefs deployment backend** rather than its OSTree backend. This correction is required by the frozen systemd-boot/UKI architecture: current upstream bootc supports systemd-boot with Composefs, while systemd-boot is not supported by the OSTree backend. P1 is a lab/First-Light proof lane, so it may consume that explicitly experimental bootc backend only while its limitations remain visible and the exact bootc version is pinned/proven. Prime does not expose Composefs identifiers as Prime Host or generation identity.
+
+Prime owns the higher-level generation state machine and policy. Prime does not fork or duplicate bootc's transaction/deployment engine.
 
 P1 supports staging and generation identity. P1.5 owns the exhaustive failure/rollback campaign.
 
@@ -35,6 +37,8 @@ P1 uses:
 - Unified Kernel Images (UKI);
 - Boot Loader Specification entries;
 - boot-attempt counting/automatic boot assessment capability.
+
+The P1 image follows bootc's Composefs + UKI path: the input image must provide systemd-boot and must not retain `bootupd`; the UKI is generated from the image root/kernel material rather than merely installing UKI tooling. Secure Boot signing is not a P1 First-Light completion requirement, but any unsigned P1 proof must report Secure Boot as disabled/unproven rather than claiming a signed chain of trust.
 
 Prime's current, previous-known-good and recovery choices remain explicit Prime generation concepts even when the underlying boot/update machinery provides the deployment mechanics.
 
@@ -122,6 +126,7 @@ If a requested policy cannot be enforced, Prime reports the limitation and fails
 
 - building a second init/service manager;
 - mutating a conventional distro install and calling it Prime;
+- silently using bootc's GRUB/bootupd path while claiming the frozen systemd-boot architecture;
 - GNOME/KDE/COSMIC as the Prime Shell;
 - Electron as a mandatory shell runtime;
 - GitHub/Oracle queue transport as Prime authority;
