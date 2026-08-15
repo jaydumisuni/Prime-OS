@@ -327,6 +327,7 @@ dependencies = [
  "prime-hardware",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "time",
