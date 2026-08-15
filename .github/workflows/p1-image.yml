@@ -15,6 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install privileged bootc build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman skopeo fuse-overlayfs
+          sudo modprobe fuse || true
+          test -e /dev/fuse
+          podman --version
+          skopeo --version
+
       - name: Assert Rust toolchain identity
         shell: bash
         run: |
@@ -34,7 +45,7 @@ jobs:
           case "$base_digest" in sha256:????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
           printf 'image=%s\n' "$base_image" >> "$GITHUB_OUTPUT"
           printf 'digest=%s\n' "$base_digest" >> "$GITHUB_OUTPUT"
-          docker pull "$base_image"
+          sudo podman pull "$base_image"
 
       - name: Build Prime Core release binary
         shell: bash
@@ -58,7 +69,10 @@ jobs:
           printf 'source_revision=%s\n' "$source_revision" >> "$GITHUB_OUTPUT"
           printf 'created_at=%s\n' "$created_at" >> "$GITHUB_OUTPUT"
           printf 'generation_id=%s\n' "$generation_id" >> "$GITHUB_OUTPUT"
-          docker build \
+          sudo podman build \
+            --cap-add=all \
+            --device /dev/fuse \
+            --security-opt label=disable \
             --platform linux/amd64 \
             --build-arg PRIME_BASE_IMAGE="$PRIME_BASE_IMAGE" \
             --build-arg PRIME_BASE_DIGEST="$PRIME_BASE_DIGEST" \
@@ -68,7 +82,7 @@ jobs:
             --build-arg PRIME_CREATED_AT="$created_at" \
             --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
             -f image/Containerfile \
-            -t prime-os:p1 .
+            -t localhost/prime-os:p1 .
 
       - name: Inspect Prime image contract
         shell: bash
@@ -79,13 +93,13 @@ jobs:
           EXPECTED_BASE_DIGEST: ${{ steps.base.outputs.digest }}
         run: |
           set -euo pipefail
-          docker run --rm \
+          sudo podman run --rm \
             -e EXPECTED_SOURCE_REVISION \
             -e EXPECTED_CREATED_AT \
             -e EXPECTED_GENERATION_ID \
             -e EXPECTED_BASE_DIGEST \
             --entrypoint /bin/bash \
-            prime-os:p1 -ceu '
+            localhost/prime-os:p1 -ceu '
               test -x /usr/libexec/prime/primed
               test -x /usr/sbin/bootc
               test -x /usr/sbin/systemd-run
@@ -109,6 +123,30 @@ jobs:
               python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == os.environ["EXPECTED_BASE_DIGEST"]; assert seed["boot_attempt_limit"] == 3'\''
             '
 
+      - name: Prove UKI matches canonical storage digest
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          canonical_digest="$(sudo podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --tmpfs /var/tmp:size=8g \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            localhost/prime-os:p1 \
+            bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
+          case "$canonical_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $canonical_digest" >&2; exit 1 ;; esac
+          embedded_digest="$(sudo podman run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            uki="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
+            test -n "$uki"
+            grep -aoE "composefs=[0-9a-f]{128}" "$uki" | head -n1 | cut -d= -f2
+          ')"
+          test -n "$embedded_digest"
+          printf 'canonical storage digest: %s\n' "$canonical_digest"
+          printf 'UKI embedded digest:      %s\n' "$embedded_digest"
+          test "$embedded_digest" = "$canonical_digest"
+          printf 'digest=%s\n' "$canonical_digest" >> "$GITHUB_OUTPUT"
+
       - name: Compute OCI manifest evidence
         shell: bash
         env:
@@ -116,15 +154,14 @@ jobs:
           CREATED_AT: ${{ steps.build.outputs.created_at }}
           GENERATION_ID: ${{ steps.build.outputs.generation_id }}
           BASE_DIGEST: ${{ steps.base.outputs.digest }}
+          COMPOSEFS_DIGEST: ${{ steps.seal.outputs.digest }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq skopeo
-          docker save prime-os:p1 -o /tmp/prime-p1.docker.tar
-          skopeo copy docker-archive:/tmp/prime-p1.docker.tar oci-archive:/tmp/prime-p1.oci.tar:prime-os >/dev/null
+          sudo podman save --format oci-archive -o /tmp/prime-p1.oci.tar localhost/prime-os:p1
+          sudo chmod 0644 /tmp/prime-p1.oci.tar
           skopeo inspect --raw oci-archive:/tmp/prime-p1.oci.tar > /tmp/prime-p1.manifest.json
           manifest_digest="sha256:$(sha256sum /tmp/prime-p1.manifest.json | awk '{print $1}')"
-          image_id="$(docker image inspect prime-os:p1 --format '{{.Id}}')"
+          image_id="$(sudo podman image inspect localhost/prime-os:p1 --format '{{.Id}}')"
           cat > /tmp/prime-p1-image-evidence.json <<EOF
           {
             "schema": "prime.image-build-evidence.v1",
@@ -132,10 +169,11 @@ jobs:
             "generation_id": "$GENERATION_ID",
             "created_at": "$CREATED_AT",
             "base_image_digest": "$BASE_DIGEST",
+            "composefs_storage_digest": "$COMPOSEFS_DIGEST",
             "oci_archive_manifest_digest": "$manifest_digest",
-            "docker_image_id": "$image_id",
+            "podman_image_id": "$image_id",
             "platform": "linux/amd64",
-            "deployment_backend": "COMPOSEFS_SELECTED_BY_UNIFIED_KERNEL_PENDING_DISK_PROOF",
+            "deployment_backend": "COMPOSEFS_CANONICAL_SEAL_PROVEN_PENDING_DISK_PROOF",
             "bootloader": "SYSTEMD_BOOT_EXPLICIT_BOOTC_INSTALL_POLICY_PENDING_DISK_PROOF",
             "secure_boot": "DISABLED_OR_UNPROVEN_FOR_P1"
           }
