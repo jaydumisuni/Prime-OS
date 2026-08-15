@@ -15,7 +15,7 @@ Every Prime-managed workload has an exact policy revision, regardless of executi
   "schema": "prime.workload-policy.v1",
   "policy_id": "uuid",
   "revision": 1,
-  "digest": "sha256",
+  "digest": "sha256:...",
   "class": "SYSTEM_CORE|SHELL|USER_APP|BUILD|FOREIGN_RUNTIME|RECOVERY",
   "cpu": {"weight": 100, "quota_percent": null},
   "memory": {"max_bytes": null, "swap_max_bytes": null},
@@ -34,18 +34,55 @@ Every Prime-managed workload has an exact policy revision, regardless of executi
 }
 ```
 
+## Digest and persistence
+
+For v1, `digest` is SHA-256 over the compact UTF-8 JSON serialization of the typed policy with `digest` set to the empty string. The stored record must re-compute to the recorded digest before use.
+
+P1 durable layout:
+
+```text
+/var/lib/prime/policies/<policy_id>/
+  revisions/<20-digit-revision>.json
+  selected
+```
+
+Revision files are append-only/create-once. `selected` is atomically replaced and may only identify an existing digest-valid revision.
+
+## P1 native enforcement compiler
+
+P1 separates **policy truth** from **backend enforcement support**.
+
+The first native Linux compiler may emit a transient-systemd enforcement plan for controls that systemd/cgroup machinery can express mechanically, including:
+
+- CPU weight and optional quota;
+- memory and swap ceilings;
+- I/O weight;
+- task/process ceiling;
+- maximum runtime;
+- baseline no-new-privileges and kernel/control-group hardening;
+- `OFFLINE` network isolation through a private network namespace;
+- GPU/device isolation through `PrivateDevices` for a policy that denies GPU/device access.
+
+The compiler must reject, rather than weaken, any hard policy it cannot yet enforce exactly.
+
+In the initial compiler that means these remain **unsupported and launch-blocking** until their dedicated backend lands:
+
+- storage quota;
+- explicit filesystem exposure lists/Landlock rules;
+- USB/other device allowlists;
+- secret grants/broker delivery;
+- exclusive GPU ownership;
+- `LAN_ONLY`, `OUTBOUND_INTERNET`, `DESTINATION_RESTRICTED`, `LOCAL_LISTENER`, or `INBOUND_ALLOWED` network policies.
+
+`UNRESTRICTED` is only accepted when the exact policy explicitly requests it. `OFFLINE` is accepted through isolated networking. No broader network access is inferred from an empty destination list.
+
+This deliberately makes early Prime restrictive: unsupported policy semantics block launch instead of silently becoming best-effort.
+
 ## P1 native enforcement mapping
 
-Prime uses the strongest available matching Linux mechanism and records what was actually enforced:
+Prime records the exact properties/mechanisms it intends to install. Initial systemd/cgroup mappings include CPU/memory/task/I/O/runtime controls where requested. This follows the systemd resource-control contract rather than inventing a parallel cgroup schema.
 
-- systemd transient scopes/cgroup v2 — CPU, memory, process and I/O controls;
-- namespaces — process/mount/network isolation where required;
-- seccomp — syscall restriction;
-- Landlock — supported unprivileged filesystem restriction;
-- network namespaces/nftables — restrictive network modes;
-- explicit broker/allowlist — device and secret access.
-
-A launch requiring a policy control that Prime cannot enforce is denied with a mechanical reason. `best effort` is not silently substituted for a hard policy.
+The eventual launcher must verify that the transient unit was admitted by the system manager before claiming enforcement. Compilation alone is not runtime proof.
 
 ## Filesystem exposure
 
