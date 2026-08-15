@@ -336,6 +336,7 @@ dependencies = [
  "hyper-util",
  "prime-contracts",
  "prime-hardware",
+ "prime-storage",
  "serde",
  "serde_json",
  "sha2",
