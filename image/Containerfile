@@ -1,7 +1,25 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PRIME_BASE_IMAGE
-FROM ${PRIME_BASE_IMAGE} AS rootfs
+FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
+
+ARG TARGETARCH
+RUN --mount=type=tmpfs,target=/run \
+    --mount=type=tmpfs,target=/tmp \
+    set -eux; \
+    test "${TARGETARCH}" = "amd64"; \
+    test -x /usr/libexec/bootc-base-imagectl; \
+    rm -rf /target-rootfs; \
+    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs; \
+    test -x /target-rootfs/usr/sbin/bootc; \
+    test -x /target-rootfs/usr/bin/systemctl; \
+    test -f /target-rootfs/usr/lib/os-release
+
+# Reconstruct the Fedora root filesystem into a fresh image layer before sealing.
+# This avoids hashing overlay/extraction-only parent-directory metadata into the
+# UKI composefs digest; bootc's installer hashes the canonical OCI storage view.
+FROM scratch AS rootfs
+COPY --from=rootfs-builder /target-rootfs/ /
 
 ARG TARGETARCH
 ARG PRIME_BASE_DIGEST
@@ -10,13 +28,19 @@ ARG PRIME_SOURCE_REVISION
 ARG PRIME_CREATED_AT
 ARG PRIME_BOOT_ATTEMPT_LIMIT=3
 
-LABEL org.opencontainers.image.title="Prime OS P1 First Light" \
+LABEL containers.bootc="1" \
+      org.opencontainers.image.title="Prime OS P1 First Light" \
       org.opencontainers.image.vendor="THETECHGUY DIGITAL SOLUTIONS" \
       org.opencontainers.image.revision="${PRIME_SOURCE_REVISION}"
+ENV container=oci
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
 
 RUN set -eux; \
     test "${TARGETARCH}" = "amd64"; \
     test -n "${PRIME_BASE_DIGEST}"; \
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
     dnf -y install \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
