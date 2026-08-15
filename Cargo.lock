@@ -316,6 +316,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prime-storage"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "prime-contracts",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "primed"
 version = "0.1.0"
 dependencies = [
