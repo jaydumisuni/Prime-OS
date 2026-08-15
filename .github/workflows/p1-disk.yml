@@ -48,7 +48,7 @@ jobs:
           cargo build --locked --release -p primed
           test -x target/release/primed
 
-      - name: Build exact Prime bootc image in rootful storage
+      - name: Build provisional Prime image in rootful storage
         id: prime
         shell: bash
         run: |
@@ -72,35 +72,85 @@ jobs:
             --build-arg PRIME_CREATED_AT="$created_at" \
             --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
             -f image/Containerfile \
-            -t localhost/prime-os:p1 .
-          sudo podman image exists localhost/prime-os:p1
-          sudo podman image inspect localhost/prime-os:p1 --format '{{.Id}} {{.Os}} {{.Architecture}}'
+            -t localhost/prime-os:p1-provisional .
           printf 'source_revision=%s\n' "$source_revision" >> "$GITHUB_OUTPUT"
+          printf 'created_at=%s\n' "$created_at" >> "$GITHUB_OUTPUT"
           printf 'generation_id=%s\n' "$generation_id" >> "$GITHUB_OUTPUT"
+          printf 'base_image=%s\n' "$base_image" >> "$GITHUB_OUTPUT"
+          printf 'base_digest=%s\n' "$base_digest" >> "$GITHUB_OUTPUT"
 
-      - name: Prove UKI matches canonical storage digest
-        id: seal
+      - name: Compute provisional canonical storage digest
+        id: canonical
         shell: bash
         run: |
           set -euo pipefail
-          canonical_digest="$(sudo podman run --rm \
+          digest="$(sudo podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --tmpfs /var/tmp:size=8g \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            localhost/prime-os:p1-provisional \
+            bootc container compute-composefs-digest-from-storage localhost/prime-os:p1-provisional | tail -n1)"
+          case "$digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $digest" >&2; exit 1 ;; esac
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'provisional canonical storage digest: %s\n' "$digest"
+
+      - name: Rebuild Prime with canonical UKI seal
+        shell: bash
+        env:
+          PRIME_BASE_IMAGE: ${{ steps.prime.outputs.base_image }}
+          PRIME_BASE_DIGEST: ${{ steps.prime.outputs.base_digest }}
+          PRIME_COMPOSEFS_DIGEST: ${{ steps.canonical.outputs.digest }}
+          SOURCE_REVISION: ${{ steps.prime.outputs.source_revision }}
+          CREATED_AT: ${{ steps.prime.outputs.created_at }}
+          GENERATION_ID: ${{ steps.prime.outputs.generation_id }}
+        run: |
+          set -euo pipefail
+          sudo podman build \
+            --cap-add=all \
+            --device /dev/fuse \
+            --security-opt label=disable \
+            --platform linux/amd64 \
+            --build-arg PRIME_BASE_IMAGE="$PRIME_BASE_IMAGE" \
+            --build-arg PRIME_BASE_DIGEST="$PRIME_BASE_DIGEST" \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg PRIME_GENERATION_ID="$GENERATION_ID" \
+            --build-arg PRIME_SOURCE_REVISION="$SOURCE_REVISION" \
+            --build-arg PRIME_CREATED_AT="$CREATED_AT" \
+            --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
+            --build-arg PRIME_COMPOSEFS_DIGEST="$PRIME_COMPOSEFS_DIGEST" \
+            -f image/Containerfile \
+            -t localhost/prime-os:p1 .
+          sudo podman image exists localhost/prime-os:p1
+          sudo podman image inspect localhost/prime-os:p1 --format '{{.Id}} {{.Os}} {{.Architecture}}'
+
+      - name: Prove final UKI and OCI storage share one seal
+        id: seal
+        shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ steps.canonical.outputs.digest }}
+        run: |
+          set -euo pipefail
+          final_digest="$(sudo podman run --rm \
             --privileged \
             --security-opt label=disable \
             --tmpfs /var/tmp:size=8g \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             localhost/prime-os:p1 \
             bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
-          case "$canonical_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical digest: $canonical_digest" >&2; exit 1 ;; esac
           embedded_digest="$(sudo podman run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
             uki="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
             test -n "$uki"
             grep -aoE "composefs=[0-9a-f]{128}" "$uki" | head -n1 | cut -d= -f2
           ')"
-          test -n "$embedded_digest"
-          printf 'canonical storage digest: %s\n' "$canonical_digest"
-          printf 'UKI embedded digest:      %s\n' "$embedded_digest"
-          test "$embedded_digest" = "$canonical_digest"
-          printf 'digest=%s\n' "$canonical_digest" >> "$GITHUB_OUTPUT"
+          case "$final_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          case "$embedded_digest" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          printf 'provisional canonical digest: %s\n' "$EXPECTED_DIGEST"
+          printf 'final canonical digest:       %s\n' "$final_digest"
+          printf 'UKI embedded digest:          %s\n' "$embedded_digest"
+          test "$final_digest" = "$EXPECTED_DIGEST"
+          test "$embedded_digest" = "$EXPECTED_DIGEST"
+          printf 'digest=%s\n' "$final_digest" >> "$GITHUB_OUTPUT"
 
       - name: Prove image-builder sees unified Prime image
         shell: bash
