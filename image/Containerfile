@@ -16,8 +16,9 @@ RUN --mount=type=tmpfs,target=/run \
     test -f /target-rootfs/usr/lib/os-release
 
 # Reconstruct the Fedora root filesystem into a fresh image layer before sealing.
-# This avoids hashing overlay/extraction-only parent-directory metadata into the
-# UKI composefs digest; bootc's installer hashes the canonical OCI storage view.
+# Fedora 44 currently has a known directory-walk vs OCI-storage Composefs digest
+# divergence. The outer build performs a provisional pass, computes the canonical
+# OCI-storage digest, then rebuilds only the UKI stage with that digest.
 FROM scratch AS rootfs
 COPY --from=rootfs-builder /target-rootfs/ /
 
@@ -107,18 +108,51 @@ RUN set -eux; \
     test "$(find /kernel -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
 
 FROM rootfs AS uki-tools
+ARG PRIME_COMPOSEFS_DIGEST
 RUN --mount=type=bind,from=split,target=/target,ro \
     --mount=type=bind,from=split,source=/kernel,target=/kernel,ro \
     set -eux; \
     mkdir -p /out; \
     kver="$(find /kernel -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n1)"; \
     test -n "${kver}"; \
+    provisional="/out/${kver}.provisional.efi"; \
+    final="/out/${kver}.efi"; \
     bootc container ukify \
       --rootfs /target \
       --kernel-dir "/kernel/${kver}" \
       -- \
-      --output "/out/${kver}.efi"; \
-    test -s "/out/${kver}.efi"
+      --output "${provisional}"; \
+    test -s "${provisional}"; \
+    if test -n "${PRIME_COMPOSEFS_DIGEST:-}"; then \
+      case "${PRIME_COMPOSEFS_DIGEST}" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical Composefs digest" >&2; exit 1 ;; esac; \
+      ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
+      PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST}" python3 - <<'PY'
+import json
+import os
+import pathlib
+import re
+
+data = json.load(open('/tmp/prime-provisional-uki.json', 'r', encoding='utf-8'))
+cmdline = data['.cmdline']['text'].strip()
+digest = os.environ['PRIME_COMPOSEFS_DIGEST']
+updated, count = re.subn(r'(?<!\S)composefs=\??[0-9a-f]{128}(?!\S)', f'composefs={digest}', cmdline)
+assert count == 1, (count, cmdline)
+assert f'composefs={digest}' in updated
+pathlib.Path('/tmp/prime-canonical-cmdline').write_text(updated, encoding='utf-8')
+PY
+      ukify build \
+        --linux "/kernel/${kver}/vmlinuz" \
+        --initrd "/kernel/${kver}/initramfs.img" \
+        --uname "${kver}" \
+        --cmdline @/tmp/prime-canonical-cmdline \
+        --os-release @/target/usr/lib/os-release \
+        --output "${final}"; \
+      rm -f "${provisional}" /tmp/prime-provisional-uki.json /tmp/prime-canonical-cmdline; \
+    else \
+      mv "${provisional}" "${final}"; \
+    fi; \
+    test -s "${final}"; \
+    test "$(find /out -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 1
 
 FROM split AS final
 COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
