@@ -27,7 +27,7 @@ COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
 
 RUN chmod 0755 /usr/libexec/prime/primed \
     && systemctl enable primed.service \
-    && systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true
+    && (systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true)
 
 RUN test -n "${PRIME_GENERATION_ID}" \
     && test -n "${PRIME_SOURCE_REVISION}" \
