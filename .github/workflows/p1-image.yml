@@ -1,0 +1,128 @@
+name: Prime P1 Image
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - build/p1-first-light
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert Rust toolchain identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          test "$(rustc --version | awk '{print $2}')" = "1.97.1"
+
+      - name: Build Prime Core release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          cargo build --locked --release -p primed
+          test -x target/release/primed
+
+      - name: Build digest-pinned Prime bootc image
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_revision="$GITHUB_SHA"
+          created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          generation_id="p1-first-light-${GITHUB_SHA:0:12}"
+          printf 'source_revision=%s\n' "$source_revision" >> "$GITHUB_OUTPUT"
+          printf 'created_at=%s\n' "$created_at" >> "$GITHUB_OUTPUT"
+          printf 'generation_id=%s\n' "$generation_id" >> "$GITHUB_OUTPUT"
+          docker build \
+            --platform linux/amd64 \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg PRIME_GENERATION_ID="$generation_id" \
+            --build-arg PRIME_SOURCE_REVISION="$source_revision" \
+            --build-arg PRIME_CREATED_AT="$created_at" \
+            --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
+            -f image/Containerfile \
+            -t prime-os:p1 .
+
+      - name: Inspect Prime image contract
+        shell: bash
+        env:
+          EXPECTED_SOURCE_REVISION: ${{ steps.build.outputs.source_revision }}
+          EXPECTED_CREATED_AT: ${{ steps.build.outputs.created_at }}
+          EXPECTED_GENERATION_ID: ${{ steps.build.outputs.generation_id }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e EXPECTED_SOURCE_REVISION \
+            -e EXPECTED_CREATED_AT \
+            -e EXPECTED_GENERATION_ID \
+            --entrypoint /bin/bash \
+            prime-os:p1 -ceu '
+              test -x /usr/libexec/prime/primed
+              test -x /usr/sbin/bootc
+              test -x /usr/sbin/systemd-run
+              test -x /usr/bin/ukify
+              test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi
+              test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub
+              test -f /usr/lib/prime/generation-seed.json
+              test -L /etc/systemd/system/multi-user.target.wants/primed.service
+              test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
+              rpm -q systemd-ukify-259.8-1.fc44 systemd-boot-unsigned-259.8-1.fc44
+              python3 - <<"PY"
+import json, os
+with open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8") as handle:
+    seed = json.load(handle)
+assert seed["schema"] == "prime.generation-seed.v1"
+assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]
+assert seed["channel"] == "LAB"
+assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]
+assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]
+assert seed["base_image_digest"] == "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556"
+assert seed["boot_attempt_limit"] == 3
+PY
+            '
+
+      - name: Compute OCI manifest evidence
+        shell: bash
+        env:
+          SOURCE_REVISION: ${{ steps.build.outputs.source_revision }}
+          CREATED_AT: ${{ steps.build.outputs.created_at }}
+          GENERATION_ID: ${{ steps.build.outputs.generation_id }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo
+          docker save prime-os:p1 -o /tmp/prime-p1.docker.tar
+          skopeo copy docker-archive:/tmp/prime-p1.docker.tar oci-archive:/tmp/prime-p1.oci.tar:prime-os >/dev/null
+          skopeo inspect --raw oci-archive:/tmp/prime-p1.oci.tar > /tmp/prime-p1.manifest.json
+          manifest_digest="sha256:$(sha256sum /tmp/prime-p1.manifest.json | awk '{print $1}')"
+          image_id="$(docker image inspect prime-os:p1 --format '{{.Id}}')"
+          cat > /tmp/prime-p1-image-evidence.json <<EOF
+          {
+            "schema": "prime.image-build-evidence.v1",
+            "source_revision": "$SOURCE_REVISION",
+            "generation_id": "$GENERATION_ID",
+            "created_at": "$CREATED_AT",
+            "base_image_digest": "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556",
+            "oci_manifest_digest": "$manifest_digest",
+            "docker_image_id": "$image_id",
+            "platform": "linux/amd64",
+            "secure_boot": "UNPROVEN_DISABLED_FOR_P1_IMAGE_MECHANISM"
+          }
+          EOF
+          python3 -m json.tool /tmp/prime-p1-image-evidence.json
+          {
+            echo '### Prime P1 image evidence'
+            echo '```json'
+            cat /tmp/prime-p1-image-evidence.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
