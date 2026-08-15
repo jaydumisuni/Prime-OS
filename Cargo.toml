@@ -2,6 +2,7 @@
 members = [
     "crates/prime-contracts",
     "crates/prime-hardware",
+    "crates/prime-storage",
     "crates/primed",
 ]
 resolver = "2"
@@ -15,8 +16,10 @@ bytes = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2.189"
 prime-contracts = { path = "crates/prime-contracts" }
 prime-hardware = { path = "crates/prime-hardware" }
+prime-storage = { path = "crates/prime-storage" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

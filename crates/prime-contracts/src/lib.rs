@@ -1,10 +1,12 @@
 pub mod application;
 pub mod exec;
 pub mod policy;
+pub mod storage;
 
 pub use application::*;
 pub use exec::*;
 pub use policy::*;
+pub use storage::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
