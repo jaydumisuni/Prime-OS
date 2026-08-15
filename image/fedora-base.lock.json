@@ -1,0 +1,11 @@
+{
+  "schema": "prime.image-base-lock.v1",
+  "source_tag": "quay.io/fedora/fedora-bootc:44",
+  "registry_repository": "quay.io/fedora/fedora-bootc",
+  "os": "linux",
+  "architecture": "amd64",
+  "manifest_digest": "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556",
+  "resolved_at": "2026-08-15T08:30:09Z",
+  "resolver_workflow_run": 31874622763,
+  "verification": "skopeo re-opened the digest-pinned manifest and confirmed the same digest, linux, amd64, and quay.io/fedora/fedora-bootc repository identity"
+}
