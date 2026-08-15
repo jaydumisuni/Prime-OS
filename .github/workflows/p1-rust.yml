@@ -1,18 +1,17 @@
 name: Prime P1 Rust
 
+# Hosted GitHub Actions are intentionally not an execution authority for Prime.
+# The canonical P1 proof runs locally through tools/prove-p1-local.sh on Kratos.
+# This workflow is retained only as an optional self-hosted adapter.
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-      - build/p1-first-light
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, kratos]
     steps:
       - uses: actions/checkout@v6
       - name: Assert Rust toolchain identity
