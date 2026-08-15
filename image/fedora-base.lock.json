@@ -1,11 +1,13 @@
 {
   "schema": "prime.image-base-lock.v1",
-  "source_tag": "quay.io/fedora/fedora-bootc:44",
+  "source_tag": "quay.io/fedora/fedora-bootc:44-x86_64",
+  "pinned_reference": "quay.io/fedora/fedora-bootc:44-x86_64@sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074",
   "registry_repository": "quay.io/fedora/fedora-bootc",
   "os": "linux",
   "architecture": "amd64",
-  "manifest_digest": "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556",
-  "resolved_at": "2026-08-15T08:30:09Z",
-  "resolver_workflow_run": 31874622763,
-  "verification": "skopeo re-opened the digest-pinned manifest and confirmed the same digest, linux, amd64, and quay.io/fedora/fedora-bootc repository identity"
+  "manifest_digest": "sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074",
+  "resolved_at": "2026-08-15T11:00:59Z",
+  "resolver_workflow_run": 31880978435,
+  "verification": "skopeo listed active Fedora 44 architecture tags and resolved 44-x86_64 directly to this manifest digest",
+  "retention_limitation": "Fedora publishes moving active release tags on Quay. An older untagged child manifest became unreachable during P1 work, so this external lock is suitable for current P1 proof but is not a permanent archival guarantee. Accepted Prime base inputs must eventually be mirrored into a Prime-controlled immutable registry namespace."
 }
