@@ -16,8 +16,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| PathBuf::from("/run/prime/core.sock"));
     let systemd_run = env::var_os("PRIME_SYSTEMD_RUN")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/bin/systemd-run"));
-    let bootc = PathBuf::from("/usr/bin/bootc");
+        .unwrap_or_else(|| PathBuf::from("/usr/sbin/systemd-run"));
+    let bootc = PathBuf::from("/usr/sbin/bootc");
     let storage_mountinfo = PathBuf::from("/proc/self/mountinfo");
     let storage_policy_file = env::var_os("PRIME_STORAGE_POLICY_FILE")
         .map(PathBuf::from)
