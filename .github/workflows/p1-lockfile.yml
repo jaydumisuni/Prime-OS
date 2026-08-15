@@ -1,0 +1,31 @@
+name: Prime P1 Lockfile Bootstrap
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: build/p1-first-light
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Commit exact resolved dependency graph
+        shell: bash
+        run: |
+          if git diff --quiet -- Cargo.lock && git ls-files --error-unmatch Cargo.lock >/dev/null 2>&1; then
+            echo "Cargo.lock is already committed and current."
+            exit 0
+          fi
+          git config user.name "THE TECH GUY"
+          git config user.email "65334711+jaydumisuni@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "build: pin P1 Rust dependency graph"
+          git push origin HEAD:build/p1-first-light
