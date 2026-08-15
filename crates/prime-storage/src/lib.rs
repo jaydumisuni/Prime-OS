@@ -257,7 +257,10 @@ pub fn preflight(
         return preflight_result(
             request,
             Some(target_mount_id),
-            mount.capacity.as_ref().map(|capacity| capacity.available_bytes),
+            mount
+                .capacity
+                .as_ref()
+                .map(|capacity| capacity.available_bytes),
             inventory.reserve.protected_rollback_recovery_bytes,
             false,
             StoragePreflightReason::TargetMountNotLocalPhysical,
@@ -364,9 +367,7 @@ fn reserve_visibility(
         Ok(()) => (
             StorageReserveVisibility {
                 policy_configured: true,
-                protected_rollback_recovery_bytes: Some(
-                    policy.protected_rollback_recovery_bytes,
-                ),
+                protected_rollback_recovery_bytes: Some(policy.protected_rollback_recovery_bytes),
                 limitations: Vec::new(),
             },
             Some(policy),
@@ -424,7 +425,10 @@ fn evaluate_pressure(
     if root.scope != StorageScope::LocalPhysical {
         return StoragePressure {
             state: StoragePressureState::Unknown,
-            available_bytes: root.capacity.as_ref().map(|capacity| capacity.available_bytes),
+            available_bytes: root
+                .capacity
+                .as_ref()
+                .map(|capacity| capacity.available_bytes),
             low_threshold_bytes: Some(policy.low_space_warning_bytes),
             critical_threshold_bytes: Some(policy.critical_space_bytes),
             limitations: vec!["root mount is not classified as LOCAL_PHYSICAL".to_owned()],
@@ -500,13 +504,22 @@ fn aggregate_local_physical(
 fn add_capacity(totals: &mut StorageTotals, capacity: &StorageCapacity) -> Result<(), ()> {
     let next = StorageTotals {
         filesystem_count: totals.filesystem_count.checked_add(1).ok_or(())?,
-        total_bytes: totals.total_bytes.checked_add(capacity.total_bytes).ok_or(())?,
-        free_bytes: totals.free_bytes.checked_add(capacity.free_bytes).ok_or(())?,
+        total_bytes: totals
+            .total_bytes
+            .checked_add(capacity.total_bytes)
+            .ok_or(())?,
+        free_bytes: totals
+            .free_bytes
+            .checked_add(capacity.free_bytes)
+            .ok_or(())?,
         available_bytes: totals
             .available_bytes
             .checked_add(capacity.available_bytes)
             .ok_or(())?,
-        used_bytes: totals.used_bytes.checked_add(capacity.used_bytes).ok_or(())?,
+        used_bytes: totals
+            .used_bytes
+            .checked_add(capacity.used_bytes)
+            .ok_or(())?,
         reserved_bytes: totals
             .reserved_bytes
             .checked_add(capacity.reserved_bytes)
@@ -647,10 +660,7 @@ fn classify_scope(filesystem_type: &str, mount_source: Option<&[u8]>) -> Storage
     if is_remote_filesystem(&fs) {
         return StorageScope::Remote;
     }
-    if is_local_filesystem(&fs)
-        || mount_source
-            .is_some_and(|source| source.starts_with(b"/dev/"))
-    {
+    if is_local_filesystem(&fs) || mount_source.is_some_and(|source| source.starts_with(b"/dev/")) {
         return StorageScope::LocalPhysical;
     }
     StorageScope::Unknown
@@ -837,13 +847,8 @@ mod tests {
         let source = FixtureCapacity::default()
             .with(b"/", counters(100, 30, 25))
             .with(b"/data space", counters(100, 30, 25));
-        let inventory = probe_with_source(
-            mountinfo,
-            "t1".to_owned(),
-            "g1".to_owned(),
-            None,
-            &source,
-        );
+        let inventory =
+            probe_with_source(mountinfo, "t1".to_owned(), "g1".to_owned(), None, &source);
         let data = inventory
             .mounts
             .iter()
@@ -879,13 +884,8 @@ mod tests {
             .with(b"/run", counters(10, 8, 8))
             .with(b"/overlay", counters(100, 30, 25))
             .with(b"/remote", counters(1000, 900, 900));
-        let inventory = probe_with_source(
-            mountinfo,
-            "t1".to_owned(),
-            "g1".to_owned(),
-            None,
-            &source,
-        );
+        let inventory =
+            probe_with_source(mountinfo, "t1".to_owned(), "g1".to_owned(), None, &source);
         assert_eq!(inventory.local_physical_totals.filesystem_count, 1);
         assert_eq!(inventory.local_physical_totals.total_bytes, 409_600);
         assert_eq!(inventory.mounts[2].scope, StorageScope::Memory);
