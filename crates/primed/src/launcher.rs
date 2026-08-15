@@ -1,8 +1,6 @@
 use crate::exec;
 use crate::identity;
-use crate::policy::{
-    compile_native, NativeEnforcementPlan, PolicyCompileError, SystemdProperty,
-};
+use crate::policy::{compile_native, NativeEnforcementPlan, PolicyCompileError, SystemdProperty};
 use crate::registry::{self, RegistryError};
 use prime_contracts::{
     ApplicationProfile, ArtifactFormat, ExecutionBackend, GenerationRecord, HostIdentity,
@@ -91,7 +89,9 @@ pub fn prepare_native_launch(
     }
     let candidate = Path::new(&request.artifact_path);
     if !candidate.is_absolute() {
-        return Err(LaunchError::InvalidRequest("artifact_path must be absolute"));
+        return Err(LaunchError::InvalidRequest(
+            "artifact_path must be absolute",
+        ));
     }
 
     let profile = registry::load_selected_profile(state_dir, request.application_id)?;
@@ -125,12 +125,8 @@ pub fn prepare_native_launch(
         });
     }
 
-    let staged_artifact_path = stage_artifact(
-        state_dir,
-        candidate,
-        &profile.artifact.identity,
-        host_arch,
-    )?;
+    let staged_artifact_path =
+        stage_artifact(state_dir, candidate, &profile.artifact.identity, host_arch)?;
     let inspection = exec::inspect(&staged_artifact_path, host_arch)?;
     if inspection.artifact_identity != profile.artifact.identity {
         return Err(LaunchError::ArtifactMismatch("SHA-256 identity differs"));
@@ -142,7 +138,9 @@ pub fn prepare_native_launch(
         return Err(LaunchError::ArtifactMismatch("runtime family differs"));
     }
     if inspection.workload_arch != profile.artifact.workload_arch {
-        return Err(LaunchError::ArtifactMismatch("workload architecture differs"));
+        return Err(LaunchError::ArtifactMismatch(
+            "workload architecture differs",
+        ));
     }
     if !inspection.native_compatible {
         return Err(LaunchError::ArtifactMismatch(
@@ -195,10 +193,7 @@ pub fn launch_native(
 
     let (outcome, exit_code) = match status {
         Ok(status) if status.success() => (NativeLaunchOutcome::ExitedSuccess, status.code()),
-        Ok(status) => (
-            NativeLaunchOutcome::SystemdOrWorkloadFailure,
-            status.code(),
-        ),
+        Ok(status) => (NativeLaunchOutcome::SystemdOrWorkloadFailure, status.code()),
         Err(_) => (NativeLaunchOutcome::LauncherFailure, None),
     };
     let completed_at = identity::now_rfc3339()?;
@@ -238,7 +233,9 @@ fn validate_profile_for_native(profile: &ApplicationProfile) -> Result<(), Launc
         ));
     }
     if profile.artifact.format != ArtifactFormat::Elf {
-        return Err(LaunchError::UnsupportedProfile("artifact format is not ELF"));
+        return Err(LaunchError::UnsupportedProfile(
+            "artifact format is not ELF",
+        ));
     }
     if profile.artifact.runtime_family != RuntimeFamily::NativeLinux {
         return Err(LaunchError::UnsupportedProfile(
@@ -607,8 +604,7 @@ mod tests {
         let bytes = native_elf();
         fs::write(&source, &bytes).expect("write artifact");
         fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).expect("chmod");
-        let application_id =
-            fixture_registry(dir.path(), format!("sha256:{}", "0".repeat(64)));
+        let application_id = fixture_registry(dir.path(), format!("sha256:{}", "0".repeat(64)));
         let request = NativeLaunchRequest {
             schema: NATIVE_LAUNCH_REQUEST_SCHEMA.to_owned(),
             application_id,

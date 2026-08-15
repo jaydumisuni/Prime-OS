@@ -85,7 +85,8 @@ impl CoreState {
             vec![
                 "P1 mutation admission is Host-local UID 0 only".to_owned(),
                 "Native runtime still requires physical Host proof".to_owned(),
-                "Arguments, caller environment and unsupported policy semantics remain blocked".to_owned(),
+                "Arguments, caller environment and unsupported policy semantics remain blocked"
+                    .to_owned(),
             ]
         } else {
             vec![format!(
@@ -215,7 +216,7 @@ impl CoreState {
                     supported: false,
                     mode: None,
                     limitations: vec![
-                        "A completed process launch is not rolled back as a generation".to_owned()
+                        "A completed process launch is not rolled back as a generation".to_owned(),
                     ],
                 },
             },
