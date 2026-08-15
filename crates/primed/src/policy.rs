@@ -1,5 +1,5 @@
 use crate::registry::{verify_policy, RegistryError};
-use prime_contracts::{GpuMode, NetworkMode, WorkloadPolicy};
+use prime_contracts::{GpuMode, NetworkMode, PolicyClass, WorkloadPolicy};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +61,15 @@ pub fn compile_native(policy: &WorkloadPolicy) -> Result<NativeEnforcementPlan, 
     if matches!(policy.gpu.mode, GpuMode::Exclusive) {
         return Err(PolicyCompileError::Unsupported("exclusive GPU ownership"));
     }
+    let restricted_class = matches!(
+        policy.class,
+        PolicyClass::UserApp | PolicyClass::Build | PolicyClass::ForeignRuntime
+    );
+    if restricted_class && !matches!(policy.gpu.mode, GpuMode::Deny) {
+        return Err(PolicyCompileError::Unsupported(
+            "shared/inherited GPU or device access for non-core workloads",
+        ));
+    }
     if policy
         .process
         .max_processes
@@ -85,7 +94,7 @@ pub fn compile_native(policy: &WorkloadPolicy) -> Result<NativeEnforcementPlan, 
         ));
     }
 
-    let mut properties = baseline_properties();
+    let mut properties = baseline_properties(restricted_class);
     property(&mut properties, "CPUWeight", policy.cpu.weight);
     if let Some(quota) = policy.cpu.quota_percent {
         property(&mut properties, "CPUQuota", format!("{quota}%"));
@@ -150,7 +159,7 @@ pub fn compile_native(policy: &WorkloadPolicy) -> Result<NativeEnforcementPlan, 
     })
 }
 
-fn baseline_properties() -> Vec<SystemdProperty> {
+fn baseline_properties(restricted_class: bool) -> Vec<SystemdProperty> {
     let mut properties = Vec::new();
     property(&mut properties, "NoNewPrivileges", "yes");
     property(&mut properties, "PrivateTmp", "yes");
@@ -160,6 +169,10 @@ fn baseline_properties() -> Vec<SystemdProperty> {
     property(&mut properties, "RestrictSUIDSGID", "yes");
     property(&mut properties, "LockPersonality", "yes");
     property(&mut properties, "KillMode", "control-group");
+    if restricted_class {
+        property(&mut properties, "ProtectSystem", "strict");
+        property(&mut properties, "ProtectHome", "yes");
+    }
     properties
 }
 
@@ -232,6 +245,14 @@ mod tests {
             .properties
             .iter()
             .any(|item| item.name == "PrivateDevices" && item.value == "yes"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "ProtectSystem" && item.value == "strict"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "ProtectHome" && item.value == "yes"));
     }
 
     #[test]
@@ -253,6 +274,17 @@ mod tests {
             path: "/work".to_owned(),
             access: vec![FilesystemAccess::Read],
         });
+        value = seal_policy(value).expect("reseal");
+        assert!(matches!(
+            compile_native(&value),
+            Err(PolicyCompileError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn non_core_shared_gpu_fails_closed_until_device_mediation_exists() {
+        let mut value = policy();
+        value.gpu.mode = GpuMode::Shared;
         value = seal_policy(value).expect("reseal");
         assert!(matches!(
             compile_native(&value),

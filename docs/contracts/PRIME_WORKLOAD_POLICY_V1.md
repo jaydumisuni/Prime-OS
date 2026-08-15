@@ -74,7 +74,11 @@ In the initial compiler that means these remain **unsupported and launch-blockin
 - exclusive GPU ownership;
 - `LAN_ONLY`, `OUTBOUND_INTERNET`, `DESTINATION_RESTRICTED`, `LOCAL_LISTENER`, or `INBOUND_ALLOWED` network policies.
 
-`UNRESTRICTED` is only accepted when the exact policy explicitly requests it. `OFFLINE` is accepted through isolated networking. No broader network access is inferred from an empty destination list.
+For `USER_APP`, `BUILD`, and `FOREIGN_RUNTIME`, P1 additionally requires `gpu.mode=DENY` until exact shared-device/GPU mediation exists. These non-core classes receive `ProtectSystem=strict`, `ProtectHome=yes`, and the other hardened systemd baseline. This gives them the standard image/runtime read surface without implying arbitrary user/project filesystem exposure. Any explicit project/data exposure still requires the dedicated filesystem/Landlock backend and therefore blocks launch in this first compiler.
+
+`SYSTEM_CORE`, `SHELL`, and `RECOVERY` are trusted Prime classes and may use `INHERIT`/`SHARED` device semantics where their separately owned system policy permits it. `EXCLUSIVE` remains unsupported in the initial compiler.
+
+`UNRESTRICTED` networking is only accepted when the exact policy explicitly requests it. `OFFLINE` is accepted through isolated networking. No broader network access is inferred from an empty destination list.
 
 This deliberately makes early Prime restrictive: unsupported policy semantics block launch instead of silently becoming best-effort.
 
