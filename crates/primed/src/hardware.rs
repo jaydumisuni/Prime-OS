@@ -33,7 +33,9 @@ pub fn load_or_update(
         None
     };
     let revision = match previous {
-        Some(ref previous) if previous.topology_digest == probe.topology_digest => previous.revision,
+        Some(ref previous) if previous.topology_digest == probe.topology_digest => {
+            previous.revision
+        }
         Some(ref previous) => previous
             .revision
             .checked_add(1)
@@ -65,7 +67,10 @@ pub fn load(path: &Path) -> Result<HardwareGraph, HardwareStateError> {
 
 fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "hardware state path has no parent")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "hardware state path has no parent",
+        )
     })?;
     fs::create_dir_all(parent)?;
     let temp_path = parent.join(format!(".hardware.{}.tmp", Uuid::now_v7()));
@@ -113,8 +118,7 @@ mod tests {
         let path = temp.path().join("hardware/current.json");
         let first = load_or_update(&path, probe("sha256:a"), "t1".to_owned()).expect("first");
         let same = load_or_update(&path, probe("sha256:a"), "t2".to_owned()).expect("same");
-        let changed =
-            load_or_update(&path, probe("sha256:b"), "t3".to_owned()).expect("changed");
+        let changed = load_or_update(&path, probe("sha256:b"), "t3".to_owned()).expect("changed");
         assert_eq!(first.revision, 1);
         assert_eq!(same.revision, 1);
         assert_eq!(changed.revision, 2);

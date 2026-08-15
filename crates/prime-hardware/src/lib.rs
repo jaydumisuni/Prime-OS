@@ -76,7 +76,10 @@ pub fn probe(root: &Path, host_arch: &str) -> Result<ProbeResult, ProbeError> {
     })
 }
 
-fn probe_system(root: &Path, limitations: &mut Vec<String>) -> (SystemHardware, HardwareFingerprint) {
+fn probe_system(
+    root: &Path,
+    limitations: &mut Vec<String>,
+) -> (SystemHardware, HardwareFingerprint) {
     let dmi = rooted(root, "/sys/class/dmi/id");
     if !dmi.exists() {
         limitations.push("DMI system identity is unavailable".to_owned());
@@ -106,11 +109,15 @@ fn probe_system(root: &Path, limitations: &mut Vec<String>) -> (SystemHardware, 
 
     let meaningful_private = private_fields
         .iter()
-        .filter_map(|(name, value)| meaningful_identity(value.as_deref()).map(|value| (*name, value)))
+        .filter_map(|(name, value)| {
+            meaningful_identity(value.as_deref()).map(|value| (*name, value))
+        })
         .collect::<Vec<_>>();
     let meaningful_descriptors = descriptor_fields
         .iter()
-        .filter_map(|(name, value)| meaningful_identity(value.as_deref()).map(|value| (*name, value)))
+        .filter_map(|(name, value)| {
+            meaningful_identity(value.as_deref()).map(|value| (*name, value))
+        })
         .collect::<Vec<_>>();
 
     let has_uuid = meaningful_private
@@ -126,11 +133,13 @@ fn probe_system(root: &Path, limitations: &mut Vec<String>) -> (SystemHardware, 
         FingerprintConfidence::Unprobed
     };
 
+    let fingerprint_fields = if meaningful_private.is_empty() {
+        &meaningful_descriptors
+    } else {
+        &meaningful_private
+    };
     let mut material = String::from("prime-hardware-fingerprint-v1\n");
-    for (name, value) in meaningful_private
-        .iter()
-        .chain(meaningful_descriptors.iter())
-    {
+    for (name, value) in fingerprint_fields {
         material.push_str(name);
         material.push('=');
         material.push_str(value);
@@ -279,7 +288,8 @@ fn probe_block(root: &Path, limitations: &mut Vec<String>) -> Vec<BlockHardware>
             BlockHardware {
                 kernel_name,
                 kind: kind.to_owned(),
-                size_bytes: read_u64(path.join("size")).and_then(|sectors| sectors.checked_mul(512)),
+                size_bytes: read_u64(path.join("size"))
+                    .and_then(|sectors| sectors.checked_mul(512)),
                 read_only: read_bool01(path.join("ro")),
                 removable: read_bool01(path.join("removable")),
                 rotational: read_bool01(path.join("queue/rotational")),
@@ -403,7 +413,9 @@ fn rooted(root: &Path, absolute: &str) -> PathBuf {
 }
 
 fn read_text(path: impl AsRef<Path>) -> Option<String> {
-    fs::read_to_string(path).ok().and_then(|value| nonempty(&value))
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|value| nonempty(&value))
 }
 
 fn read_u64(path: impl AsRef<Path>) -> Option<u64> {
@@ -503,39 +515,91 @@ mod tests {
         );
         write(root, "/proc/meminfo", "MemTotal:       8192000 kB\n");
         write(root, "/sys/class/dmi/id/sys_vendor", "HP\n");
-        write(root, "/sys/class/dmi/id/product_name", "HP 290 G4 Microtower PC\n");
+        write(
+            root,
+            "/sys/class/dmi/id/product_name",
+            "HP 290 G4 Microtower PC\n",
+        );
         write(root, "/sys/class/dmi/id/board_vendor", "HP\n");
         write(root, "/sys/class/dmi/id/board_name", "8767\n");
-        write(root, "/sys/class/dmi/id/product_uuid", "00112233-4455-6677-8899-aabbccddeeff\n");
+        write(
+            root,
+            "/sys/class/dmi/id/product_uuid",
+            "00112233-4455-6677-8899-aabbccddeeff\n",
+        );
         write(root, "/sys/class/dmi/id/product_serial", "PRIVATE-SERIAL\n");
         write(root, "/sys/class/dmi/id/bios_vendor", "AMI\n");
         write(root, "/sys/class/dmi/id/bios_version", "P1\n");
         fs::create_dir_all(rooted(root, "/sys/firmware/efi")).expect("efi fixture");
         write(root, "/sys/bus/pci/devices/0000:00:02.0/vendor", "0x8086\n");
         write(root, "/sys/bus/pci/devices/0000:00:02.0/device", "0x9bc5\n");
-        write(root, "/sys/bus/pci/devices/0000:00:02.0/class", "0x030000\n");
+        write(
+            root,
+            "/sys/bus/pci/devices/0000:00:02.0/class",
+            "0x030000\n",
+        );
         write(root, "/sys/bus/pci/devices/0000:00:1f.6/vendor", "0x8086\n");
         write(root, "/sys/bus/pci/devices/0000:00:1f.6/device", "0x0d4c\n");
-        write(root, "/sys/bus/pci/devices/0000:00:1f.6/class", "0x020000\n");
+        write(
+            root,
+            "/sys/bus/pci/devices/0000:00:1f.6/class",
+            "0x020000\n",
+        );
         write(root, "/sys/bus/usb/devices/1-2/idVendor", "046d\n");
         write(root, "/sys/bus/usb/devices/1-2/idProduct", "c077\n");
-        write(root, "/sys/bus/usb/devices/1-2/product", "USB Optical Mouse\n");
+        write(
+            root,
+            "/sys/bus/usb/devices/1-2/product",
+            "USB Optical Mouse\n",
+        );
         write(root, "/sys/bus/usb/devices/1-2/serial", "DO-NOT-EXPORT\n");
         write(root, "/sys/class/block/nvme0n1/size", "1953525168\n");
         write(root, "/sys/class/block/nvme0n1/ro", "0\n");
         write(root, "/sys/class/block/nvme0n1/removable", "0\n");
         write(root, "/sys/class/block/nvme0n1/queue/rotational", "0\n");
-        write(root, "/sys/class/block/nvme0n1/queue/logical_block_size", "512\n");
-        write(root, "/sys/class/block/nvme0n1/queue/physical_block_size", "512\n");
-        write(root, "/sys/class/block/nvme0n1/device/model", "Samsung NVMe\n");
-        write(root, "/sys/class/block/nvme0n1/device/serial", "DO-NOT-EXPORT-DISK\n");
+        write(
+            root,
+            "/sys/class/block/nvme0n1/queue/logical_block_size",
+            "512\n",
+        );
+        write(
+            root,
+            "/sys/class/block/nvme0n1/queue/physical_block_size",
+            "512\n",
+        );
+        write(
+            root,
+            "/sys/class/block/nvme0n1/device/model",
+            "Samsung NVMe\n",
+        );
+        write(
+            root,
+            "/sys/class/block/nvme0n1/device/serial",
+            "DO-NOT-EXPORT-DISK\n",
+        );
         write(root, "/sys/class/net/enp0s31f6/type", "1\n");
-        write(root, "/sys/class/net/enp0s31f6/address", "00:11:22:33:44:55\n");
+        write(
+            root,
+            "/sys/class/net/enp0s31f6/address",
+            "00:11:22:33:44:55\n",
+        );
         write(root, "/sys/class/drm/card0-HDMI-A-1/status", "connected\n");
-        write(root, "/sys/class/drm/card0-HDMI-A-1/modes", "1920x1080\n1280x720\n");
-        write(root, "/sys/class/input/input0/name", "AT Translated Set 2 keyboard\n");
+        write(
+            root,
+            "/sys/class/drm/card0-HDMI-A-1/modes",
+            "1920x1080\n1280x720\n",
+        );
+        write(
+            root,
+            "/sys/class/input/input0/name",
+            "AT Translated Set 2 keyboard\n",
+        );
         write(root, "/sys/class/sound/card0/id", "PCH\n");
-        write(root, "/sys/class/thermal/thermal_zone0/type", "x86_pkg_temp\n");
+        write(
+            root,
+            "/sys/class/thermal/thermal_zone0/type",
+            "x86_pkg_temp\n",
+        );
         fs::create_dir_all(rooted(root, "/sys/class/tpm/tpm0")).expect("tpm fixture");
         write(root, "/dev/kvm", "fixture\n");
         temp
@@ -568,6 +632,21 @@ mod tests {
         assert!(!serialized.contains("PRIVATE-SERIAL"));
         assert!(!serialized.contains("DO-NOT-EXPORT"));
         assert!(!serialized.contains("00:11:22:33:44:55"));
+    }
+
+    #[test]
+    fn stable_private_identity_ignores_public_descriptor_drift() {
+        let temp = fixture();
+        let first = probe(temp.path(), "x86_64").expect("first probe");
+        write(
+            temp.path(),
+            "/sys/class/dmi/id/product_name",
+            "HP 290 G4 Microtower PC - firmware-renamed\n",
+        );
+        let changed = probe(temp.path(), "x86_64").expect("changed probe");
+
+        assert_eq!(first.fingerprint.digest, changed.fingerprint.digest);
+        assert_ne!(first.topology_digest, changed.topology_digest);
     }
 
     #[test]

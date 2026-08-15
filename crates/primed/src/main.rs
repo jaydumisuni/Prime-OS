@@ -20,12 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let generation = generation::load(&generation_file)?;
     let observed_at = identity::now_rfc3339()?;
     let probe = prime_hardware::probe(Path::new("/"), &host.host_arch)?;
-    host = identity::reconcile_fingerprint(
-        &identity_path,
-        host,
-        &probe.fingerprint,
-        &observed_at,
-    )?;
+    host = identity::reconcile_fingerprint(&identity_path, host, &probe.fingerprint, &observed_at)?;
     let hardware = hardware::load_or_update(
         &state_dir.join("hardware/current.json"),
         probe,
