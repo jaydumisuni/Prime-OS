@@ -101,7 +101,7 @@ jobs:
             bootc inspect --ref localhost/prime-os:p1 --format json \
             > /tmp/prime-image-builder-inspect.json
           cat /tmp/prime-image-builder-inspect.json
-          python3 -c 'import json; d=json.load(open("/tmp/prime-image-builder-inspect.json")); c=d.get("container", d); assert c["kernel"]["unified"] is True, d'
+          python3 -c 'import json; d=json.load(open("/tmp/prime-image-builder-inspect.json")); assert d["UnifiedKernel"] is True, d; assert d["Arch"] == "amd64", d; assert d["Bootloader"] in (None, "systemd-boot"), d; osr=d["OSInfo"]["OSRelease"]; assert osr["ID"] == "fedora", d; assert osr["VersionID"] == "44", d'
 
       - name: Build Prime QCOW2 from local bootc image
         shell: bash
