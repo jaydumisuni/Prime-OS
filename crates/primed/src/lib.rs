@@ -70,9 +70,7 @@ impl CoreState {
                 .mounts
                 .iter()
                 .find(|mount| mount.mount_id == root_id)
-                .map(|mount| {
-                    mount.scope == StorageScope::LocalPhysical && mount.capacity.is_some()
-                })
+                .map(|mount| mount.scope == StorageScope::LocalPhysical && mount.capacity.is_some())
         }) == Some(true);
         let storage_core_limitations = if root_storage_usable {
             Vec::new()
@@ -136,7 +134,11 @@ impl CoreState {
         storage_limitations.extend(storage.pressure.limitations.clone());
         storage_limitations.extend(storage.generation_accounting.limitations.clone());
         if let Some(root_id) = storage.root_mount_id {
-            if let Some(root) = storage.mounts.iter().find(|mount| mount.mount_id == root_id) {
+            if let Some(root) = storage
+                .mounts
+                .iter()
+                .find(|mount| mount.mount_id == root_id)
+            {
                 storage_limitations.extend(root.limitations.clone());
             }
         }

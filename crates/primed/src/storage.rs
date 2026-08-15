@@ -56,7 +56,10 @@ pub fn observe(
 
     if !policy_limitations.is_empty() {
         inventory.limitations.extend(policy_limitations.clone());
-        inventory.reserve.limitations.extend(policy_limitations.clone());
+        inventory
+            .reserve
+            .limitations
+            .extend(policy_limitations.clone());
         inventory.pressure.limitations.extend(policy_limitations);
         inventory.limitations.sort();
         inventory.limitations.dedup();
@@ -90,13 +93,7 @@ pub fn persist_snapshot(
     };
 
     let pressure_event_written = if previous_state.as_ref() != Some(&inventory.pressure.state) {
-        write_pressure_evidence(
-            state_dir,
-            host_id,
-            generation_id,
-            previous_state,
-            inventory,
-        )?;
+        write_pressure_evidence(state_dir, host_id, generation_id, previous_state, inventory)?;
         true
     } else {
         false
@@ -181,9 +178,7 @@ fn unavailable_inventory(
         Some(policy) if prime_storage::validate_reserve_policy(policy).is_ok() => (
             StorageReserveVisibility {
                 policy_configured: true,
-                protected_rollback_recovery_bytes: Some(
-                    policy.protected_rollback_recovery_bytes,
-                ),
+                protected_rollback_recovery_bytes: Some(policy.protected_rollback_recovery_bytes),
                 limitations: vec!["storage inventory is unavailable".to_owned()],
             },
             StoragePressure {
@@ -280,8 +275,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mountinfo = dir.path().join("mountinfo");
         let policy = dir.path().join("policy.json");
-        fs::write(&mountinfo, b"36 35 8:1 / / rw - ext4 /dev/sda1 rw\n")
-            .expect("mountinfo");
+        fs::write(&mountinfo, b"36 35 8:1 / / rw - ext4 /dev/sda1 rw\n").expect("mountinfo");
         fs::write(&policy, b"not-json").expect("policy");
         let inventory = observe(&mountinfo, &policy, "t1".to_owned(), "g1".to_owned());
         assert!(!inventory.reserve.policy_configured);

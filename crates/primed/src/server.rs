@@ -376,9 +376,7 @@ async fn route(
     Ok(response)
 }
 
-async fn collect_mutation_body(
-    body: Incoming,
-) -> Result<Bytes, Response<Full<Bytes>>> {
+async fn collect_mutation_body(body: Incoming) -> Result<Bytes, Response<Full<Bytes>>> {
     let collected = body.collect().await.map_err(|_| {
         error_response(
             StatusCode::BAD_REQUEST,
