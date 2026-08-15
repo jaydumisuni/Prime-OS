@@ -1,0 +1,46 @@
+name: Prime P1 Resolve Fedora Base
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install registry inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo jq
+      - name: Resolve Fedora 44 bootc linux-amd64 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref='docker://quay.io/fedora/fedora-bootc:44'
+          echo "PRIME_BASE_TAG=quay.io/fedora/fedora-bootc:44"
+          raw="$(skopeo inspect --raw "$ref")"
+          media_type="$(jq -r '.mediaType // empty' <<<"$raw")"
+          echo "PRIME_BASE_TAG_MEDIA_TYPE=$media_type"
+
+          if jq -e '.manifests' >/dev/null 2>&1 <<<"$raw"; then
+            manifest_digest="$(jq -er '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<<"$raw" | head -n1)"
+          else
+            manifest_digest="$(skopeo inspect --override-os linux --override-arch amd64 --format '{{.Digest}}' "$ref")"
+          fi
+
+          test -n "$manifest_digest"
+          test "${manifest_digest#sha256:}" != "$manifest_digest"
+          echo "PRIME_BASE_AMD64_DIGEST=$manifest_digest"
+
+          pinned="docker://quay.io/fedora/fedora-bootc@$manifest_digest"
+          skopeo inspect --override-os linux --override-arch amd64 \
+            --format 'PRIME_BASE_PINNED_DIGEST={{.Digest}}\nPRIME_BASE_ARCH={{.Architecture}}\nPRIME_BASE_OS={{.Os}}\nPRIME_BASE_NAME={{.Name}}' \
+            "$pinned"
+
+          resolved="$(skopeo inspect --override-os linux --override-arch amd64 --format '{{.Digest}}' "$pinned")"
+          test "$resolved" = "$manifest_digest"
