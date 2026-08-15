@@ -1,0 +1,12 @@
+BASE=quay.io/fedora/fedora-bootc@sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556
+OS_RELEASE=fedora 44
+BOOTC=bootc 1.16.7
+SYSTEMD=BOOTC_PATH=/usr/sbin/bootc
+SYSTEMD_RUN_PATH=/usr/sbin/systemd-run
+UKIFY_PATH=MISSING
+SYSTEMD_BOOT_EFI_FILES=MISSING
+KERNEL_INSTALL_PLUGINS=92-crashkernel.install,60-kdump.install,50-dracut.install,95-set-boot-entry.install,99-grub-mkconfig.install,20-grub.install,90-loaderentry.install,50-depmod.install,90-uki-copy.install,05-rpmostree.install,
+
+AUTO_UPDATE_TIMER=disabled
+BOOT_PACKAGES=bootc-1.16.7-1.fc44.x86_64,dracut-108-7.fc44.x86_64,dracut-network-108-7.fc44.x86_64,dracut-squash-108-7.fc44.x86_64,grub2-common-2.12-60.fc44.noarch,grub2-efi-x64-2.12-60.fc44.x86_64,grub2-pc-2.12-60.fc44.x86_64,grub2-pc-modules-2.12-60.fc44.noarch,grub2-tools-2.12-60.fc44.x86_64,grub2-tools-minimal-2.12-60.fc44.x86_64,kernel-7.1.8-200.fc44.x86_64,kernel-core-7.1.8-200.fc44.x86_64,kernel-modules-7.1.8-200.fc44.x86_64,kernel-modules-core-7.1.8-200.fc44.x86_64,shim-x64-16.1-5.x86_64,systemd-259.8-1.fc44.x86_64,systemd-libs-259.8-1.fc44.x86_64,systemd-pam-259.8-1.fc44.x86_64,systemd-resolved-259.8-1.fc44.x86_64,systemd-shared-259.8-1.fc44.x86_64,systemd-sysusers-259.8-1.fc44.x86_64,systemd-udev-259.8-1.fc44.x86_64
+
