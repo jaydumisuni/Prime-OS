@@ -1,0 +1,38 @@
+name: Prime P1 Rustfmt Bootstrap
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: build/p1-first-light
+      - name: Install rustfmt
+        run: rustup component add rustfmt
+      - name: Apply rustfmt
+        run: cargo fmt --all
+      - name: Commit formatter-only changes
+        shell: bash
+        run: |
+          if git diff --quiet -- 'crates/**/*.rs'; then
+            echo "Rust sources already formatted."
+            exit 0
+          fi
+          if ! git diff --quiet -- . ':(exclude)crates/**/*.rs'; then
+            echo "Formatter changed a non-Rust path; refusing to commit."
+            git status --short
+            exit 1
+          fi
+          git config user.name "THE TECH GUY"
+          git config user.email "65334711+jaydumisuni@users.noreply.github.com"
+          git add -- 'crates/**/*.rs'
+          git commit -m "style: apply rustfmt to native launch slice"
+          git push origin HEAD:build/p1-first-light
