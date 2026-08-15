@@ -100,6 +100,11 @@ jobs:
               test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 1
               ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
               bootc container lint --fatal-warnings
+              bootc container inspect --json > /tmp/prime-bootc-container.json
+              bootc install print-configuration > /tmp/prime-bootc-install.json
+              cat /tmp/prime-bootc-container.json
+              cat /tmp/prime-bootc-install.json
+              python3 -c '\''import json; c=json.load(open("/tmp/prime-bootc-container.json")); assert c["kernel"]["unified"] is True, c; i=json.load(open("/tmp/prime-bootc-install.json")); assert i.get("bootloader") == "systemd-boot", i'\''
               python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == os.environ["EXPECTED_BASE_DIGEST"]; assert seed["boot_attempt_limit"] == 3'\''
             '
 
@@ -129,8 +134,8 @@ jobs:
             "oci_archive_manifest_digest": "$manifest_digest",
             "docker_image_id": "$image_id",
             "platform": "linux/amd64",
-            "deployment_backend": "COMPOSEFS_SELECTED_BY_UKI_PENDING_DISK_PROOF",
-            "bootloader": "SYSTEMD_BOOT_PENDING_DISK_PROOF",
+            "deployment_backend": "COMPOSEFS_SELECTED_BY_UNIFIED_KERNEL_PENDING_DISK_PROOF",
+            "bootloader": "SYSTEMD_BOOT_ADVERTISED_BY_BOOTC_PENDING_DISK_PROOF",
             "secure_boot": "DISABLED_OR_UNPROVEN_FOR_P1"
           }
           EOF
