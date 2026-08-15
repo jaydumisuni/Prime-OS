@@ -3,7 +3,8 @@ Description=Prime Core Host Authority
 Documentation=https://github.com/jaydumisuni/Prime-OS
 After=local-fs.target
 Before=graphical.target
-ConditionPathExists=/usr/lib/prime/generation.json
+ConditionPathExists=/usr/lib/prime/generation-seed.json
+ConditionPathIsExecutable=/usr/bin/bootc
 
 [Service]
 Type=simple
