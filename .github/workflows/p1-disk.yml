@@ -101,7 +101,7 @@ jobs:
             bootc inspect --ref localhost/prime-os:p1 --format json \
             > /tmp/prime-image-builder-inspect.json
           cat /tmp/prime-image-builder-inspect.json
-          python3 -c 'import json; d=json.load(open("/tmp/prime-image-builder-inspect.json")); assert d["container"]["kernel"]["unified"] is True if "container" in d else d["kernel"]["unified"] is True, d'
+          python3 -c 'import json; d=json.load(open("/tmp/prime-image-builder-inspect.json")); c=d.get("container", d); assert c["kernel"]["unified"] is True, d'
 
       - name: Build Prime QCOW2 from local bootc image
         shell: bash
@@ -166,7 +166,11 @@ jobs:
           disk="$(realpath "$(cat /tmp/prime-disk-path)")"
           overlay=/tmp/prime-p1-boot-overlay.qcow2
           qemu-img create -f qcow2 -F qcow2 -b "$disk" "$overlay"
-          ovmf="$(find /usr/share/OVMF -maxdepth 1 -type f \( -name 'OVMF_CODE.fd' -o -name 'OVMF_CODE_4M.fd' \) -print | head -n1)"
+          if test -f /usr/share/OVMF/OVMF_CODE.fd; then
+            ovmf=/usr/share/OVMF/OVMF_CODE.fd
+          else
+            ovmf="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE_4M.fd' -print | head -n1)"
+          fi
           test -n "$ovmf"
           set +e
           timeout --signal=TERM 90s qemu-system-x86_64 \
@@ -202,17 +206,26 @@ jobs:
           test -n "$root_part"
           sudo mkdir -p /mnt/prime-root
           sudo mount -o ro "$root_part" /mnt/prime-root
-          hardware_file="$(sudo find /mnt/prime-root -type f -path '*/lib/prime/hardware/current.json' -print -quit)"
-          test -n "$hardware_file"
-          prime_dir="$(dirname "$(dirname "$hardware_file")")"
+          prime_dir=''
+          for candidate in \
+            /mnt/prime-root/state/os/default/var/lib/prime \
+            /mnt/prime-root/var/lib/prime; do
+            if sudo test -f "$candidate/hardware/current.json"; then
+              prime_dir="$candidate"
+              break
+            fi
+          done
+          test -n "$prime_dir"
           identity_file="$prime_dir/identity/host.json"
-          test -f "$identity_file"
-          sudo python3 -c 'import json,sys; h=json.load(open(sys.argv[1])); hw=json.load(open(sys.argv[2])); assert h["host_id"]; assert h["host_arch"] in ("x86_64","amd64"); assert hw' "$identity_file" "$hardware_file"
-          generation_file="$(sudo find "$prime_dir" -maxdepth 3 -type f -path '*/generation/current.json' -print -quit || true)"
-          if test -n "$generation_file"; then
-            sudo python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g["generation_id"] == os.environ["EXPECTED_GENERATION_ID"], g' "$generation_file"
-          fi
+          hardware_file="$prime_dir/hardware/current.json"
+          generation_file="$prime_dir/generations/current.json"
+          sudo test -f "$identity_file"
+          sudo test -f "$hardware_file"
+          sudo test -f "$generation_file"
+          sudo python3 -c 'import json,sys; h=json.load(open(sys.argv[1])); hw=json.load(open(sys.argv[2])); assert h["host_id"]; assert str(h["host_arch"]).lower() in ("x86_64","amd64"); assert hw' "$identity_file" "$hardware_file"
+          sudo env EXPECTED_GENERATION_ID="$EXPECTED_GENERATION_ID" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g["generation_id"] == os.environ["EXPECTED_GENERATION_ID"], g; assert g["state"] == "BOOT_TRY", g' "$generation_file"
           echo "Prime Host identity: $identity_file"
+          echo "Prime generation state: $generation_file"
           echo "Prime hardware state: $hardware_file"
           test -s /tmp/prime-serial.log || echo 'Serial console was not required for Host-state proof.'
 
