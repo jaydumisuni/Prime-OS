@@ -1,0 +1,53 @@
+FROM quay.io/fedora/fedora-bootc@sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556
+
+ARG TARGETARCH
+ARG PRIME_GENERATION_ID
+ARG PRIME_SOURCE_REVISION
+ARG PRIME_CREATED_AT
+ARG PRIME_BOOT_ATTEMPT_LIMIT=3
+
+LABEL org.opencontainers.image.title="Prime OS P1 First Light" \
+      org.opencontainers.image.vendor="THETECHGUY DIGITAL SOLUTIONS" \
+      org.opencontainers.image.revision="${PRIME_SOURCE_REVISION}"
+
+RUN test "${TARGETARCH}" = "amd64" \
+    && dnf -y install \
+        systemd-boot-unsigned-259.8-1.fc44 \
+        systemd-ukify-259.8-1.fc44 \
+    && dnf clean all \
+    && test -x /usr/bin/ukify \
+    && test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
+    && test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+    && test -x /usr/sbin/bootc \
+    && test -x /usr/sbin/systemd-run
+
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime
+COPY target/release/primed /usr/libexec/prime/primed
+COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+
+RUN chmod 0755 /usr/libexec/prime/primed \
+    && systemctl enable primed.service \
+    && systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true
+
+RUN test -n "${PRIME_GENERATION_ID}" \
+    && test -n "${PRIME_SOURCE_REVISION}" \
+    && test -n "${PRIME_CREATED_AT}" \
+    && test "${PRIME_BOOT_ATTEMPT_LIMIT}" -gt 0 \
+    && printf '%s\n' \
+       '{' \
+       '  "schema": "prime.generation-seed.v1",' \
+       "  \"generation_id\": \"${PRIME_GENERATION_ID}\"," \
+       '  "channel": "LAB",' \
+       "  \"created_at\": \"${PRIME_CREATED_AT}\"," \
+       "  \"source_revision\": \"${PRIME_SOURCE_REVISION}\"," \
+       '  "base_image_digest": "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556",' \
+       "  \"boot_attempt_limit\": ${PRIME_BOOT_ATTEMPT_LIMIT}" \
+       '}' \
+       > /usr/lib/prime/generation-seed.json \
+    && chmod 0444 /usr/lib/prime/generation-seed.json \
+    && python3 -c 'import json; json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8"))'
+
+RUN test -x /usr/libexec/prime/primed \
+    && test -f /usr/lib/systemd/system/primed.service \
+    && test -L /etc/systemd/system/multi-user.target.wants/primed.service \
+    && test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
