@@ -115,6 +115,8 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     mkdir -p /out; \
     kver="$(find /kernel -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n1)"; \
     test -n "${kver}"; \
+    test -s "/kernel/${kver}/vmlinuz"; \
+    test -s "/kernel/${kver}/initramfs.img"; \
     provisional="/out/${kver}.provisional.efi"; \
     final="/out/${kver}.efi"; \
     bootc container ukify \
@@ -126,7 +128,7 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     if test -n "${PRIME_COMPOSEFS_DIGEST:-}"; then \
       case "${PRIME_COMPOSEFS_DIGEST}" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical Composefs digest" >&2; exit 1 ;; esac; \
       ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
-      PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST}" python3 -c 'import json,os,pathlib,re; data=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); cmdline=data[".cmdline"]["text"].strip(); digest=os.environ["PRIME_COMPOSEFS_DIGEST"]; updated,count=re.subn(r"(?<!\\S)composefs=\\??[0-9a-f]{128}(?!\\S)", f"composefs={digest}", cmdline); assert count == 1, (count, cmdline); assert f"composefs={digest}" in updated; pathlib.Path("/tmp/prime-canonical-cmdline").write_text(updated, encoding="utf-8")'; \
+      PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST}" python3 -c 'import json,os,pathlib,re; data=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); cmdline=data[".cmdline"]["text"].strip(); digest=os.environ["PRIME_COMPOSEFS_DIGEST"]; updated,count=re.subn(r"composefs=\??[0-9a-f]{128}", f"composefs={digest}", cmdline); assert count == 1, (count, cmdline); assert f"composefs={digest}" in updated; pathlib.Path("/tmp/prime-canonical-cmdline").write_text(updated, encoding="utf-8")'; \
       ukify build \
         --linux "/kernel/${kver}/vmlinuz" \
         --initrd "/kernel/${kver}/initramfs.img" \
@@ -134,7 +136,10 @@ RUN --mount=type=bind,from=split,target=/target,ro \
         --cmdline @/tmp/prime-canonical-cmdline \
         --os-release @/target/usr/lib/os-release \
         --output "${final}"; \
-      rm -f "${provisional}" /tmp/prime-provisional-uki.json /tmp/prime-canonical-cmdline; \
+      test -s "${final}"; \
+      ukify inspect --json=short "${final}" > /tmp/prime-final-uki.json; \
+      python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); after=json.load(open("/tmp/prime-final-uki.json", "r", encoding="utf-8")); expected=pathlib.Path("/tmp/prime-canonical-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),after.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != after[section]["sha256"]]; assert after[".cmdline"]["text"].strip() == expected, (after[".cmdline"]["text"], expected)'; \
+      rm -f "${provisional}" /tmp/prime-provisional-uki.json /tmp/prime-final-uki.json /tmp/prime-canonical-cmdline; \
     else \
       mv "${provisional}" "${final}"; \
     fi; \
