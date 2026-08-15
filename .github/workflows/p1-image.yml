@@ -1,7 +1,6 @@
 name: Prime P1 Image
 
 on:
-  pull_request:
   push:
     branches:
       - main
@@ -24,6 +23,19 @@ jobs:
           cargo --version
           test "$(rustc --version | awk '{print $2}')" = "1.97.1"
 
+      - name: Resolve locked base input
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_image="$(python3 -c 'import json; print(json.load(open("image/fedora-base.lock.json"))["pinned_reference"])')"
+          base_digest="$(python3 -c 'import json; print(json.load(open("image/fedora-base.lock.json"))["manifest_digest"])')"
+          test -n "$base_image"
+          case "$base_digest" in sha256:????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          printf 'image=%s\n' "$base_image" >> "$GITHUB_OUTPUT"
+          printf 'digest=%s\n' "$base_digest" >> "$GITHUB_OUTPUT"
+          docker pull "$base_image"
+
       - name: Build Prime Core release binary
         shell: bash
         run: |
@@ -35,16 +47,21 @@ jobs:
       - name: Build digest-pinned Prime bootc image
         id: build
         shell: bash
+        env:
+          PRIME_BASE_IMAGE: ${{ steps.base.outputs.image }}
+          PRIME_BASE_DIGEST: ${{ steps.base.outputs.digest }}
         run: |
           set -euo pipefail
-          source_revision="$GITHUB_SHA"
-          created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
-          generation_id="p1-first-light-${GITHUB_SHA:0:12}"
+          source_revision="$(git rev-parse HEAD)"
+          created_at="$(git show -s --format=%cI HEAD)"
+          generation_id="p1-first-light-${source_revision:0:12}"
           printf 'source_revision=%s\n' "$source_revision" >> "$GITHUB_OUTPUT"
           printf 'created_at=%s\n' "$created_at" >> "$GITHUB_OUTPUT"
           printf 'generation_id=%s\n' "$generation_id" >> "$GITHUB_OUTPUT"
           docker build \
             --platform linux/amd64 \
+            --build-arg PRIME_BASE_IMAGE="$PRIME_BASE_IMAGE" \
+            --build-arg PRIME_BASE_DIGEST="$PRIME_BASE_DIGEST" \
             --build-arg TARGETARCH=amd64 \
             --build-arg PRIME_GENERATION_ID="$generation_id" \
             --build-arg PRIME_SOURCE_REVISION="$source_revision" \
@@ -59,12 +76,14 @@ jobs:
           EXPECTED_SOURCE_REVISION: ${{ steps.build.outputs.source_revision }}
           EXPECTED_CREATED_AT: ${{ steps.build.outputs.created_at }}
           EXPECTED_GENERATION_ID: ${{ steps.build.outputs.generation_id }}
+          EXPECTED_BASE_DIGEST: ${{ steps.base.outputs.digest }}
         run: |
           set -euo pipefail
           docker run --rm \
             -e EXPECTED_SOURCE_REVISION \
             -e EXPECTED_CREATED_AT \
             -e EXPECTED_GENERATION_ID \
+            -e EXPECTED_BASE_DIGEST \
             --entrypoint /bin/bash \
             prime-os:p1 -ceu '
               test -x /usr/libexec/prime/primed
@@ -76,8 +95,12 @@ jobs:
               test -f /usr/lib/prime/generation-seed.json
               test -L /etc/systemd/system/multi-user.target.wants/primed.service
               test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
+              ! rpm -q bootupd >/dev/null 2>&1
               rpm -q systemd-ukify-259.8-1.fc44 systemd-boot-unsigned-259.8-1.fc44
-              python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556"; assert seed["boot_attempt_limit"] == 3'\''
+              test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 1
+              ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
+              bootc container lint --fatal-warnings
+              python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == os.environ["EXPECTED_BASE_DIGEST"]; assert seed["boot_attempt_limit"] == 3'\''
             '
 
       - name: Compute OCI manifest evidence
@@ -86,6 +109,7 @@ jobs:
           SOURCE_REVISION: ${{ steps.build.outputs.source_revision }}
           CREATED_AT: ${{ steps.build.outputs.created_at }}
           GENERATION_ID: ${{ steps.build.outputs.generation_id }}
+          BASE_DIGEST: ${{ steps.base.outputs.digest }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -101,11 +125,13 @@ jobs:
             "source_revision": "$SOURCE_REVISION",
             "generation_id": "$GENERATION_ID",
             "created_at": "$CREATED_AT",
-            "base_image_digest": "sha256:4137efc3eee61ce0f8fb47cdfaed6440b4b60845203ace47a5a81bd406dd3556",
-            "oci_manifest_digest": "$manifest_digest",
+            "base_image_digest": "$BASE_DIGEST",
+            "oci_archive_manifest_digest": "$manifest_digest",
             "docker_image_id": "$image_id",
             "platform": "linux/amd64",
-            "secure_boot": "UNPROVEN_DISABLED_FOR_P1_IMAGE_MECHANISM"
+            "deployment_backend": "COMPOSEFS_SELECTED_BY_UKI_PENDING_DISK_PROOF",
+            "bootloader": "SYSTEMD_BOOT_PENDING_DISK_PROOF",
+            "secure_boot": "DISABLED_OR_UNPROVEN_FOR_P1"
           }
           EOF
           python3 -m json.tool /tmp/prime-p1-image-evidence.json
