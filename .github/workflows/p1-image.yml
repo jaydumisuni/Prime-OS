@@ -93,6 +93,7 @@ jobs:
               test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi
               test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub
               test -f /usr/lib/prime/generation-seed.json
+              test -f /usr/lib/bootc/install/10-prime.toml
               test -L /etc/systemd/system/multi-user.target.wants/primed.service
               test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
               ! rpm -q bootupd >/dev/null 2>&1
@@ -104,7 +105,7 @@ jobs:
               bootc install print-configuration > /tmp/prime-bootc-install.json
               cat /tmp/prime-bootc-container.json
               cat /tmp/prime-bootc-install.json
-              python3 -c '\''import json; c=json.load(open("/tmp/prime-bootc-container.json")); assert c["kernel"]["unified"] is True, c; i=json.load(open("/tmp/prime-bootc-install.json")); assert i.get("bootloader") in (None, "systemd-boot"), i'\''
+              python3 -c '\''import json; c=json.load(open("/tmp/prime-bootc-container.json")); assert c["kernel"]["unified"] is True, c; i=json.load(open("/tmp/prime-bootc-install.json")); assert i.get("bootloader") == "systemd", i'\''
               python3 -c '\''import json, os; seed=json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8")); assert seed["schema"] == "prime.generation-seed.v1"; assert seed["generation_id"] == os.environ["EXPECTED_GENERATION_ID"]; assert seed["channel"] == "LAB"; assert seed["created_at"] == os.environ["EXPECTED_CREATED_AT"]; assert seed["source_revision"] == os.environ["EXPECTED_SOURCE_REVISION"]; assert seed["base_image_digest"] == os.environ["EXPECTED_BASE_DIGEST"]; assert seed["boot_attempt_limit"] == 3'\''
             '
 
@@ -135,7 +136,7 @@ jobs:
             "docker_image_id": "$image_id",
             "platform": "linux/amd64",
             "deployment_backend": "COMPOSEFS_SELECTED_BY_UNIFIED_KERNEL_PENDING_DISK_PROOF",
-            "bootloader": "SYSTEMD_BOOT_DEFAULT_BY_BOOTC_RULES_PENDING_DISK_PROOF",
+            "bootloader": "SYSTEMD_BOOT_EXPLICIT_BOOTC_INSTALL_POLICY_PENDING_DISK_PROOF",
             "secure_boot": "DISABLED_OR_UNPROVEN_FOR_P1"
           }
           EOF
