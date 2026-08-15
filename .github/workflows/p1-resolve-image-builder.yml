@@ -1,0 +1,58 @@
+name: Prime P1 Resolve Image Builder
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: build/p1-first-light
+      - name: Resolve image-builder v78.0.0 linux/amd64 digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo
+          ref='ghcr.io/osbuild/image-builder-cli:v78.0.0'
+          digest="$(skopeo inspect --override-os linux --override-arch amd64 --format '{{.Digest}}' "docker://${ref}")"
+          case "$digest" in sha256:????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          pinned="ghcr.io/osbuild/image-builder-cli:v78.0.0@${digest}"
+          verify="$(skopeo inspect --override-os linux --override-arch amd64 --format '{{.Digest}} {{.Os}} {{.Architecture}}' "docker://${pinned}")"
+          test "$verify" = "$digest linux amd64"
+          cat > image/image-builder.lock.json <<EOF
+          {
+            "schema": "prime.disk-builder-lock.v1",
+            "source_tag": "$ref",
+            "pinned_reference": "$pinned",
+            "version": "78.0.0",
+            "os": "linux",
+            "architecture": "amd64",
+            "manifest_digest": "$digest",
+            "upstream_release": "v78.0.0",
+            "resolved_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "verification": "skopeo resolved and re-opened the exact linux/amd64 image-builder-cli v78.0.0 manifest"
+          }
+          EOF
+          python3 -m json.tool image/image-builder.lock.json
+      - name: Commit lock only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- . ':(exclude)image/image-builder.lock.json'; then
+            echo 'Resolver changed an unexpected path.'
+            git status --short
+            exit 1
+          fi
+          git config user.name 'THE TECH GUY'
+          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
+          git add image/image-builder.lock.json
+          git commit -m 'build: pin image-builder 78 amd64 manifest'
+          git push origin HEAD:build/p1-first-light
