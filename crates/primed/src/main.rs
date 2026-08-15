@@ -25,12 +25,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let identity_path = state_dir.join("identity/host.json");
     let mut host = identity::load_or_create(&identity_path)?;
-    let generation = generation::load_or_bind(
-        &generation_seed_file,
-        &bootc,
-        &state_dir,
-        &host.host_arch,
-    )?;
+    let generation =
+        generation::load_or_bind(&generation_seed_file, &bootc, &state_dir, &host.host_arch)?;
     let observed_at = identity::now_rfc3339()?;
     let probe = prime_hardware::probe(Path::new("/"), &host.host_arch)?;
     host = identity::reconcile_fingerprint(&identity_path, host, &probe.fingerprint, &observed_at)?;

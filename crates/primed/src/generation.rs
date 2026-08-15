@@ -282,16 +282,22 @@ fn validate_persisted_binding(
         return Err(GenerationError::PersistedMismatch("generation ID differs"));
     }
     if persisted.image_digest != booted.image_digest {
-        return Err(GenerationError::PersistedMismatch("booted image digest differs"));
+        return Err(GenerationError::PersistedMismatch(
+            "booted image digest differs",
+        ));
     }
     if persisted.channel != seed.channel {
-        return Err(GenerationError::PersistedMismatch("release channel differs"));
+        return Err(GenerationError::PersistedMismatch(
+            "release channel differs",
+        ));
     }
     if persisted.created_at != seed.created_at {
         return Err(GenerationError::PersistedMismatch("created_at differs"));
     }
     if persisted.source_revision != seed.source_revision {
-        return Err(GenerationError::PersistedMismatch("source revision differs"));
+        return Err(GenerationError::PersistedMismatch(
+            "source revision differs",
+        ));
     }
     Ok(())
 }
