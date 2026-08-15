@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 const MAX_BOOTC_STATUS_BYTES: u64 = 1024 * 1024;
 const BOOTC_STATUS_EVIDENCE: &str = "bootc.status.v1";
+const BOOTC_API_VERSION: &str = "org.containers.bootc/v1";
+const BOOTC_KIND: &str = "BootcHost";
 
 #[derive(Debug, Error)]
 pub enum GenerationError {
@@ -40,12 +42,20 @@ pub enum GenerationError {
     BootcStatusCommand(Option<i32>),
     #[error("bootc status output exceeded the P1 limit")]
     BootcStatusTooLarge,
+    #[error("bootc status API identity is {api_version}/{kind}, expected org.containers.bootc/v1/BootcHost")]
+    BootcStatusApi { api_version: String, kind: String },
     #[error("bootc status has no booted deployment")]
     BootedDeploymentMissing,
     #[error("bootc status booted deployment has no image identity")]
     BootedImageMissing,
     #[error("bootc reports the booted deployment as incompatible")]
     BootedDeploymentIncompatible,
+    #[error("bootc reports a /usr overlay; Prime cannot attest the image-owned generation seed")]
+    UsrOverlayPresent,
+    #[error("bootc reported unsupported image architecture {0}")]
+    UnsupportedReportedArchitecture(String),
+    #[error("Prime Host architecture {0} is not supported by generation binding")]
+    UnsupportedHostArchitecture(String),
     #[error("bootc reported image architecture {reported}, but Prime Host architecture is {host}")]
     ArchitectureMismatch { reported: String, host: String },
     #[error("persisted generation state is incompatible with the booted generation: {0}")]
@@ -60,12 +70,17 @@ pub struct BootedImageIdentity {
 
 #[derive(Debug, Deserialize)]
 struct BootcHost {
+    #[serde(rename = "apiVersion")]
+    api_version: String,
+    kind: String,
     status: BootcHostStatus,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BootcHostStatus {
     booted: Option<BootcBootEntry>,
+    usr_overlay: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +120,15 @@ pub fn parse_bootc_status(
     host_arch: &str,
 ) -> Result<BootedImageIdentity, GenerationError> {
     let host: BootcHost = serde_json::from_slice(bytes)?;
+    if host.api_version != BOOTC_API_VERSION || host.kind != BOOTC_KIND {
+        return Err(GenerationError::BootcStatusApi {
+            api_version: host.api_version,
+            kind: host.kind,
+        });
+    }
+    if host.status.usr_overlay.is_some() {
+        return Err(GenerationError::UsrOverlayPresent);
+    }
     let booted = host
         .status
         .booted
@@ -116,7 +140,12 @@ pub fn parse_bootc_status(
     if !canonical_sha256(&image.image_digest) {
         return Err(GenerationError::ImageDigest);
     }
-    if normalize_arch(&image.architecture) != normalize_arch(host_arch) {
+    let reported_arch = normalize_arch(&image.architecture).ok_or_else(|| {
+        GenerationError::UnsupportedReportedArchitecture(image.architecture.clone())
+    })?;
+    let host_normalized = normalize_arch(host_arch)
+        .ok_or_else(|| GenerationError::UnsupportedHostArchitecture(host_arch.to_owned()))?;
+    if reported_arch != host_normalized {
         return Err(GenerationError::ArchitectureMismatch {
             reported: image.architecture,
             host: host_arch.to_owned(),
@@ -124,7 +153,7 @@ pub fn parse_bootc_status(
     }
     Ok(BootedImageIdentity {
         image_digest: image.image_digest,
-        architecture: normalize_arch(host_arch).to_owned(),
+        architecture: host_normalized.to_owned(),
     })
 }
 
@@ -277,13 +306,13 @@ fn canonical_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn normalize_arch(value: &str) -> &str {
+fn normalize_arch(value: &str) -> Option<&'static str> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "amd64" | "x86_64" => "x86_64",
-        "arm64" | "aarch64" => "aarch64",
-        "ppc64le" => "ppc64le",
-        "s390x" => "s390x",
-        _ => "unknown",
+        "amd64" | "x86_64" => Some("x86_64"),
+        "arm64" | "aarch64" => Some("aarch64"),
+        "ppc64le" => Some("ppc64le"),
+        "s390x" => Some("s390x"),
+        _ => None,
     }
 }
 
@@ -383,7 +412,7 @@ mod tests {
 
     #[test]
     fn missing_booted_deployment_is_rejected() {
-        let bytes = br#"{"status":{"booted":null}}"#;
+        let bytes = br#"{"apiVersion":"org.containers.bootc/v1","kind":"BootcHost","status":{"booted":null,"usrOverlay":null}}"#;
         assert!(matches!(
             parse_bootc_status(bytes, "x86_64"),
             Err(GenerationError::BootedDeploymentMissing)
@@ -392,7 +421,7 @@ mod tests {
 
     #[test]
     fn missing_booted_image_is_rejected() {
-        let bytes = br#"{"status":{"booted":{"image":null,"incompatible":false}}}"#;
+        let bytes = br#"{"apiVersion":"org.containers.bootc/v1","kind":"BootcHost","status":{"booted":{"image":null,"incompatible":false},"usrOverlay":null}}"#;
         assert!(matches!(
             parse_bootc_status(bytes, "x86_64"),
             Err(GenerationError::BootedImageMissing)
@@ -408,10 +437,43 @@ mod tests {
     }
 
     #[test]
+    fn usr_overlay_is_rejected() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&bootc_json(&digest('b'), "amd64", false)).expect("json");
+        value["status"]["usrOverlay"] = serde_json::json!({
+            "accessMode": "readWrite",
+            "persistence": "persistent"
+        });
+        assert!(matches!(
+            parse_bootc_status(value.to_string().as_bytes(), "x86_64"),
+            Err(GenerationError::UsrOverlayPresent)
+        ));
+    }
+
+    #[test]
+    fn bootc_api_identity_must_match_v1() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&bootc_json(&digest('b'), "amd64", false)).expect("json");
+        value["apiVersion"] = serde_json::json!("org.containers.bootc/v2");
+        assert!(matches!(
+            parse_bootc_status(value.to_string().as_bytes(), "x86_64"),
+            Err(GenerationError::BootcStatusApi { .. })
+        ));
+    }
+
+    #[test]
     fn booted_architecture_must_match_host() {
         assert!(matches!(
             parse_bootc_status(&bootc_json(&digest('b'), "arm64", false), "x86_64"),
             Err(GenerationError::ArchitectureMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn unknown_architecture_is_rejected_not_normalized_together() {
+        assert!(matches!(
+            parse_bootc_status(&bootc_json(&digest('b'), "mystery", false), "mystery"),
+            Err(GenerationError::UnsupportedReportedArchitecture(_))
         ));
     }
 
