@@ -48,13 +48,18 @@ impl CoreState {
                 hardware_requirements: Vec::new(),
                 limits: json!({}),
                 health: health.clone(),
-                limitations: vec!["Hardware fingerprint remains UNPROBED until the hardware graph slice lands".to_owned()],
+                limitations: vec![
+                    "Hardware fingerprint remains UNPROBED until the hardware graph slice lands"
+                        .to_owned(),
+                ],
                 placement: placement.clone(),
                 expected_evidence: vec!["prime.host-identity.v1".to_owned()],
                 rollback: CapabilityRollback {
                     supported: false,
                     mode: None,
-                    limitations: vec!["Host identity is not a generation rollback object".to_owned()],
+                    limitations: vec![
+                        "Host identity is not a generation rollback object".to_owned()
+                    ],
                 },
             },
             CapabilityDescriptor {

@@ -16,7 +16,10 @@ pub enum IdentityError {
     #[error("identity JSON is invalid: {0}")]
     Json(#[from] serde_json::Error),
     #[error("identity schema is {found}, expected {expected}")]
-    Schema { found: String, expected: &'static str },
+    Schema {
+        found: String,
+        expected: &'static str,
+    },
     #[error("could not format identity timestamp: {0}")]
     Time(#[from] time::error::Format),
 }

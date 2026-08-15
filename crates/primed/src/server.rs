@@ -113,7 +113,7 @@ async fn route(
                 status: HealthStatus::Degraded,
                 observed_at: state.started_at.clone(),
                 limitations: vec![
-                    "Hardware graph has not yet advanced beyond revision 0".to_owned(),
+                    "Hardware graph has not yet advanced beyond revision 0".to_owned()
                 ],
             },
             true,
@@ -131,7 +131,11 @@ async fn route(
         ),
         path if path.starts_with("/v1/capabilities/") => {
             let id = path.trim_start_matches("/v1/capabilities/");
-            match state.capabilities.iter().find(|item| item.capability_id == id) {
+            match state
+                .capabilities
+                .iter()
+                .find(|item| item.capability_id == id)
+            {
                 Some(capability) => json_response(StatusCode::OK, capability, true),
                 None => error_response(
                     StatusCode::NOT_FOUND,

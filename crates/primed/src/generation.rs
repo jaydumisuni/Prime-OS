@@ -11,7 +11,10 @@ pub enum GenerationError {
     #[error("generation JSON is invalid: {0}")]
     Json(#[from] serde_json::Error),
     #[error("generation schema is {found}, expected {expected}")]
-    Schema { found: String, expected: &'static str },
+    Schema {
+        found: String,
+        expected: &'static str,
+    },
     #[error("generation image digest must be immutable sha256")]
     ImageDigest,
     #[error("generation source revision is empty")]
