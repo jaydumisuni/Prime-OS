@@ -1,0 +1,14 @@
+schema: ttg.project-policy.v1
+execution_standard:
+  id: ttg.tenfold.v1
+  required: true
+  canonical:
+    repo: jaydumisuni/OS-playbook
+    path: 05_STANDARDS/Tenfold_Execution_Standard.md
+engineering_cycle:
+  - understand
+  - build
+  - review
+  - freeze
+  - prove
+  - ship
