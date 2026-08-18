@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
+    if json_only && once {
+        return Err("--json and --once are mutually exclusive".into());
+    }
 
     let snapshot = load_snapshot(&state_dir);
     if json_only {
@@ -155,7 +158,7 @@ fn read_state_json<T: DeserializeOwned>(
     label: &str,
     limitations: &mut Vec<String>,
 ) -> Option<T> {
-    let mut file = match File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             limitations.push(format!("{label} is not persisted at {}", path.display()));
@@ -168,7 +171,8 @@ fn read_state_json<T: DeserializeOwned>(
     };
 
     let mut bytes = Vec::new();
-    match (&mut file).take(MAX_STATE_FILE_BYTES + 1).read_to_end(&mut bytes) {
+    let mut limited = file.take(MAX_STATE_FILE_BYTES + 1);
+    match limited.read_to_end(&mut bytes) {
         Ok(_) if bytes.len() as u64 <= MAX_STATE_FILE_BYTES => {}
         Ok(_) => {
             limitations.push(format!(
