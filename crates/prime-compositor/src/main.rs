@@ -12,6 +12,7 @@ use smithay::{
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
         input::Libinput,
+        rustix::fs::OFlags,
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             Display, DisplayHandle,
@@ -46,6 +47,7 @@ struct Readiness {
     primary_gpu: String,
     gpu_count: usize,
     udev_device_count: usize,
+    drm_access_ready: bool,
     libinput_bound: bool,
     session_active: bool,
     wayland_listener_ready: bool,
@@ -99,7 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let display: Display<Runtime> = Display::new()?;
     let display_handle = display.handle();
 
-    let (session, notifier) = LibSeatSession::new()?;
+    let (mut session, notifier) = LibSeatSession::new()?;
     let seat_name = session.seat();
     let session_active = session.is_active();
 
@@ -118,6 +120,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
     })?;
     let _primary_gpu_node = DrmNode::from_path(&primary_gpu_path)?;
+
+    let drm_fd = session.open(
+        &primary_gpu_path,
+        OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+    )?;
+    session.close(drm_fd)?;
 
     let udev_backend = UdevBackend::new(&seat_name)?;
     let udev_device_count = udev_backend.device_list().count();
@@ -209,6 +217,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             primary_gpu: primary_gpu_path.display().to_string(),
             gpu_count: gpu_paths.len(),
             udev_device_count,
+            drm_access_ready: true,
             libinput_bound: true,
             session_active,
             wayland_listener_ready: true,
