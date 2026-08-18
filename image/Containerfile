@@ -163,10 +163,13 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     cp /target/usr/lib/os-release /tmp/prime-recovery-os-release; \
     sed -i \
       -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Prime OS Recovery"/' \
+      -e 's/^VERSION=.*/VERSION="P1 Recovery"/' \
+      -e 's/^VERSION_ID=.*/VERSION_ID="0.0"/' \
       -e 's/^VARIANT=.*/VARIANT="Recovery"/' \
       -e 's/^VARIANT_ID=.*/VARIANT_ID=recovery/' \
       /tmp/prime-recovery-os-release; \
     grep -q '^PRETTY_NAME="Prime OS Recovery"$' /tmp/prime-recovery-os-release; \
+    grep -q '^VERSION_ID="0.0"$' /tmp/prime-recovery-os-release; \
     ukify build \
       --linux "/kernel/${kver}/vmlinuz" \
       --initrd "/kernel/${kver}/initramfs.img" \
@@ -185,7 +188,7 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     test -s "${recovery}"; \
     ukify inspect --json=short "${normal}" > /tmp/prime-normal-uki.json; \
     ukify inspect --json=short "${recovery}" > /tmp/prime-recovery-uki.json; \
-    python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); normal=json.load(open("/tmp/prime-normal-uki.json", "r", encoding="utf-8")); recovery=json.load(open("/tmp/prime-recovery-uki.json", "r", encoding="utf-8")); normal_cmd=pathlib.Path("/tmp/prime-normal-cmdline").read_text(encoding="utf-8"); recovery_cmd=pathlib.Path("/tmp/prime-recovery-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),normal.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != normal[section]["sha256"]]; [(_ for _ in ()).throw(AssertionError((section,before.get(section),recovery.get(section)))) for section in (".linux",".initrd",".uname") if before[section]["sha256"] != recovery[section]["sha256"]]; assert normal[".cmdline"]["text"].strip() == normal_cmd; assert recovery[".cmdline"]["text"].strip() == recovery_cmd; assert "systemd.unit=prime-recovery.target" in recovery_cmd; assert "prime.recovery=1" in recovery_cmd; assert "Prime OS Recovery" in recovery[".osrel"]["text"]'; \
+    python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); normal=json.load(open("/tmp/prime-normal-uki.json", "r", encoding="utf-8")); recovery=json.load(open("/tmp/prime-recovery-uki.json", "r", encoding="utf-8")); normal_cmd=pathlib.Path("/tmp/prime-normal-cmdline").read_text(encoding="utf-8"); recovery_cmd=pathlib.Path("/tmp/prime-recovery-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),normal.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != normal[section]["sha256"]]; [(_ for _ in ()).throw(AssertionError((section,before.get(section),recovery.get(section)))) for section in (".linux",".initrd",".uname") if before[section]["sha256"] != recovery[section]["sha256"]]; assert normal[".cmdline"]["text"].strip() == normal_cmd; assert recovery[".cmdline"]["text"].strip() == recovery_cmd; assert "systemd.unit=prime-recovery.target" in recovery_cmd; assert "prime.recovery=1" in recovery_cmd; assert "Prime OS Recovery" in recovery[".osrel"]["text"]; assert "VERSION_ID=\\\"0.0\\\"" in recovery[".osrel"]["text"]'; \
     rm -f \
       "${provisional}" \
       /tmp/prime-provisional-uki.json \
