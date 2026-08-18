@@ -1,0 +1,46 @@
+name: Construction P1 Proof Split
+
+on:
+  push:
+    branches:
+      - construction/p1-proof-split
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Split Core and compositor proof boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/prove-p1-local.sh')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+              'cargo clippy --locked --workspace --all-targets -- -D warnings':
+                  'cargo clippy --locked --workspace --exclude prime-compositor --all-targets -- -D warnings',
+              'cargo test --locked --workspace':
+                  'cargo test --locked --workspace --exclude prime-compositor',
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one occurrence of {old!r}, found {count}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- tools/prove-p1-local.sh
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/prove-p1-local.sh
+          git commit -m 'construction: split Core and compositor proof dependencies'
+          git push origin HEAD:construction/p1-proof-split
