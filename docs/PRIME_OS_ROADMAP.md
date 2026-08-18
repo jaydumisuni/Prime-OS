@@ -2,9 +2,11 @@
 
 **Authority:** derived from `docs/PRIME_OS_MASTER_PLAN.md` and accepted supplements  
 **Planning baseline:** accepted for handoff  
-**Implementation:** must occur in a fresh workstream after recovering repository authority
+**Implementation:** P1 First Light is active in draft PR #1 on `build/p1-first-light`; future roadmap work must not silently expand the frozen P1 scope.
 
 This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous. Narrow accepted supplements, including `docs/PRIME_STORAGE_INTELLIGENCE.md` and `docs/PRIME_APPLE_FILESYSTEMS.md`, govern their specific subsystems where they add detail without contradicting the Master Plan.
+
+Prime system-generation updates and optional component delivery are separate mechanisms. Prime's image-owned base is updated through the generation/update architecture; independently installable applications, Providers, runtimes, toolchains and optional capabilities are delivered through the Prime component/package architecture and, later, the Prime Store.
 
 ---
 
@@ -36,7 +38,8 @@ P0 must produce/recover the concrete contract and ADR set required by the Master
 - Hardware graph and driver architecture.
 - Build/image architecture.
 - Init/service model.
-- Component/package model.
+- Component/package model, including the permanent boundary between image-owned Prime base components and independently installable optional components.
+- Prime Store boundary: Store is a user-facing discovery/catalog/install/update surface over the component/package mechanism, not a replacement for Prime system-generation updates.
 - Release Target contract and Provider model.
 - Prime Shell and Prime Orb specifications.
 - Reference-video design study.
@@ -90,7 +93,9 @@ Required:
 
 First Light is not complete merely because a GUI starts. It must provide Prime startup identity, Prime Shell, system rail, Prime Orb/launcher, functional windowing, quick controls, smooth core transitions, Prime glass/depth language, no obvious stock-distro identity, reference-video comparison, and owner visual acceptance.
 
-**Not required:** Windows Personality, Android Personality, Ptah, full updater proof, full WinDirStat-equivalent storage analyzer, APFS write support, Darwin local compatibility, or iOS local compatibility.
+**Not required:** Windows Personality, Android Personality, Ptah, Prime Store/component-delivery implementation, full updater proof, full WinDirStat-equivalent storage analyzer, APFS write support, Darwin local compatibility, or iOS local compatibility.
+
+P1 keeps the Prime base image-owned. Optional SDKs, runtimes, applications and Providers remain separately activatable future capabilities; P1 does not add a live base-mutation package path merely to prepare for the Store.
 
 ---
 
@@ -125,11 +130,13 @@ Also prove:
 - storage accounting remains consistent across generation changes;
 - attached Apple inspection/recovery media remain unchanged/read-only through update and rollback tests unless a later separately proven write path is deliberately under test.
 
+P1.5 proves **Prime system-generation update and rollback**, not the later optional-component lifecycle. Component install/update/remove/rollback is introduced separately in P2.
+
 ---
 
 ## P2 — Development Body
 
-**Goal:** make Prime capable of building real software.
+**Goal:** make Prime capable of building real software and establish the optional-component delivery foundation.
 
 Add capability-managed tooling for:
 
@@ -149,6 +156,25 @@ Add capability-managed tooling for:
 - signing facility;
 - packaging framework;
 - release-provider framework.
+
+### Prime component/package foundation
+
+Implement the Prime-owned mechanism used to add optional capabilities without rebuilding or mutating the running image-owned Prime base:
+
+- versioned Prime Component Manifest/package contract;
+- component identities, versions, architecture/runtime requirements and dependency declarations;
+- component classes for applications, Providers, runtimes, toolchains/SDKs and optional Prime capability packs;
+- publisher identity, cryptographic signature and immutable package-digest verification;
+- local/offline package installation as a first-class path;
+- install, update, remove and rollback transactions with truthful failure/recovery states;
+- dependency resolution and compatibility checks against Prime generation, Application Profile schemas and Capability Interface versions;
+- explicit persistent-data/configuration ownership so removing or updating a component does not silently destroy retained user/project state;
+- registration/unregistration of Application Profiles, services and exposed Prime capabilities through their existing Prime authorities;
+- Workload Policy and permission binding for installed workloads/services;
+- catalog/source abstraction so later Store, private/internal repositories and local media can use the same component engine;
+- evidence/audit records for package verification and lifecycle changes.
+
+**Immutable-base rule:** ordinary component installation must not mutate image-owned Prime `/usr` or bypass the Prime generation model. If a requested feature requires kernel, boot, Prime Core, image-owned driver or other base-system changes, the component layer hands that requirement to the Prime generation/update mechanism instead of patching the live base.
 
 Build the main native Rust Prime Storage Intelligence body:
 
@@ -171,7 +197,7 @@ Prime may build APKs before Android Personality and Windows artifacts before Win
 
 ## P3 — Origins Factory
 
-**Goal:** turn Prime into the main Hunter/THETECHGUY development workstation.
+**Goal:** turn Prime into the main Hunter/THETECHGUY development workstation and make ecosystem capabilities easy to add and maintain.
 
 Integrate:
 
@@ -181,8 +207,12 @@ Integrate:
 - AgentOps;
 - CodeOps;
 - Sergeant;
+- Ptah where ready, without moving Ptah semantics into Prime;
 - Oracle where ready;
-- Lumi where ready;
+- Builder where ready;
+- Lumi DM where ready;
+- Lumi Browser later when ready;
+- Grid-Knight where ready;
 - repositories;
 - process/terminal work;
 - Prime Capability Interface;
@@ -191,7 +221,43 @@ Integrate:
 - Prime Storage Intelligence projections for repository/project/mission/build/cache usage without transferring ownership of the Host index to Origins;
 - Apple-storage projections for developer/repair/recovery missions, while Prime retains Host-local storage truth and access policy.
 
+### Prime Store
+
+Add the user-facing **Prime Store** over the P2 component/package mechanism:
+
+- discover and inspect available applications, Providers, runtimes, toolchains and optional capability packs;
+- install, update, remove and roll back independently delivered components;
+- show dependency, permission, resource, compatibility, publisher/signature and channel information before mutation;
+- expose available updates without conflating component updates with Prime OS generation updates;
+- support approved first-party, private/internal and later external catalog sources through the same component contract;
+- keep local/offline installation available when the Store UI or network is unavailable;
+- use the component engine for ecosystem delivery so systems such as Ptah, Origins, Hunter, Oracle, Builder, Lumi DM, CodeOps, Sergeant and Grid-Knight can evolve independently of the Prime base where their architecture permits it.
+
+The Store is a **client of the Prime component/package authority**, not the authority itself. CLI/API/offline installation must remain possible without the Store UI.
+
 After P3, later Prime engineering should normally happen through Origins.
+
+---
+
+## System generation updates vs component updates
+
+These lifecycles remain permanently distinct even if Prime Shell later presents them in one Updates surface.
+
+### Prime system-generation update
+
+Used for image-owned Prime OS changes such as kernel, boot/recovery material, Prime Core and other base `/usr` content.
+
+`DISCOVERED → DOWNLOADED → VERIFIED → STAGED → BOOT_TRY → HEALTH_PROVING → KNOWN_GOOD`
+
+System updates use the Prime generation/update architecture and retain previous-known-good/recovery generations.
+
+### Prime component update
+
+Used for independently installed optional applications, Providers, runtimes, toolchains/SDKs and capability packs whose lifecycle does not require mutation of the image-owned base.
+
+Component updates use the Prime component/package mechanism and its own verify/install/update/remove/rollback transaction evidence.
+
+A Store request that requires a base-system change must hand off to the system-generation updater. The Store cannot weaken, bypass or silently mutate the Prime generation boundary.
 
 ---
 
@@ -305,6 +371,8 @@ For APFS specifically, Prime must distinguish container capacity, per-volume log
 
 All runtime backends use Prime Workload Policy. No separate weak VM/container/personality path is allowed. Storage/file events may be consumed by Grid-Knight later, but Prime Storage Intelligence does not make malware judgments. Foreign Apple media remains read-only by default until a write backend has separately earned trust.
 
+Store/component delivery does not create a weaker execution path: installed workloads and services remain subject to Prime authorization, Workload Policy, signature/integrity checks and the existing machine authority boundaries.
+
 ## Review gate
 
 Prime owns mechanical evidence. Sergeant performs independent engineering review where required. Owner acceptance remains necessary for subjective/product decisions such as Prime Shell visual quality.
@@ -319,10 +387,10 @@ No silent redesign.
 
 ---
 
-# Next implementation mission
+# Current implementation mission
 
-A fresh implementation workstream begins with:
+The active implementation workstream is draft PR #1, `build/p1-first-light`:
 
-> **Build P1 — First Light from the frozen Prime authority.**
+> **Continue P1 — First Light from the frozen Prime authority and P1 contracts.**
 
-Do not begin with Windows, Android, Ptah, the full Storage Intelligence analyzer, APFS write support, or distributed execution before the required earlier phases are proven.
+The Store/component additions above are future P2/P3 scope and must not expand or destabilize the current P1 First Light implementation. Do not begin Windows, Android, Ptah integration, Store implementation, the full Storage Intelligence analyzer, APFS write support, or distributed execution before the required earlier phases are proven.
