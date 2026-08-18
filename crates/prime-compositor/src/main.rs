@@ -253,24 +253,26 @@ fn install_session_notifier(
     loop_handle: &smithay::reexports::calloop::LoopHandle<'_, Runtime>,
     notifier: LibSeatSessionNotifier,
     mut libinput_context: Libinput,
-) -> Result<(), smithay::reexports::calloop::InsertError<LibSeatSessionNotifier>> {
-    loop_handle.insert_source(notifier, move |event, _, runtime| {
-        match event {
-            SessionEvent::PauseSession => {
-                libinput_context.suspend();
-                runtime.readiness.session_active = false;
-            }
-            SessionEvent::ActivateSession => {
-                if libinput_context.resume().is_err() {
-                    eprintln!("prime-compositor could not resume libinput");
+) -> Result<(), Box<dyn Error>> {
+    loop_handle
+        .insert_source(notifier, move |event, _, runtime| {
+            match event {
+                SessionEvent::PauseSession => {
+                    libinput_context.suspend();
                     runtime.readiness.session_active = false;
-                } else {
-                    runtime.readiness.session_active = true;
+                }
+                SessionEvent::ActivateSession => {
+                    if libinput_context.resume().is_err() {
+                        eprintln!("prime-compositor could not resume libinput");
+                        runtime.readiness.session_active = false;
+                    } else {
+                        runtime.readiness.session_active = true;
+                    }
                 }
             }
-        }
-        runtime.persist_best_effort();
-    })?;
+            runtime.persist_best_effort();
+        })
+        .map_err(|error| Box::new(error) as Box<dyn Error>)?;
     Ok(())
 }
 
