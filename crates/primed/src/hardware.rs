@@ -124,6 +124,20 @@ pub fn p1_baseline_limitations(graph: &HardwareGraph) -> Vec<String> {
         );
     }
 
+    let usb_controller = inventory.pci_devices.iter().any(|device| {
+        device
+            .class_code
+            .as_deref()
+            .is_some_and(|class_code| class_code.starts_with("0x0c03"))
+            && device
+                .driver
+                .as_deref()
+                .is_some_and(|driver| !driver.is_empty())
+    });
+    if !usb_controller {
+        limitations.push("P1 proof Host has no USB controller with a bound kernel driver".to_owned());
+    }
+
     let connected_output = inventory.display_connectors.iter().any(|connector| {
         connector.status.as_deref() == Some("connected") && !connector.modes.is_empty()
     });
@@ -138,14 +152,14 @@ pub fn p1_baseline_limitations(graph: &HardwareGraph) -> Vec<String> {
     if inventory.sound_cards.is_empty() {
         limitations.push("P1 proof Host has no discovered sound card".to_owned());
     }
-    if inventory.usb_devices.is_empty() {
-        limitations.push("P1 proof Host has no discovered USB device".to_owned());
-    }
 
     let ethernet = inventory.network_interfaces.iter().any(|interface| {
         interface.interface_type == Some(1)
             && !interface.wireless
-            && interface.driver.as_deref().is_some_and(|driver| !driver.is_empty())
+            && interface
+                .driver
+                .as_deref()
+                .is_some_and(|driver| !driver.is_empty())
     });
     if !ethernet {
         limitations.push(
@@ -222,7 +236,7 @@ mod tests {
     use prime_contracts::{
         BlockHardware, CpuHardware, DisplayConnector, FingerprintConfidence, FirmwareHardware,
         HardwareFingerprint, HardwareInventory, InputHardware, MemoryHardware, NetworkHardware,
-        PciHardware, SoundHardware, SystemHardware, UsbHardware, VirtualizationHardware,
+        PciHardware, SoundHardware, SystemHardware, VirtualizationHardware,
     };
 
     fn probe(digest: &str) -> ProbeResult {
@@ -269,22 +283,28 @@ mod tests {
                 memory: MemoryHardware {
                     total_bytes: Some(8_388_608_000),
                 },
-                pci_devices: vec![PciHardware {
-                    address: "0000:00:02.0".to_owned(),
-                    vendor_id: Some("0x8086".to_owned()),
-                    device_id: Some("0x9bc5".to_owned()),
-                    class_code: Some("0x030000".to_owned()),
-                    class_family: Some("DISPLAY".to_owned()),
-                    subsystem_vendor_id: None,
-                    subsystem_device_id: None,
-                    driver: Some("i915".to_owned()),
-                }],
-                usb_devices: vec![UsbHardware {
-                    kernel_name: "1-2".to_owned(),
-                    vendor_id: "046d".to_owned(),
-                    product_id: "c077".to_owned(),
-                    ..UsbHardware::default()
-                }],
+                pci_devices: vec![
+                    PciHardware {
+                        address: "0000:00:02.0".to_owned(),
+                        vendor_id: Some("0x8086".to_owned()),
+                        device_id: Some("0x9bc5".to_owned()),
+                        class_code: Some("0x030000".to_owned()),
+                        class_family: Some("DISPLAY".to_owned()),
+                        subsystem_vendor_id: None,
+                        subsystem_device_id: None,
+                        driver: Some("i915".to_owned()),
+                    },
+                    PciHardware {
+                        address: "0000:00:14.0".to_owned(),
+                        vendor_id: Some("0x8086".to_owned()),
+                        device_id: Some("0x43ed".to_owned()),
+                        class_code: Some("0x0c0330".to_owned()),
+                        class_family: Some("SERIAL_BUS".to_owned()),
+                        subsystem_vendor_id: None,
+                        subsystem_device_id: None,
+                        driver: Some("xhci_hcd".to_owned()),
+                    },
+                ],
                 block_devices: vec![
                     BlockHardware {
                         kernel_name: "nvme0n1".to_owned(),
@@ -360,14 +380,18 @@ mod tests {
     }
 
     #[test]
-    fn p1_proof_host_baseline_rejects_missing_graphics_and_secondary_storage() {
+    fn p1_proof_host_baseline_rejects_missing_graphics_usb_and_secondary_storage() {
         let mut graph = p1_graph();
         graph.inventory.pci_devices[0].driver = None;
+        graph.inventory.pci_devices[1].driver = None;
         graph.inventory.block_devices.pop();
         let limitations = p1_baseline_limitations(&graph);
         assert!(limitations
             .iter()
             .any(|item| item.contains("bound to i915")));
+        assert!(limitations
+            .iter()
+            .any(|item| item.contains("USB controller")));
         assert!(limitations
             .iter()
             .any(|item| item.contains("second writable non-removable disk")));
