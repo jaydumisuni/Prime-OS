@@ -1,0 +1,5 @@
+schema=prime.construction-proof-request.v1
+purpose=compile locked Smithay 0.7.0 graph on pinned Fedora 44
+proof_adapter_base_commit=5cd1ceee724940a8d22918012cb2a3acd020cbd5
+cargo_lock_sha256=c8135e2d01d62afe7b3838aeee48dde7d1bd0763475b43dd178a4030e6db5b75
+acceptance_authority=NONE_CONSTRUCTION_ONLY
