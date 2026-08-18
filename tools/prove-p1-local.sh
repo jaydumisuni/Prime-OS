@@ -40,6 +40,7 @@ sudo -n true || fail "non-interactive sudo is required for rootful Podman/NBD pr
 [[ -f image/Containerfile ]] || fail "missing image/Containerfile"
 [[ -f image/prime-os-release ]] || fail "missing Prime product identity"
 [[ -f image/scripts/prepare-uki-cmdlines.py ]] || fail "missing UKI command-line helper"
+[[ -f image/scripts/check-uki-contract.py ]] || fail "missing UKI contract checker"
 [[ -x /usr/bin/env ]] || fail "invalid host environment"
 
 SOURCE_REVISION="$(git rev-parse HEAD)"
@@ -268,7 +269,7 @@ QEMU_RC=$?
 set -e
 [[ "$QEMU_RC" -eq 0 || "$QEMU_RC" -eq 124 || "$QEMU_RC" -eq 143 ]] || fail "QEMU exited unexpectedly: $QEMU_RC"
 
-log "Prove Prime Core persisted Host state after UEFI boot"
+log "Prove Prime Core persisted Host state and entered health proving after UEFI boot"
 cleanup_nbd
 sudo -n qemu-nbd --read-only --connect="$NBD_DEV" "$OVERLAY"
 sleep 2
@@ -288,13 +289,13 @@ sudo -n test -f "$IDENTITY_FILE"
 sudo -n test -f "$HARDWARE_FILE"
 sudo -n test -f "$GENERATION_FILE"
 sudo -n python3 -c 'import json,sys; h=json.load(open(sys.argv[1])); hw=json.load(open(sys.argv[2])); assert h["host_id"]; assert str(h["host_arch"]).lower() in ("x86_64","amd64"); assert hw' "$IDENTITY_FILE" "$HARDWARE_FILE"
-sudo -n env EXPECTED_GENERATION_ID="$GENERATION_ID" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g["generation_id"]==os.environ["EXPECTED_GENERATION_ID"],g; assert g["state"]=="BOOT_TRY",g' "$GENERATION_FILE"
+sudo -n env EXPECTED_GENERATION_ID="$GENERATION_ID" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g["generation_id"]==os.environ["EXPECTED_GENERATION_ID"],g; assert g["state"]=="HEALTH_PROVING",g; assert "prime.core.socket.bound.v1" in g.get("evidence_refs",[]),g; assert g.get("boot_attempts_remaining")==3,g' "$GENERATION_FILE"
 HOST_ID="$(sudo -n python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["host_id"])' "$IDENTITY_FILE")"
 cleanup_nbd
 
 log "Write local proof report"
 DISK_SHA256="$(sha256sum "$DISK" | awk '{print $1}')"
 export REPORT SOURCE_REVISION CREATED_AT GENERATION_ID BASE_IMAGE BASE_DIGEST BUILDER_REF BUILDER_DIGEST BUILDER_VERSION CANONICAL_DIGEST FINAL_DIGEST NORMAL_EMBEDDED_DIGEST RECOVERY_EMBEDDED_DIGEST DISK DISK_SHA256 HOST_ID
-python3 -c 'import json,os,pathlib; p={"schema":"prime.p1-local-proof.v1","ok":True,"source_revision":os.environ["SOURCE_REVISION"],"created_at":os.environ["CREATED_AT"],"generation_id":os.environ["GENERATION_ID"],"base_image":os.environ["BASE_IMAGE"],"base_image_digest":os.environ["BASE_DIGEST"],"image_builder":os.environ["BUILDER_REF"],"image_builder_digest":os.environ["BUILDER_DIGEST"],"image_builder_version":os.environ["BUILDER_VERSION"],"prime_product_identity":True,"substrate":{"id":"fedora","version_id":"44","base_image_digest":os.environ["BASE_DIGEST"]},"composefs_canonical_digest":os.environ["CANONICAL_DIGEST"],"composefs_final_digest":os.environ["FINAL_DIGEST"],"normal_uki_embedded_digest":os.environ["NORMAL_EMBEDDED_DIGEST"],"recovery_uki_embedded_digest":os.environ["RECOVERY_EMBEDDED_DIGEST"],"recovery_uki_present":True,"recovery_boot_proven":False,"qcow2_path":os.environ["DISK"],"qcow2_sha256":os.environ["DISK_SHA256"],"qemu_uefi":"OVMF","prime_host_id":os.environ["HOST_ID"],"physical_kratos_boot_proven":False}; path=pathlib.Path(os.environ["REPORT"]); path.write_text(json.dumps(p,indent=2)+"\n",encoding="utf-8"); print(path.read_text())'
+python3 -c 'import json,os,pathlib; p={"schema":"prime.p1-local-proof.v1","ok":True,"source_revision":os.environ["SOURCE_REVISION"],"created_at":os.environ["CREATED_AT"],"generation_id":os.environ["GENERATION_ID"],"generation_state":"HEALTH_PROVING","known_good_proven":False,"base_image":os.environ["BASE_IMAGE"],"base_image_digest":os.environ["BASE_DIGEST"],"image_builder":os.environ["BUILDER_REF"],"image_builder_digest":os.environ["BUILDER_DIGEST"],"image_builder_version":os.environ["BUILDER_VERSION"],"prime_product_identity":True,"substrate":{"id":"fedora","version_id":"44","base_image_digest":os.environ["BASE_DIGEST"]},"composefs_canonical_digest":os.environ["CANONICAL_DIGEST"],"composefs_final_digest":os.environ["FINAL_DIGEST"],"normal_uki_embedded_digest":os.environ["NORMAL_EMBEDDED_DIGEST"],"recovery_uki_embedded_digest":os.environ["RECOVERY_EMBEDDED_DIGEST"],"recovery_uki_present":True,"recovery_boot_proven":False,"qcow2_path":os.environ["DISK"],"qcow2_sha256":os.environ["DISK_SHA256"],"qemu_uefi":"OVMF","prime_host_id":os.environ["HOST_ID"],"physical_kratos_boot_proven":False}; path=pathlib.Path(os.environ["REPORT"]); path.write_text(json.dumps(p,indent=2)+"\n",encoding="utf-8"); print(path.read_text())'
 
 printf '\nP1_LOCAL_PROOF=PASS\nREPORT=%s\nQCOW2=%s\n' "$REPORT" "$DISK"
