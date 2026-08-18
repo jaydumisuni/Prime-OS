@@ -10,9 +10,7 @@ use smithay::{
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
     reexports::{
-        calloop::{
-            generic::Generic, EventLoop, Interest, Mode, PostAction,
-        },
+        calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
         input::Libinput,
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
@@ -133,7 +131,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut libinput_context =
         Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
-    libinput_context.udev_assign_seat(&seat_name)?;
+    libinput_context
+        .udev_assign_seat(&seat_name)
+        .map_err(|()| io::Error::other(format!("libinput rejected seat {seat_name}")))?;
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
     let listening_socket = ListeningSocketSource::new_auto()?;
@@ -180,10 +180,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             UdevEvent::Added { device_id, path } => {
                 runtime.readiness.udev_device_count =
                     runtime.readiness.udev_device_count.saturating_add(1);
-                runtime.readiness.last_udev_event = Some(format!(
-                    "ADDED:{device_id}:{}",
-                    path.display()
-                ));
+                runtime.readiness.last_udev_event =
+                    Some(format!("ADDED:{device_id}:{}", path.display()));
             }
             UdevEvent::Changed { device_id } => {
                 runtime.readiness.last_udev_event = Some(format!("CHANGED:{device_id}"));
@@ -254,8 +252,8 @@ fn install_session_notifier(
                 runtime.readiness.session_active = false;
             }
             SessionEvent::ActivateSession => {
-                if let Err(error) = libinput_context.resume() {
-                    eprintln!("prime-compositor could not resume libinput: {error:?}");
+                if libinput_context.resume().is_err() {
+                    eprintln!("prime-compositor could not resume libinput");
                     runtime.readiness.session_active = false;
                 } else {
                     runtime.readiness.session_active = true;
