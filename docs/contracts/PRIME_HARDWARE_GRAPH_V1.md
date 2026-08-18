@@ -111,10 +111,10 @@ For the frozen HP 290 G4 / Kratos First-Light target, the current P1 baseline ev
 - CPU model containing `i7-10700`;
 - at least 8,000,000,000 bytes of observed physical memory;
 - an Intel (`0x8086`) PCI `DISPLAY` function bound to the `i915` kernel driver;
+- a PCI USB controller (`0x0c03xx`) with a bound kernel driver;
 - at least one connected DRM connector with at least one advertised mode;
 - at least one discovered input device;
 - at least one discovered sound card;
-- at least one discovered USB device;
 - at least one non-wireless Ethernet interface with a bound kernel driver;
 - one writable, non-removable disk of at least 900,000,000,000 bytes;
 - a second writable, non-removable disk of at least 450,000,000,000 bytes;
@@ -124,7 +124,9 @@ The disk thresholds intentionally validate the frozen approximately 1 TB + 500 G
 
 The graphics gate intentionally requires the active Linux `i915` binding rather than merely seeing an Intel PCI ID. A display controller that exists but has no usable P1 driver is not accepted.
 
-The Ethernet, input, audio, USB and connected-output requirements are discovery/driver-presence gates. Functional transfer, audio playback, pointer/keyboard interaction and compositor rendering still require live P1 proof; inventory presence alone is not promoted into behavioral success.
+The USB discovery gate intentionally checks the controller/driver path rather than requiring a peripheral to happen to be attached during startup. Actual USB hotplug/device operation remains a live behavioral proof obligation.
+
+The Ethernet, input, audio and connected-output requirements are discovery/driver-presence gates. Functional transfer, audio playback, pointer/keyboard interaction, USB hotplug and compositor rendering still require live P1 proof; inventory presence alone is not promoted into behavioral success.
 
 ## Generation-health relationship
 
