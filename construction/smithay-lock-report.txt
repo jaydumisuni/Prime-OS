@@ -1,0 +1,7 @@
+schema=prime.construction-smithay-lock.v1
+source_revision=880785af5c9556a4c174e34afdf3f01b658d7167
+rustc=rustc 1.97.1 (8bab26f4f 2026-07-14)
+cargo=cargo 1.97.1 (c980f4866 2026-06-30)
+cargo_lock_sha256=c8135e2d01d62afe7b3838aeee48dde7d1bd0763475b43dd178a4030e6db5b75
+smithay_version=0.7.0
+smithay_default_features=false

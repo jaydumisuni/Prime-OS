@@ -1,0 +1,599 @@
+prime-compositor v0.1.0 (/home/runner/work/Prime-OS/Prime-OS/crates/prime-compositor)
+├── smithay feature "backend_drm"
+│   ├── smithay v0.7.0
+│   │   ├── libseat v0.2.4
+│   │   │   ├── log feature "default"
+│   │   │   │   └── log v0.4.33
+│   │   │   ├── errno feature "default"
+│   │   │   │   ├── errno v0.3.14
+│   │   │   │   │   └── libc v0.2.189
+│   │   │   │   └── errno feature "std"
+│   │   │   │       ├── errno v0.3.14 (*)
+│   │   │   │       └── libc feature "std"
+│   │   │   │           └── libc v0.2.189
+│   │   │   └── libseat-sys feature "default"
+│   │   │       └── libseat-sys v0.2.0
+│   │   │           [build-dependencies]
+│   │   │           └── pkg-config feature "default"
+│   │   │               └── pkg-config v0.3.34
+│   │   ├── appendlist feature "default"
+│   │   │   └── appendlist v1.4.0
+│   │   ├── atomic_float feature "default"
+│   │   │   ├── atomic_float v1.1.0
+│   │   │   └── atomic_float feature "atomic_f64"
+│   │   │       └── atomic_float v1.1.0
+│   │   ├── bitflags feature "default"
+│   │   │   └── bitflags v2.13.1
+│   │   ├── calloop feature "default"
+│   │   │   └── calloop v0.14.4
+│   │   │       ├── bitflags feature "default" (*)
+│   │   │       ├── polling feature "default"
+│   │   │       │   └── polling v3.11.0
+│   │   │       │       ├── cfg-if feature "default"
+│   │   │       │       │   └── cfg-if v1.0.4
+│   │   │       │       ├── rustix feature "event"
+│   │   │       │       │   └── rustix v1.1.4
+│   │   │       │       │       ├── bitflags v2.13.1
+│   │   │       │       │       ├── linux-raw-sys feature "auxvec"
+│   │   │       │       │       │   └── linux-raw-sys v0.12.1
+│   │   │       │       │       ├── linux-raw-sys feature "elf"
+│   │   │       │       │       │   └── linux-raw-sys v0.12.1
+│   │   │       │       │       ├── linux-raw-sys feature "errno"
+│   │   │       │       │       │   └── linux-raw-sys v0.12.1
+│   │   │       │       │       ├── linux-raw-sys feature "general"
+│   │   │       │       │       │   └── linux-raw-sys v0.12.1
+│   │   │       │       │       ├── linux-raw-sys feature "ioctl"
+│   │   │       │       │       │   └── linux-raw-sys v0.12.1
+│   │   │       │       │       └── linux-raw-sys feature "no_std"
+│   │   │       │       │           └── linux-raw-sys v0.12.1
+│   │   │       │       ├── rustix feature "fs"
+│   │   │       │       │   └── rustix v1.1.4 (*)
+│   │   │       │       ├── rustix feature "pipe"
+│   │   │       │       │   └── rustix v1.1.4 (*)
+│   │   │       │       ├── rustix feature "process"
+│   │   │       │       │   ├── rustix v1.1.4 (*)
+│   │   │       │       │   └── linux-raw-sys feature "prctl"
+│   │   │       │       │       └── linux-raw-sys v0.12.1
+│   │   │       │       ├── rustix feature "std"
+│   │   │       │       │   ├── rustix v1.1.4 (*)
+│   │   │       │       │   ├── bitflags feature "std"
+│   │   │       │       │   │   └── bitflags v2.13.1
+│   │   │       │       │   └── rustix feature "alloc"
+│   │   │       │       │       └── rustix v1.1.4 (*)
+│   │   │       │       └── rustix feature "time"
+│   │   │       │           └── rustix v1.1.4 (*)
+│   │   │       ├── rustix feature "event" (*)
+│   │   │       ├── rustix feature "fs" (*)
+│   │   │       ├── rustix feature "pipe" (*)
+│   │   │       ├── rustix feature "std" (*)
+│   │   │       ├── slab feature "default"
+│   │   │       │   ├── slab v0.4.12
+│   │   │       │   └── slab feature "std"
+│   │   │       │       └── slab v0.4.12
+│   │   │       └── tracing feature "log"
+│   │   │           └── tracing v0.1.44
+│   │   │               ├── tracing-core v0.1.36
+│   │   │               │   └── once_cell feature "default"
+│   │   │               │       ├── once_cell v1.21.4
+│   │   │               │       └── once_cell feature "std"
+│   │   │               │           ├── once_cell v1.21.4
+│   │   │               │           └── once_cell feature "alloc"
+│   │   │               │               ├── once_cell v1.21.4
+│   │   │               │               └── once_cell feature "race"
+│   │   │               │                   └── once_cell v1.21.4
+│   │   │               ├── log feature "default" (*)
+│   │   │               ├── pin-project-lite feature "default"
+│   │   │               │   └── pin-project-lite v0.2.17
+│   │   │               └── tracing-attributes feature "default"
+│   │   │                   └── tracing-attributes v0.1.31 (proc-macro)
+│   │   │                       ├── proc-macro2 feature "default"
+│   │   │                       │   ├── proc-macro2 v1.0.107
+│   │   │                       │   │   └── unicode-ident feature "default"
+│   │   │                       │   │       └── unicode-ident v1.0.24
+│   │   │                       │   └── proc-macro2 feature "proc-macro"
+│   │   │                       │       └── proc-macro2 v1.0.107 (*)
+│   │   │                       ├── quote feature "default"
+│   │   │                       │   ├── quote v1.0.47
+│   │   │                       │   │   └── proc-macro2 v1.0.107 (*)
+│   │   │                       │   └── quote feature "proc-macro"
+│   │   │                       │       ├── quote v1.0.47 (*)
+│   │   │                       │       └── proc-macro2 feature "proc-macro" (*)
+│   │   │                       ├── syn feature "clone-impls"
+│   │   │                       │   └── syn v2.0.119
+│   │   │                       │       ├── proc-macro2 v1.0.107 (*)
+│   │   │                       │       ├── quote v1.0.47 (*)
+│   │   │                       │       └── unicode-ident feature "default" (*)
+│   │   │                       ├── syn feature "extra-traits"
+│   │   │                       │   └── syn v2.0.119 (*)
+│   │   │                       ├── syn feature "full"
+│   │   │                       │   └── syn v2.0.119 (*)
+│   │   │                       ├── syn feature "parsing"
+│   │   │                       │   └── syn v2.0.119 (*)
+│   │   │                       ├── syn feature "printing"
+│   │   │                       │   └── syn v2.0.119 (*)
+│   │   │                       ├── syn feature "proc-macro"
+│   │   │                       │   ├── syn v2.0.119 (*)
+│   │   │                       │   ├── proc-macro2 feature "proc-macro" (*)
+│   │   │                       │   └── quote feature "proc-macro" (*)
+│   │   │                       └── syn feature "visit-mut"
+│   │   │                           └── syn v2.0.119 (*)
+│   │   ├── rustix feature "default"
+│   │   │   ├── rustix v1.1.4 (*)
+│   │   │   └── rustix feature "std" (*)
+│   │   ├── rustix feature "event" (*)
+│   │   ├── rustix feature "fs" (*)
+│   │   ├── rustix feature "mm"
+│   │   │   └── rustix v1.1.4 (*)
+│   │   ├── rustix feature "net"
+│   │   │   ├── rustix v1.1.4 (*)
+│   │   │   ├── linux-raw-sys feature "if_ether"
+│   │   │   │   └── linux-raw-sys v0.12.1
+│   │   │   ├── linux-raw-sys feature "net"
+│   │   │   │   └── linux-raw-sys v0.12.1
+│   │   │   ├── linux-raw-sys feature "netlink"
+│   │   │   │   └── linux-raw-sys v0.12.1
+│   │   │   └── linux-raw-sys feature "xdp"
+│   │   │       └── linux-raw-sys v0.12.1
+│   │   ├── rustix feature "pipe" (*)
+│   │   ├── rustix feature "process" (*)
+│   │   ├── rustix feature "shm"
+│   │   │   ├── rustix v1.1.4 (*)
+│   │   │   └── rustix feature "fs" (*)
+│   │   ├── rustix feature "time" (*)
+│   │   ├── tracing feature "default"
+│   │   │   ├── tracing v0.1.44 (*)
+│   │   │   ├── tracing feature "attributes"
+│   │   │   │   ├── tracing v0.1.44 (*)
+│   │   │   │   └── tracing feature "tracing-attributes"
+│   │   │   │       └── tracing v0.1.44 (*)
+│   │   │   └── tracing feature "std"
+│   │   │       ├── tracing v0.1.44 (*)
+│   │   │       └── tracing-core feature "std"
+│   │   │           ├── tracing-core v0.1.36 (*)
+│   │   │           └── tracing-core feature "once_cell"
+│   │   │               └── tracing-core v0.1.36 (*)
+│   │   ├── cgmath feature "default"
+│   │   │   └── cgmath v0.18.0
+│   │   │       ├── approx feature "default"
+│   │   │       │   ├── approx v0.4.0
+│   │   │       │   │   └── num-traits v0.2.19
+│   │   │       │   │       [build-dependencies]
+│   │   │       │   │       └── autocfg feature "default"
+│   │   │       │   │           └── autocfg v1.5.1
+│   │   │       │   └── approx feature "std"
+│   │   │       │       └── approx v0.4.0 (*)
+│   │   │       └── num-traits feature "default"
+│   │   │           ├── num-traits v0.2.19 (*)
+│   │   │           └── num-traits feature "std"
+│   │   │               └── num-traits v0.2.19 (*)
+│   │   ├── cursor-icon feature "default"
+│   │   │   ├── cursor-icon v1.2.0
+│   │   │   └── cursor-icon feature "std"
+│   │   │       ├── cursor-icon v1.2.0
+│   │   │       └── cursor-icon feature "alloc"
+│   │   │           └── cursor-icon v1.2.0
+│   │   ├── downcast-rs feature "default"
+│   │   │   ├── downcast-rs v1.2.1
+│   │   │   └── downcast-rs feature "std"
+│   │   │       └── downcast-rs v1.2.1
+│   │   ├── drm feature "default"
+│   │   │   └── drm v0.14.1
+│   │   │       ├── bitflags feature "default" (*)
+│   │   │       ├── bytemuck feature "default"
+│   │   │       │   └── bytemuck v1.25.2
+│   │   │       │       └── bytemuck_derive feature "default"
+│   │   │       │           └── bytemuck_derive v1.12.0 (proc-macro)
+│   │   │       │               ├── proc-macro2 feature "default" (*)
+│   │   │       │               ├── quote feature "default" (*)
+│   │   │       │               └── syn feature "default"
+│   │   │       │                   ├── syn v3.0.3
+│   │   │       │                   │   ├── proc-macro2 v1.0.107 (*)
+│   │   │       │                   │   ├── quote v1.0.47 (*)
+│   │   │       │                   │   └── unicode-ident feature "default" (*)
+│   │   │       │                   ├── syn feature "clone-impls"
+│   │   │       │                   │   └── syn v3.0.3 (*)
+│   │   │       │                   ├── syn feature "derive"
+│   │   │       │                   │   └── syn v3.0.3 (*)
+│   │   │       │                   ├── syn feature "parsing"
+│   │   │       │                   │   └── syn v3.0.3 (*)
+│   │   │       │                   ├── syn feature "printing"
+│   │   │       │                   │   └── syn v3.0.3 (*)
+│   │   │       │                   └── syn feature "proc-macro"
+│   │   │       │                       ├── syn v3.0.3 (*)
+│   │   │       │                       ├── proc-macro2 feature "proc-macro" (*)
+│   │   │       │                       └── quote feature "proc-macro" (*)
+│   │   │       ├── bytemuck feature "derive"
+│   │   │       │   ├── bytemuck v1.25.2 (*)
+│   │   │       │   └── bytemuck feature "bytemuck_derive"
+│   │   │       │       └── bytemuck v1.25.2 (*)
+│   │   │       ├── bytemuck feature "extern_crate_alloc"
+│   │   │       │   └── bytemuck v1.25.2 (*)
+│   │   │       ├── drm-ffi feature "default"
+│   │   │       │   └── drm-ffi v0.9.1
+│   │   │       │       ├── rustix feature "default" (*)
+│   │   │       │       └── drm-sys feature "default"
+│   │   │       │           └── drm-sys v0.8.1
+│   │   │       │               ├── linux-raw-sys feature "general"
+│   │   │       │               │   └── linux-raw-sys v0.9.4
+│   │   │       │               └── linux-raw-sys feature "no_std"
+│   │   │       │                   └── linux-raw-sys v0.9.4
+│   │   │       ├── drm-fourcc feature "default"
+│   │   │       │   ├── drm-fourcc v2.2.0
+│   │   │       │   └── drm-fourcc feature "std"
+│   │   │       │       └── drm-fourcc v2.2.0
+│   │   │       ├── rustix feature "default"
+│   │   │       │   ├── rustix v0.38.44
+│   │   │       │   │   ├── bitflags v2.13.1
+│   │   │       │   │   ├── linux-raw-sys feature "elf"
+│   │   │       │   │   │   └── linux-raw-sys v0.4.15
+│   │   │       │   │   ├── linux-raw-sys feature "errno"
+│   │   │       │   │   │   └── linux-raw-sys v0.4.15
+│   │   │       │   │   ├── linux-raw-sys feature "general"
+│   │   │       │   │   │   └── linux-raw-sys v0.4.15
+│   │   │       │   │   ├── linux-raw-sys feature "ioctl"
+│   │   │       │   │   │   └── linux-raw-sys v0.4.15
+│   │   │       │   │   └── linux-raw-sys feature "no_std"
+│   │   │       │   │       └── linux-raw-sys v0.4.15
+│   │   │       │   ├── rustix feature "std"
+│   │   │       │   │   ├── rustix v0.38.44 (*)
+│   │   │       │   │   ├── bitflags feature "std" (*)
+│   │   │       │   │   ├── rustix feature "alloc"
+│   │   │       │   │   │   └── rustix v0.38.44 (*)
+│   │   │       │   │   └── rustix feature "libc-extra-traits"
+│   │   │       │   │       └── rustix v0.38.44 (*)
+│   │   │       │   └── rustix feature "use-libc-auxv"
+│   │   │       │       └── rustix v0.38.44 (*)
+│   │   │       ├── rustix feature "fs"
+│   │   │       │   └── rustix v0.38.44 (*)
+│   │   │       └── rustix feature "mm"
+│   │   │           └── rustix v0.38.44 (*)
+│   │   ├── drm-ffi feature "default" (*)
+│   │   ├── drm-fourcc feature "default" (*)
+│   │   ├── errno feature "default" (*)
+│   │   ├── libc feature "default"
+│   │   │   ├── libc v0.2.189
+│   │   │   └── libc feature "std" (*)
+│   │   ├── gbm feature "drm-support"
+│   │   │   ├── gbm v0.18.0
+│   │   │   │   ├── bitflags feature "default" (*)
+│   │   │   │   ├── drm feature "default" (*)
+│   │   │   │   ├── drm-fourcc feature "default" (*)
+│   │   │   │   ├── libc feature "default" (*)
+│   │   │   │   └── gbm-sys feature "default"
+│   │   │   │       └── gbm-sys v0.4.0
+│   │   │   │           └── libc feature "default" (*)
+│   │   │   └── gbm feature "drm"
+│   │   │       └── gbm v0.18.0 (*)
+│   │   ├── indexmap feature "default"
+│   │   │   ├── indexmap v2.14.0
+│   │   │   │   ├── equivalent v1.0.2
+│   │   │   │   └── hashbrown v0.17.1
+│   │   │   └── indexmap feature "std"
+│   │   │       └── indexmap v2.14.0 (*)
+│   │   ├── input feature "libinput_1_19"
+│   │   │   ├── input v0.9.1
+│   │   │   │   ├── input-sys v1.19.0
+│   │   │   │   ├── bitflags feature "default" (*)
+│   │   │   │   ├── libc feature "default" (*)
+│   │   │   │   └── udev feature "default"
+│   │   │   │       └── udev v0.9.3
+│   │   │   │           ├── libc feature "default" (*)
+│   │   │   │           ├── io-lifetimes feature "default"
+│   │   │   │           │   ├── io-lifetimes v1.0.11
+│   │   │   │           │   │   └── libc feature "default" (*)
+│   │   │   │           │   └── io-lifetimes feature "close"
+│   │   │   │           │       ├── io-lifetimes v1.0.11 (*)
+│   │   │   │           │       ├── io-lifetimes feature "hermit-abi"
+│   │   │   │           │       │   └── io-lifetimes v1.0.11 (*)
+│   │   │   │           │       ├── io-lifetimes feature "libc"
+│   │   │   │           │       │   └── io-lifetimes v1.0.11 (*)
+│   │   │   │           │       └── io-lifetimes feature "windows-sys"
+│   │   │   │           │           └── io-lifetimes v1.0.11 (*)
+│   │   │   │           └── libudev-sys feature "default"
+│   │   │   │               └── libudev-sys v0.1.4
+│   │   │   │                   └── libc feature "default" (*)
+│   │   │   │                   [build-dependencies]
+│   │   │   │                   └── pkg-config feature "default" (*)
+│   │   │   │           [build-dependencies]
+│   │   │   │           └── pkg-config feature "default" (*)
+│   │   │   ├── input feature "libinput_1_15"
+│   │   │   │   ├── input v0.9.1 (*)
+│   │   │   │   ├── input feature "libinput_1_14"
+│   │   │   │   │   ├── input v0.9.1 (*)
+│   │   │   │   │   ├── input feature "libinput_1_11"
+│   │   │   │   │   │   ├── input v0.9.1 (*)
+│   │   │   │   │   │   └── input-sys feature "libinput_1_11"
+│   │   │   │   │   │       └── input-sys v1.19.0
+│   │   │   │   │   └── input-sys feature "libinput_1_14"
+│   │   │   │   │       └── input-sys v1.19.0
+│   │   │   │   └── input-sys feature "libinput_1_15"
+│   │   │   │       └── input-sys v1.19.0
+│   │   │   └── input-sys feature "libinput_1_19"
+│   │   │       └── input-sys v1.19.0
+│   │   ├── udev feature "default" (*)
+│   │   ├── libloading feature "default"
+│   │   │   └── libloading v0.8.9
+│   │   │       └── cfg-if feature "default" (*)
+│   │   ├── profiling feature "default"
+│   │   │   ├── profiling v1.0.18
+│   │   │   │   └── profiling-procmacros feature "default"
+│   │   │   │       └── profiling-procmacros v1.0.18 (proc-macro)
+│   │   │   │           ├── quote v1.0.47 (*)
+│   │   │   │           ├── syn feature "default"
+│   │   │   │           │   ├── syn v2.0.119 (*)
+│   │   │   │           │   ├── syn feature "clone-impls" (*)
+│   │   │   │           │   ├── syn feature "derive"
+│   │   │   │           │   │   └── syn v2.0.119 (*)
+│   │   │   │           │   ├── syn feature "parsing" (*)
+│   │   │   │           │   ├── syn feature "printing" (*)
+│   │   │   │           │   └── syn feature "proc-macro" (*)
+│   │   │   │           └── syn feature "full" (*)
+│   │   │   └── profiling feature "procmacros"
+│   │   │       ├── profiling v1.0.18 (*)
+│   │   │       └── profiling feature "profiling-procmacros"
+│   │   │           └── profiling v1.0.18 (*)
+│   │   ├── rand feature "default"
+│   │   │   ├── rand v0.9.5
+│   │   │   │   ├── rand_chacha v0.9.0
+│   │   │   │   │   ├── ppv-lite86 feature "simd"
+│   │   │   │   │   │   └── ppv-lite86 v0.2.21
+│   │   │   │   │   │       ├── zerocopy feature "default"
+│   │   │   │   │   │       │   └── zerocopy v0.8.56
+│   │   │   │   │   │       └── zerocopy feature "simd"
+│   │   │   │   │   │           └── zerocopy v0.8.56
+│   │   │   │   │   └── rand_core feature "default"
+│   │   │   │   │       └── rand_core v0.9.5
+│   │   │   │   │           └── getrandom feature "default"
+│   │   │   │   │               └── getrandom v0.3.4
+│   │   │   │   │                   ├── libc v0.2.189
+│   │   │   │   │                   └── cfg-if feature "default" (*)
+│   │   │   │   └── rand_core v0.9.5 (*)
+│   │   │   ├── rand feature "os_rng"
+│   │   │   │   ├── rand v0.9.5 (*)
+│   │   │   │   └── rand_core feature "os_rng"
+│   │   │   │       └── rand_core v0.9.5 (*)
+│   │   │   ├── rand feature "small_rng"
+│   │   │   │   └── rand v0.9.5 (*)
+│   │   │   ├── rand feature "std"
+│   │   │   │   ├── rand v0.9.5 (*)
+│   │   │   │   ├── rand feature "alloc"
+│   │   │   │   │   └── rand v0.9.5 (*)
+│   │   │   │   ├── rand_chacha feature "std"
+│   │   │   │   │   ├── rand_chacha v0.9.0 (*)
+│   │   │   │   │   ├── ppv-lite86 feature "std"
+│   │   │   │   │   │   └── ppv-lite86 v0.2.21 (*)
+│   │   │   │   │   └── rand_core feature "std"
+│   │   │   │   │       ├── rand_core v0.9.5 (*)
+│   │   │   │   │       └── getrandom feature "std"
+│   │   │   │   │           └── getrandom v0.3.4 (*)
+│   │   │   │   └── rand_core feature "std" (*)
+│   │   │   ├── rand feature "std_rng"
+│   │   │   │   └── rand v0.9.5 (*)
+│   │   │   └── rand feature "thread_rng"
+│   │   │       ├── rand v0.9.5 (*)
+│   │   │       ├── rand feature "os_rng" (*)
+│   │   │       ├── rand feature "std" (*)
+│   │   │       └── rand feature "std_rng" (*)
+│   │   ├── sha2 feature "default"
+│   │   │   ├── sha2 v0.10.9
+│   │   │   │   ├── cfg-if feature "default" (*)
+│   │   │   │   ├── cpufeatures feature "default"
+│   │   │   │   │   └── cpufeatures v0.2.17
+│   │   │   │   └── digest feature "default"
+│   │   │   │       ├── digest v0.10.7
+│   │   │   │       │   ├── block-buffer feature "default"
+│   │   │   │       │   │   └── block-buffer v0.10.4
+│   │   │   │       │   │       └── generic-array feature "default"
+│   │   │   │       │   │           └── generic-array v0.14.7
+│   │   │   │       │   │               └── typenum feature "default"
+│   │   │   │       │   │                   └── typenum v1.20.1
+│   │   │   │       │   │               [build-dependencies]
+│   │   │   │       │   │               └── version_check feature "default"
+│   │   │   │       │   │                   └── version_check v0.9.5
+│   │   │   │       │   └── crypto-common feature "default"
+│   │   │   │       │       └── crypto-common v0.1.7
+│   │   │   │       │           ├── generic-array feature "default" (*)
+│   │   │   │       │           ├── generic-array feature "more_lengths"
+│   │   │   │       │           │   └── generic-array v0.14.7 (*)
+│   │   │   │       │           └── typenum feature "default" (*)
+│   │   │   │       └── digest feature "core-api"
+│   │   │   │           ├── digest v0.10.7 (*)
+│   │   │   │           └── digest feature "block-buffer"
+│   │   │   │               └── digest v0.10.7 (*)
+│   │   │   └── sha2 feature "std"
+│   │   │       ├── sha2 v0.10.9 (*)
+│   │   │       └── digest feature "std"
+│   │   │           ├── digest v0.10.7 (*)
+│   │   │           ├── digest feature "alloc"
+│   │   │           │   └── digest v0.10.7 (*)
+│   │   │           └── crypto-common feature "std"
+│   │   │               └── crypto-common v0.1.7 (*)
+│   │   ├── smallvec feature "default"
+│   │   │   └── smallvec v1.15.2
+│   │   ├── tempfile feature "default"
+│   │   │   ├── tempfile v3.27.0
+│   │   │   │   ├── getrandom v0.4.3
+│   │   │   │   │   ├── libc v0.2.189
+│   │   │   │   │   └── cfg-if feature "default" (*)
+│   │   │   │   ├── rustix feature "default" (*)
+│   │   │   │   ├── rustix feature "fs" (*)
+│   │   │   │   ├── once_cell feature "std" (*)
+│   │   │   │   └── fastrand feature "default"
+│   │   │   │       ├── fastrand v2.5.0
+│   │   │   │       └── fastrand feature "std"
+│   │   │   │           ├── fastrand v2.5.0
+│   │   │   │           └── fastrand feature "alloc"
+│   │   │   │               └── fastrand v2.5.0
+│   │   │   └── tempfile feature "getrandom"
+│   │   │       └── tempfile v3.27.0 (*)
+│   │   ├── thiserror feature "default"
+│   │   │   ├── thiserror v2.0.20
+│   │   │   │   └── thiserror-impl feature "default"
+│   │   │   │       └── thiserror-impl v2.0.20 (proc-macro)
+│   │   │   │           ├── proc-macro2 feature "default" (*)
+│   │   │   │           ├── quote feature "default" (*)
+│   │   │   │           └── syn feature "default" (*)
+│   │   │   └── thiserror feature "std"
+│   │   │       └── thiserror v2.0.20 (*)
+│   │   ├── wayland-protocols feature "default"
+│   │   │   └── wayland-protocols v0.32.13
+│   │   │       ├── bitflags feature "default" (*)
+│   │   │       ├── wayland-backend feature "default"
+│   │   │       │   └── wayland-backend v0.3.17
+│   │   │       │       ├── rustix feature "default" (*)
+│   │   │       │       ├── rustix feature "event" (*)
+│   │   │       │       ├── rustix feature "fs" (*)
+│   │   │       │       ├── rustix feature "net" (*)
+│   │   │       │       ├── rustix feature "process" (*)
+│   │   │       │       ├── downcast-rs feature "default" (*)
+│   │   │       │       ├── smallvec feature "const_generics"
+│   │   │       │       │   └── smallvec v1.15.2
+│   │   │       │       ├── smallvec feature "const_new"
+│   │   │       │       │   ├── smallvec v1.15.2
+│   │   │       │       │   └── smallvec feature "const_generics" (*)
+│   │   │       │       ├── smallvec feature "default" (*)
+│   │   │       │       ├── smallvec feature "union"
+│   │   │       │       │   └── smallvec v1.15.2
+│   │   │       │       └── wayland-sys feature "default"
+│   │   │       │           └── wayland-sys v0.31.11
+│   │   │       │               [build-dependencies]
+│   │   │       │               └── pkg-config feature "default" (*)
+│   │   │       │       [build-dependencies]
+│   │   │       │       └── cc feature "default"
+│   │   │       │           └── cc v1.4.3
+│   │   │       │               ├── find-msvc-tools feature "default"
+│   │   │       │               │   └── find-msvc-tools v0.1.11
+│   │   │       │               └── shlex feature "default"
+│   │   │       │                   ├── shlex v2.0.1
+│   │   │       │                   └── shlex feature "std"
+│   │   │       │                       └── shlex v2.0.1
+│   │   │       ├── wayland-scanner feature "default"
+│   │   │       │   └── wayland-scanner v0.31.11 (proc-macro)
+│   │   │       │       ├── proc-macro2 feature "default" (*)
+│   │   │       │       ├── quote feature "default" (*)
+│   │   │       │       └── quick-xml feature "default"
+│   │   │       │           └── quick-xml v0.41.0
+│   │   │       │               └── memchr feature "default"
+│   │   │       │                   ├── memchr v2.8.3
+│   │   │       │                   └── memchr feature "std"
+│   │   │       │                       ├── memchr v2.8.3
+│   │   │       │                       └── memchr feature "alloc"
+│   │   │       │                           └── memchr v2.8.3
+│   │   │       └── wayland-server feature "default"
+│   │   │           └── wayland-server v0.31.14
+│   │   │               ├── bitflags feature "default" (*)
+│   │   │               ├── rustix feature "default" (*)
+│   │   │               ├── rustix feature "fs" (*)
+│   │   │               ├── downcast-rs feature "default" (*)
+│   │   │               ├── wayland-backend feature "default" (*)
+│   │   │               └── wayland-scanner feature "default" (*)
+│   │   ├── wayland-protocols feature "server"
+│   │   │   ├── wayland-protocols v0.32.13 (*)
+│   │   │   └── wayland-protocols feature "wayland-server"
+│   │   │       └── wayland-protocols v0.32.13 (*)
+│   │   ├── wayland-protocols feature "staging"
+│   │   │   └── wayland-protocols v0.32.13 (*)
+│   │   ├── wayland-protocols feature "unstable"
+│   │   │   └── wayland-protocols v0.32.13 (*)
+│   │   ├── wayland-server feature "default" (*)
+│   │   ├── wayland-protocols-misc feature "default"
+│   │   │   └── wayland-protocols-misc v0.3.12
+│   │   │       ├── bitflags feature "default" (*)
+│   │   │       ├── wayland-protocols feature "default" (*)
+│   │   │       ├── wayland-protocols feature "unstable" (*)
+│   │   │       ├── wayland-backend feature "default" (*)
+│   │   │       ├── wayland-scanner feature "default" (*)
+│   │   │       └── wayland-server feature "default" (*)
+│   │   ├── wayland-protocols-misc feature "server"
+│   │   │   ├── wayland-protocols-misc v0.3.12 (*)
+│   │   │   ├── wayland-protocols feature "server" (*)
+│   │   │   └── wayland-protocols-misc feature "wayland-server"
+│   │   │       └── wayland-protocols-misc v0.3.12 (*)
+│   │   ├── wayland-protocols-wlr feature "default"
+│   │   │   └── wayland-protocols-wlr v0.3.12
+│   │   │       ├── bitflags feature "default" (*)
+│   │   │       ├── wayland-protocols feature "default" (*)
+│   │   │       ├── wayland-backend feature "default" (*)
+│   │   │       ├── wayland-scanner feature "default" (*)
+│   │   │       └── wayland-server feature "default" (*)
+│   │   ├── wayland-protocols-wlr feature "server"
+│   │   │   ├── wayland-protocols-wlr v0.3.12 (*)
+│   │   │   ├── wayland-protocols feature "server" (*)
+│   │   │   └── wayland-protocols-wlr feature "wayland-server"
+│   │   │       └── wayland-protocols-wlr v0.3.12 (*)
+│   │   ├── xkbcommon feature "default"
+│   │   │   ├── xkbcommon v0.8.0
+│   │   │   │   ├── libc feature "default" (*)
+│   │   │   │   ├── memmap2 feature "default"
+│   │   │   │   │   └── memmap2 v0.9.11
+│   │   │   │   │       └── libc feature "default" (*)
+│   │   │   │   └── xkeysym feature "default"
+│   │   │   │       └── xkeysym v0.2.1
+│   │   │   └── xkbcommon feature "wayland"
+│   │   │       ├── xkbcommon v0.8.0 (*)
+│   │   │       └── xkbcommon feature "memmap2"
+│   │   │           └── xkbcommon v0.8.0 (*)
+│   │   └── xkbcommon feature "wayland" (*)
+│   │   [build-dependencies]
+│   │   ├── cc feature "default" (*)
+│   │   ├── gl_generator feature "default"
+│   │   │   └── gl_generator v0.14.0
+│   │   │       ├── log feature "default" (*)
+│   │   │       ├── khronos_api feature "default"
+│   │   │       │   └── khronos_api v3.1.0
+│   │   │       └── xml-rs feature "default"
+│   │   │           └── xml-rs v0.8.29
+│   │   └── pkg-config feature "default" (*)
+│   ├── smithay feature "drm"
+│   │   └── smithay v0.7.0 (*)
+│   └── smithay feature "drm-ffi"
+│       └── smithay v0.7.0 (*)
+├── smithay feature "backend_gbm"
+│   ├── smithay v0.7.0 (*)
+│   ├── smithay feature "backend_drm" (*)
+│   ├── smithay feature "cc"
+│   │   └── smithay v0.7.0 (*)
+│   ├── smithay feature "gbm"
+│   │   └── smithay v0.7.0 (*)
+│   └── smithay feature "pkg-config"
+│       └── smithay v0.7.0 (*)
+├── smithay feature "backend_libinput"
+│   ├── smithay v0.7.0 (*)
+│   └── smithay feature "input"
+│       └── smithay v0.7.0 (*)
+├── smithay feature "backend_session_libseat"
+│   ├── smithay v0.7.0 (*)
+│   ├── smithay feature "backend_session"
+│   │   └── smithay v0.7.0 (*)
+│   └── smithay feature "libseat"
+│       └── smithay v0.7.0 (*)
+├── smithay feature "backend_udev"
+│   ├── smithay v0.7.0 (*)
+│   ├── smithay feature "input" (*)
+│   ├── smithay feature "udev"
+│   │   └── smithay v0.7.0 (*)
+│   └── input feature "udev"
+│       └── input v0.9.1 (*)
+├── smithay feature "desktop"
+│   └── smithay v0.7.0 (*)
+├── smithay feature "renderer_gl"
+│   ├── smithay v0.7.0 (*)
+│   ├── smithay feature "backend_egl"
+│   │   ├── smithay v0.7.0 (*)
+│   │   ├── smithay feature "gl_generator"
+│   │   │   └── smithay v0.7.0 (*)
+│   │   └── smithay feature "libloading"
+│   │       └── smithay v0.7.0 (*)
+│   └── smithay feature "gl_generator" (*)
+└── smithay feature "wayland_frontend"
+    ├── smithay v0.7.0 (*)
+    ├── smithay feature "tempfile"
+    │   └── smithay v0.7.0 (*)
+    ├── smithay feature "wayland-protocols"
+    │   └── smithay v0.7.0 (*)
+    ├── smithay feature "wayland-protocols-misc"
+    │   └── smithay v0.7.0 (*)
+    ├── smithay feature "wayland-protocols-wlr"
+    │   └── smithay v0.7.0 (*)
+    └── smithay feature "wayland-server"
+        └── smithay v0.7.0 (*)
