@@ -77,7 +77,7 @@ fn host_identity_limitations(host: &HostIdentity, hardware_graph: &HardwareGraph
         ));
     }
     if !matches!(
-        host.hardware_fingerprint.confidence,
+        &host.hardware_fingerprint.confidence,
         FingerprintConfidence::High | FingerprintConfidence::Medium
     ) {
         limitations.push(format!(
