@@ -1,0 +1,7 @@
+[Unit]
+Description=Prime OS Recovery
+Documentation=https://github.com/jaydumisuni/Prime-OS
+Requires=local-fs.target prime-recovery.service
+After=local-fs.target
+Conflicts=graphical.target
+AllowIsolate=yes
