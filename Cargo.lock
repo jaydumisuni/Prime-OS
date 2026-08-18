@@ -671,7 +671,10 @@ dependencies = [
 name = "prime-compositor"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "smithay",
+ "time",
 ]
 
 [[package]]
