@@ -1,6 +1,6 @@
 name: Construction Smithay Lock
 
-# Construction machinery only. This workflow may resolve and record the
+# Construction machinery only. This workflow may resolve and compile the
 # dependency graph, but it is not a Prime proof/acceptance authority.
 on:
   push:
@@ -10,30 +10,29 @@ on:
 permissions:
   contents: write
 
+env:
+  PRIME_BASE_IMAGE: quay.io/fedora/fedora-bootc:44-x86_64@sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074
+
 jobs:
   resolve:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Install exact construction toolchain
+      - name: Verify locked graph and feature boundary
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.97.1 --profile minimal
           rustc +1.97.1 --version --verbose
           cargo +1.97.1 --version
-      - name: Resolve exact dependency graph
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +1.97.1 generate-lockfile
           cargo +1.97.1 metadata --locked --no-deps --format-version 1 >/dev/null
-          mkdir -p construction
-          cargo +1.97.1 tree -p prime-compositor -e features | tee construction/smithay-features.txt
+          cargo +1.97.1 tree -p prime-compositor -e features | tee /tmp/smithay-features.txt
+          cmp /tmp/smithay-features.txt construction/smithay-features.txt
+          test "$(sha256sum Cargo.lock | awk '{print $1}')" = "$(awk -F= '/^cargo_lock_sha256=/{print $2}' construction/smithay-lock-report.txt)"
           for required in \
             backend_drm \
             backend_gbm \
@@ -52,31 +51,72 @@ jobs:
             backend_vulkan \
             renderer_pixman \
             renderer_multi; do
-            if grep -F "smithay feature \"${forbidden}\"" construction/smithay-features.txt >/dev/null; then
-              echo "forbidden Smithay feature activated: ${forbidden}" >&2
-              exit 1
-            fi
+            ! grep -F "smithay feature \"${forbidden}\"" construction/smithay-features.txt >/dev/null
           done
-      - name: Record construction evidence
+      - name: Compile on pinned Fedora 44 substrate
         shell: bash
         run: |
           set -euo pipefail
-          {
-            echo 'schema=prime.construction-smithay-lock.v1'
-            echo "source_revision=$(git rev-parse HEAD)"
-            echo "rustc=$(rustc +1.97.1 --version)"
-            echo "cargo=$(cargo +1.97.1 --version)"
-            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
-            echo 'smithay_version=0.7.0'
-            echo 'smithay_default_features=false'
-          } > construction/smithay-lock-report.txt
-      - name: Commit generated lock evidence to construction branch
+          docker pull "$PRIME_BASE_IMAGE"
+          docker run --rm \
+            -e CARGO_TERM_COLOR=never \
+            -v "$PWD:/work" \
+            -w /work \
+            "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install \
+                ca-certificates \
+                curl \
+                gcc \
+                gcc-c++ \
+                make \
+                pkgconf-pkg-config \
+                "pkgconfig(libinput)" \
+                "pkgconfig(libudev)" \
+                "pkgconfig(gbm)" \
+                "pkgconfig(libseat)" \
+                "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" \
+                "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" \
+                "pkgconfig(libdrm)"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+              . "$HOME/.cargo/env"
+              test "$(rustc --version | awk "{print \\$2}")" = "1.97.1"
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo build --locked -p prime-compositor
+              mkdir -p construction
+              {
+                echo "schema=prime.construction-smithay-fedora44-build.v1"
+                echo "source_revision=${GITHUB_SHA:-unknown}"
+                echo "substrate=$(cat /usr/lib/os-release | tr "\n" ";")"
+                echo "rustc=$(rustc --version)"
+                echo "cargo=$(cargo --version)"
+                echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk "{print \\$1}")"
+                echo "smithay_version=0.7.0"
+                for capability in \
+                  "pkgconfig(libinput)" \
+                  "pkgconfig(libudev)" \
+                  "pkgconfig(gbm)" \
+                  "pkgconfig(libseat)" \
+                  "pkgconfig(xkbcommon)" \
+                  "pkgconfig(wayland-server)" \
+                  "pkgconfig(egl)" \
+                  "pkgconfig(glesv2)" \
+                  "pkgconfig(libdrm)"; do
+                  printf "%s=" "$capability"
+                  rpm -q --whatprovides "$capability" --qf "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n" | paste -sd, -
+                done
+              } > construction/smithay-fedora44-build.txt
+            '
+          sudo chown "$(id -u):$(id -g)" construction/smithay-fedora44-build.txt
+      - name: Commit Fedora build evidence to construction branch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Cargo.lock construction/smithay-features.txt construction/smithay-lock-report.txt
-          git diff --cached --exit-code && { echo 'no lock delta produced' >&2; exit 1; } || true
-          git commit -m 'construction: resolve Smithay 0.7.0 lock graph'
+          git add construction/smithay-fedora44-build.txt
+          git diff --cached --quiet && { echo 'no Fedora build evidence produced' >&2; exit 1; }
+          git commit -m 'construction: prove Smithay graph on pinned Fedora 44'
           git push origin HEAD:construction/p1-smithay-lock
