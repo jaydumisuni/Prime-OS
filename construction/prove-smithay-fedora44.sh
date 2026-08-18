@@ -51,14 +51,14 @@ docker run --rm \
     curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path
     export PATH="$CARGO_HOME/bin:$PATH"
 
-    test "$(rustc --version | awk "{print \\$2}")" = "1.97.1"
+    test "$(rustc --version | cut -d " " -f2)" = "1.97.1"
     cargo metadata --locked --no-deps --format-version 1 >/dev/null
     cargo build --locked -p prime-compositor
 
     echo "PRIME_SMITHAY_FEDORA44_BUILD=PASS"
     echo "rustc=$(rustc --version)"
     echo "cargo=$(cargo --version)"
-    echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk "{print \\$1}")"
+    echo "cargo_lock_sha256=$(sha256sum Cargo.lock | cut -d " " -f1)"
     echo "smithay_version=0.7.0"
     echo "native_pkgconfig_providers_begin"
     for capability in \
