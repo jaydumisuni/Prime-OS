@@ -137,7 +137,7 @@ pub fn begin_health_proving(
         return Err(GenerationError::EvidenceReference);
     }
 
-    match current.state {
+    match &current.state {
         GenerationState::HealthProving | GenerationState::KnownGood => Ok(current.clone()),
         GenerationState::BootTry => {
             let mut updated = current.clone();
@@ -195,7 +195,7 @@ pub fn promote_known_good(
 }
 
 pub fn health_status(record: &GenerationRecord) -> HealthStatus {
-    match record.state {
+    match &record.state {
         GenerationState::KnownGood => HealthStatus::Healthy,
         GenerationState::Rejected => HealthStatus::Failed,
         GenerationState::RolledBack | GenerationState::Recovery => HealthStatus::Degraded,
@@ -206,7 +206,7 @@ pub fn health_status(record: &GenerationRecord) -> HealthStatus {
 }
 
 pub fn health_limitations(record: &GenerationRecord) -> Vec<String> {
-    match record.state {
+    match &record.state {
         GenerationState::KnownGood => Vec::new(),
         GenerationState::Staged => vec![
             "Current generation is STAGED and has not entered boot health proof".to_owned(),
