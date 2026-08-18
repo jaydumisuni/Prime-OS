@@ -366,6 +366,54 @@ impl CoreState {
             started_at: observed_at,
         }
     }
+
+    pub fn begin_generation_health_proving(
+        &mut self,
+        evidence_ref: &str,
+    ) -> Result<(), crate::generation::GenerationError> {
+        let updated = crate::generation::begin_health_proving(
+            &self.state_dir,
+            &self.generation,
+            evidence_ref,
+        )?;
+        self.apply_generation_record(updated);
+        Ok(())
+    }
+
+    fn apply_generation_record(&mut self, generation: GenerationRecord) {
+        let generation_limitations = crate::generation::health_limitations(&generation);
+        let health_status = crate::generation::health_status(&generation);
+
+        self.generation = generation.clone();
+
+        let capabilities = Arc::make_mut(&mut self.capabilities);
+        if let Some(capability) = capabilities
+            .iter_mut()
+            .find(|item| item.capability_id == "prime.generation.current")
+        {
+            capability.provider.generation_id = generation.generation_id.clone();
+            capability.resources = json!({
+                "state": &generation.state,
+                "boot_attempts_remaining": generation.boot_attempts_remaining,
+            });
+            capability.health.status = health_status;
+            capability.health.evidence_refs = generation.evidence_refs.clone();
+            capability
+                .limitations
+                .retain(|item| !item.starts_with("Current generation is "));
+            capability
+                .limitations
+                .extend(generation_limitations.iter().cloned());
+            capability.limitations.sort();
+            capability.limitations.dedup();
+        }
+
+        let limitations = Arc::make_mut(&mut self.health_limitations);
+        limitations.retain(|item| !item.starts_with("Current generation is "));
+        limitations.extend(generation_limitations);
+        limitations.sort();
+        limitations.dedup();
+    }
 }
 
 fn status_for(limitations: &[String]) -> HealthStatus {
