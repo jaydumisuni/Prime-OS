@@ -3,6 +3,7 @@ pub mod generation;
 pub mod hardware;
 pub mod identity;
 pub mod launcher;
+pub mod p1_health;
 pub mod policy;
 pub mod registry;
 pub mod server;
