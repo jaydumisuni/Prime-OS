@@ -166,8 +166,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             // SAFETY: calloop owns the Display source for the lifetime of this event source,
             // matching Smithay's v0.7.0 Smallvil listener pattern.
             unsafe {
-                if let Err(error) = display.get_mut().dispatch_clients(runtime) {
+                let display = display.get_mut();
+                if let Err(error) = display.dispatch_clients(runtime) {
                     eprintln!("prime-compositor Wayland dispatch failed: {error}");
+                }
+                if let Err(error) = display.flush_clients() {
+                    eprintln!("prime-compositor Wayland flush failed: {error}");
                 }
             }
             Ok(PostAction::Continue)
@@ -242,7 +246,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         event_loop.dispatch(Some(Duration::from_millis(16)), &mut runtime)?;
-        runtime.display_handle.flush_clients()?;
     }
 }
 
