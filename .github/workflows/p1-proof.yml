@@ -1,0 +1,35 @@
+name: Prime P1 Full Proof
+
+# This is a self-hosted transport adapter only. The canonical proof remains
+# tools/prove-p1-local.sh running on the Kratos proof Host.
+on:
+  push:
+    branches:
+      - 'proof/p1-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prime-p1-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - name: Freeze exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'P1_PROOF_CANDIDATE=%s\n' "$GITHUB_SHA"
+      - name: Run canonical Prime P1 proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/prove-p1-local.sh
+          tools/prove-p1-local.sh
