@@ -37,6 +37,9 @@ ENV container=oci
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 
+# Package installation is performed while the Fedora substrate still owns
+# /usr/lib/os-release. Prime product identity replaces it only after build-time
+# package operations are complete.
 RUN set -eux; \
     test "${TARGETARCH}" = "amd64"; \
     test -n "${PRIME_BASE_DIGEST}"; \
@@ -63,16 +66,39 @@ RUN set -eux; \
     test -x /usr/sbin/bootc; \
     test -x /usr/sbin/systemd-run
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime /usr/lib/bootc/install
+COPY image/prime-os-release /usr/lib/os-release
+
+RUN set -eux; \
+    grep -q '^ID=prime$' /usr/lib/os-release; \
+    grep -q '^PRETTY_NAME="Prime OS P1 First Light"$' /usr/lib/os-release; \
+    install -d -m 0755 /usr/lib/prime; \
+    case "${PRIME_BASE_DIGEST}" in sha256:????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac; \
+    printf '%s\n' \
+       '{' \
+       '  "schema": "prime.substrate-release.v1",' \
+       '  "id": "fedora",' \
+       '  "version_id": "44",' \
+       "  \"base_image_digest\": \"${PRIME_BASE_DIGEST}\"" \
+       '}' \
+       > /usr/lib/prime/substrate-release.json; \
+    chmod 0444 /usr/lib/prime/substrate-release.json; \
+    python3 -c 'import json; d=json.load(open("/usr/lib/prime/substrate-release.json", "r", encoding="utf-8")); assert d["schema"]=="prime.substrate-release.v1"; assert d["id"]=="fedora"; assert d["version_id"]=="44"'
+
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install
 COPY target/release/primed /usr/libexec/prime/primed
+COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
 COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
+COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
 COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
 
 RUN set -eux; \
-    chmod 0755 /usr/libexec/prime/primed; \
+    chmod 0755 /usr/libexec/prime/primed /usr/libexec/prime/prime-recovery; \
     chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
     systemctl enable primed.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
+    test -f /usr/lib/systemd/system/prime-recovery.service; \
+    test -f /usr/lib/systemd/system/prime-recovery.target; \
     bootc install print-configuration > /tmp/prime-install-config.json; \
     python3 -c 'import json; c=json.load(open("/tmp/prime-install-config.json")); assert c.get("bootloader") == "systemd", c'; \
     rm -f /tmp/prime-install-config.json
@@ -97,6 +123,7 @@ RUN set -eux; \
     chmod 0444 /usr/lib/prime/generation-seed.json; \
     python3 -c 'import json; json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8"))'; \
     test -x /usr/libexec/prime/primed; \
+    test -x /usr/libexec/prime/prime-recovery; \
     test -L /etc/systemd/system/multi-user.target.wants/primed.service; \
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer; \
     bootc container lint --fatal-warnings
@@ -118,43 +145,71 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     test -s "/kernel/${kver}/vmlinuz"; \
     test -s "/kernel/${kver}/initramfs.img"; \
     provisional="/out/${kver}.provisional.efi"; \
-    final="/out/${kver}.efi"; \
+    normal="/out/${kver}.efi"; \
+    recovery="/out/${kver}.recovery.efi"; \
     bootc container ukify \
       --rootfs /target \
       --kernel-dir "/kernel/${kver}" \
       -- \
       --output "${provisional}"; \
     test -s "${provisional}"; \
-    if test -n "${PRIME_COMPOSEFS_DIGEST:-}"; then \
-      case "${PRIME_COMPOSEFS_DIGEST}" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) echo "invalid canonical Composefs digest" >&2; exit 1 ;; esac; \
-      ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
-      PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST}" python3 -c 'import json,os,pathlib,re; data=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); cmdline=data[".cmdline"]["text"].strip(); digest=os.environ["PRIME_COMPOSEFS_DIGEST"]; updated,count=re.subn(r"composefs=\??[0-9a-f]{128}", f"composefs={digest}", cmdline); assert count == 1, (count, cmdline); assert f"composefs={digest}" in updated; pathlib.Path("/tmp/prime-canonical-cmdline").write_text(updated, encoding="utf-8")'; \
-      ukify build \
-        --linux "/kernel/${kver}/vmlinuz" \
-        --initrd "/kernel/${kver}/initramfs.img" \
-        --uname "${kver}" \
-        --cmdline @/tmp/prime-canonical-cmdline \
-        --os-release @/target/usr/lib/os-release \
-        --output "${final}"; \
-      test -s "${final}"; \
-      ukify inspect --json=short "${final}" > /tmp/prime-final-uki.json; \
-      python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); after=json.load(open("/tmp/prime-final-uki.json", "r", encoding="utf-8")); expected=pathlib.Path("/tmp/prime-canonical-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),after.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != after[section]["sha256"]]; assert after[".cmdline"]["text"].strip() == expected, (after[".cmdline"]["text"], expected)'; \
-      rm -f "${provisional}" /tmp/prime-provisional-uki.json /tmp/prime-final-uki.json /tmp/prime-canonical-cmdline; \
-    else \
-      mv "${provisional}" "${final}"; \
-    fi; \
-    test -s "${final}"; \
-    test "$(find /out -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 1
+    ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
+    PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST:-}" python3 -c 'import json,os,pathlib,re; data=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); cmdline=data[".cmdline"]["text"].strip(); digest=os.environ.get("PRIME_COMPOSEFS_DIGEST", ""); updated=cmdline;\
+if digest:\
+ assert re.fullmatch(r"[0-9a-f]{128}", digest), digest; updated,count=re.subn(r"composefs=\??[0-9a-f]{128}", f"composefs={digest}", cmdline); assert count == 1, (count, cmdline)\
+assert "prime.recovery=1" not in updated; assert "systemd.unit=prime-recovery.target" not in updated; pathlib.Path("/tmp/prime-normal-cmdline").write_text(updated, encoding="utf-8"); pathlib.Path("/tmp/prime-recovery-cmdline").write_text(updated + " systemd.unit=prime-recovery.target prime.recovery=1", encoding="utf-8")'; \
+    cp /target/usr/lib/os-release /tmp/prime-recovery-os-release; \
+    sed -i \
+      -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Prime OS Recovery"/' \
+      -e 's/^VARIANT=.*/VARIANT="Recovery"/' \
+      -e 's/^VARIANT_ID=.*/VARIANT_ID=recovery/' \
+      /tmp/prime-recovery-os-release; \
+    grep -q '^PRETTY_NAME="Prime OS Recovery"$' /tmp/prime-recovery-os-release; \
+    ukify build \
+      --linux "/kernel/${kver}/vmlinuz" \
+      --initrd "/kernel/${kver}/initramfs.img" \
+      --uname "${kver}" \
+      --cmdline @/tmp/prime-normal-cmdline \
+      --os-release @/target/usr/lib/os-release \
+      --output "${normal}"; \
+    ukify build \
+      --linux "/kernel/${kver}/vmlinuz" \
+      --initrd "/kernel/${kver}/initramfs.img" \
+      --uname "${kver}" \
+      --cmdline @/tmp/prime-recovery-cmdline \
+      --os-release @/tmp/prime-recovery-os-release \
+      --output "${recovery}"; \
+    test -s "${normal}"; \
+    test -s "${recovery}"; \
+    ukify inspect --json=short "${normal}" > /tmp/prime-normal-uki.json; \
+    ukify inspect --json=short "${recovery}" > /tmp/prime-recovery-uki.json; \
+    python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); normal=json.load(open("/tmp/prime-normal-uki.json", "r", encoding="utf-8")); recovery=json.load(open("/tmp/prime-recovery-uki.json", "r", encoding="utf-8")); normal_cmd=pathlib.Path("/tmp/prime-normal-cmdline").read_text(encoding="utf-8"); recovery_cmd=pathlib.Path("/tmp/prime-recovery-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),normal.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != normal[section]["sha256"]]; [(_ for _ in ()).throw(AssertionError((section,before.get(section),recovery.get(section)))) for section in (".linux",".initrd",".uname") if before[section]["sha256"] != recovery[section]["sha256"]]; assert normal[".cmdline"]["text"].strip() == normal_cmd; assert recovery[".cmdline"]["text"].strip() == recovery_cmd; assert "systemd.unit=prime-recovery.target" in recovery_cmd; assert "prime.recovery=1" in recovery_cmd; assert "Prime OS Recovery" in recovery[".osrel"]["text"]'; \
+    rm -f \
+      "${provisional}" \
+      /tmp/prime-provisional-uki.json \
+      /tmp/prime-normal-uki.json \
+      /tmp/prime-recovery-uki.json \
+      /tmp/prime-normal-cmdline \
+      /tmp/prime-recovery-cmdline \
+      /tmp/prime-recovery-os-release; \
+    test "$(find /out -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
+    test "$(find /out -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1
 
 FROM split AS final
 COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
 
 RUN set -eux; \
-    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 1; \
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
     ! rpm -q bootupd >/dev/null 2>&1; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
     test -f /usr/lib/bootc/install/10-prime.toml; \
     bootc install print-configuration | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c.get("bootloader") == "systemd", c'; \
     test -f /usr/lib/prime/generation-seed.json; \
-    test -x /usr/libexec/prime/primed
+    test -f /usr/lib/prime/substrate-release.json; \
+    grep -q '^ID=prime$' /usr/lib/os-release; \
+    test -x /usr/libexec/prime/primed; \
+    test -x /usr/libexec/prime/prime-recovery; \
+    test -f /usr/lib/systemd/system/prime-recovery.target; \
+    test -f /usr/lib/systemd/system/prime-recovery.service
