@@ -136,6 +136,7 @@ RUN set -eux; \
 
 FROM rootfs AS uki-tools
 ARG PRIME_COMPOSEFS_DIGEST
+COPY image/scripts/prepare-uki-cmdlines.py /tmp/prepare-uki-cmdlines.py
 RUN --mount=type=bind,from=split,target=/target,ro \
     --mount=type=bind,from=split,source=/kernel,target=/kernel,ro \
     set -eux; \
@@ -154,10 +155,11 @@ RUN --mount=type=bind,from=split,target=/target,ro \
       --output "${provisional}"; \
     test -s "${provisional}"; \
     ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
-    PRIME_COMPOSEFS_DIGEST="${PRIME_COMPOSEFS_DIGEST:-}" python3 -c 'import json,os,pathlib,re; data=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); cmdline=data[".cmdline"]["text"].strip(); digest=os.environ.get("PRIME_COMPOSEFS_DIGEST", ""); updated=cmdline;\
-if digest:\
- assert re.fullmatch(r"[0-9a-f]{128}", digest), digest; updated,count=re.subn(r"composefs=\??[0-9a-f]{128}", f"composefs={digest}", cmdline); assert count == 1, (count, cmdline)\
-assert "prime.recovery=1" not in updated; assert "systemd.unit=prime-recovery.target" not in updated; pathlib.Path("/tmp/prime-normal-cmdline").write_text(updated, encoding="utf-8"); pathlib.Path("/tmp/prime-recovery-cmdline").write_text(updated + " systemd.unit=prime-recovery.target prime.recovery=1", encoding="utf-8")'; \
+    python3 /tmp/prepare-uki-cmdlines.py \
+      --inspect-json /tmp/prime-provisional-uki.json \
+      --normal-out /tmp/prime-normal-cmdline \
+      --recovery-out /tmp/prime-recovery-cmdline \
+      --composefs-digest "${PRIME_COMPOSEFS_DIGEST:-}"; \
     cp /target/usr/lib/os-release /tmp/prime-recovery-os-release; \
     sed -i \
       -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Prime OS Recovery"/' \
