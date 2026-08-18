@@ -24,7 +24,9 @@ use std::{
     env,
     error::Error,
     ffi::OsString,
-    fs, io,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -309,9 +311,29 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Box<dyn
         )
     })?;
     fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".readiness.{}.tmp", process::id()));
+
+    let temp = parent.join(format!(
+        ".readiness.{}.{}.tmp",
+        process::id(),
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
     let bytes = serde_json::to_vec_pretty(value)?;
-    fs::write(&temp, bytes)?;
-    fs::rename(temp, path)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .open(&temp)?;
+    if let Err(error) = (|| -> Result<(), Box<dyn Error>> {
+        file.write_all(&bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))?;
+        fs::rename(&temp, path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })() {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
     Ok(())
 }
