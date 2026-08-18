@@ -23,6 +23,8 @@ fi
 
 docker run --rm \
   -e CARGO_TERM_COLOR=never \
+  -e RUSTUP_HOME=/tmp/prime-rustup \
+  -e CARGO_HOME=/tmp/prime-cargo \
   -v "$PWD:/work" \
   -w /work \
   "$CURRENT_REF" \
@@ -44,8 +46,10 @@ docker run --rm \
       "pkgconfig(glesv2)" \
       "pkgconfig(libdrm)"
 
-    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
-    . "$HOME/.cargo/env"
+    rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+    mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path
+    export PATH="$CARGO_HOME/bin:$PATH"
 
     test "$(rustc --version | awk "{print \\$2}")" = "1.97.1"
     cargo metadata --locked --no-deps --format-version 1 >/dev/null
