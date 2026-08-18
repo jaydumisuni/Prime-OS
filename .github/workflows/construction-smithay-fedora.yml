@@ -30,19 +30,22 @@ jobs:
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
           test -f construction/prove-smithay-fedora44.sh
           printf 'PRIME_SMITHAY_CONSTRUCTION_SHA=%s\n' "$PRIME_CONSTRUCTION_SHA"
-      - name: Regenerate lock metadata with exact Rust toolchain
+      - name: Regenerate mechanical Rust metadata with exact toolchain
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.97.1 --profile minimal
+          rustup component add rustfmt --toolchain 1.97.1
           test "$(rustc +1.97.1 --version | cut -d ' ' -f2)" = '1.97.1'
           cargo +1.97.1 generate-lockfile
           cargo +1.97.1 metadata --locked --no-deps --format-version 1 >/dev/null
-          if ! git diff --quiet -- Cargo.lock; then
+          cargo +1.97.1 fmt --all
+          if ! git diff --quiet -- Cargo.lock '*.rs'; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add Cargo.lock
-            git commit -m 'construction: refresh compositor lock metadata'
+            git add -- '*.rs'
+            git commit -m 'construction: apply pinned Rust mechanical formatting'
             git push origin HEAD:"$GITHUB_HEAD_REF"
           fi
           printf 'PRIME_CONSTRUCTION_LOCK_SHA256=%s\n' "$(sha256sum Cargo.lock | cut -d ' ' -f1)"
