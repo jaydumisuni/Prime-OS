@@ -49,6 +49,11 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
     let listener = UnixListener::bind(socket_path)?;
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))?;
 
+    let mut state = state;
+    state
+        .begin_generation_health_proving("prime.core.socket.bound.v1")
+        .map_err(|error| io::Error::other(format!("generation health proving failed: {error}")))?;
+
     loop {
         let (stream, _) = listener.accept().await?;
         let credential = match stream.peer_cred() {
