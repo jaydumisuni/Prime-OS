@@ -24,8 +24,7 @@ use std::{
     env,
     error::Error,
     ffi::OsString,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -148,18 +147,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let socket_name: OsString = listening_socket.socket_name().to_os_string();
 
     let loop_handle = event_loop.handle();
-    loop_handle.insert_source(listening_socket, |client_stream, _, runtime| {
-        match runtime
-            .display_handle
-            .insert_client(client_stream, Arc::new(PrimeClientState))
-        {
-            Ok(_) => {
-                runtime.readiness.clients_accepted =
-                    runtime.readiness.clients_accepted.saturating_add(1);
-            }
-            Err(error) => {
-                eprintln!("prime-compositor rejected Wayland client: {error}");
-            }
+    loop_handle.insert_source(listening_socket, |client_stream, _, runtime| match runtime
+        .display_handle
+        .insert_client(client_stream, Arc::new(PrimeClientState))
+    {
+        Ok(_) => {
+            runtime.readiness.clients_accepted =
+                runtime.readiness.clients_accepted.saturating_add(1);
+        }
+        Err(error) => {
+            eprintln!("prime-compositor rejected Wayland client: {error}");
         }
     })?;
 

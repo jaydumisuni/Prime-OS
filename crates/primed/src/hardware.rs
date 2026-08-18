@@ -119,9 +119,8 @@ pub fn p1_baseline_limitations(graph: &HardwareGraph) -> Vec<String> {
             && device.driver.as_deref() == Some("i915")
     });
     if !intel_i915_display {
-        limitations.push(
-            "P1 proof Host has no Intel DISPLAY-class PCI device bound to i915".to_owned(),
-        );
+        limitations
+            .push("P1 proof Host has no Intel DISPLAY-class PCI device bound to i915".to_owned());
     }
 
     let usb_controller = inventory.pci_devices.iter().any(|device| {
@@ -135,7 +134,8 @@ pub fn p1_baseline_limitations(graph: &HardwareGraph) -> Vec<String> {
                 .is_some_and(|driver| !driver.is_empty())
     });
     if !usb_controller {
-        limitations.push("P1 proof Host has no USB controller with a bound kernel driver".to_owned());
+        limitations
+            .push("P1 proof Host has no USB controller with a bound kernel driver".to_owned());
     }
 
     let connected_output = inventory.display_connectors.iter().any(|connector| {
@@ -162,9 +162,8 @@ pub fn p1_baseline_limitations(graph: &HardwareGraph) -> Vec<String> {
                 .is_some_and(|driver| !driver.is_empty())
     });
     if !ethernet {
-        limitations.push(
-            "P1 proof Host has no Ethernet interface with a bound kernel driver".to_owned(),
-        );
+        limitations
+            .push("P1 proof Host has no Ethernet interface with a bound kernel driver".to_owned());
     }
 
     let mut disk_sizes = inventory

@@ -165,7 +165,10 @@ fn read_state_json<T: DeserializeOwned>(
             return None;
         }
         Err(error) => {
-            limitations.push(format!("{label} could not be opened at {}: {error}", path.display()));
+            limitations.push(format!(
+                "{label} could not be opened at {}: {error}",
+                path.display()
+            ));
             return None;
         }
     };
@@ -183,7 +186,10 @@ fn read_state_json<T: DeserializeOwned>(
             return None;
         }
         Err(error) => {
-            limitations.push(format!("{label} could not be read at {}: {error}", path.display()));
+            limitations.push(format!(
+                "{label} could not be read at {}: {error}",
+                path.display()
+            ));
             return None;
         }
     }
