@@ -142,7 +142,11 @@ pub fn begin_health_proving(
         GenerationState::BootTry => {
             let mut updated = current.clone();
             updated.state = GenerationState::HealthProving;
-            if !updated.evidence_refs.iter().any(|item| item == evidence_ref) {
+            if !updated
+                .evidence_refs
+                .iter()
+                .any(|item| item == evidence_ref)
+            {
                 updated.evidence_refs.push(evidence_ref.to_owned());
             }
             persist_current(state_dir, &updated)?;
@@ -208,15 +212,15 @@ pub fn health_status(record: &GenerationRecord) -> HealthStatus {
 pub fn health_limitations(record: &GenerationRecord) -> Vec<String> {
     match &record.state {
         GenerationState::KnownGood => Vec::new(),
-        GenerationState::Staged => vec![
-            "Current generation is STAGED and has not entered boot health proof".to_owned(),
-        ],
-        GenerationState::BootTry => vec![
-            "Current generation is BOOT_TRY and has not entered P1 health proving".to_owned(),
-        ],
-        GenerationState::HealthProving => vec![
-            "Current generation is HEALTH_PROVING and has not earned KNOWN_GOOD".to_owned(),
-        ],
+        GenerationState::Staged => {
+            vec!["Current generation is STAGED and has not entered boot health proof".to_owned()]
+        }
+        GenerationState::BootTry => {
+            vec!["Current generation is BOOT_TRY and has not entered P1 health proving".to_owned()]
+        }
+        GenerationState::HealthProving => {
+            vec!["Current generation is HEALTH_PROVING and has not earned KNOWN_GOOD".to_owned()]
+        }
         GenerationState::Rejected => vec!["Current generation is REJECTED".to_owned()],
         GenerationState::RolledBack => vec!["Current generation is ROLLED_BACK".to_owned()],
         GenerationState::Recovery => vec!["Current generation is in RECOVERY state".to_owned()],
@@ -334,15 +338,8 @@ fn bind_seed(
     Ok(record)
 }
 
-fn persist_current(
-    state_dir: &Path,
-    record: &GenerationRecord,
-) -> Result<(), GenerationError> {
-    write_atomic_json(
-        &state_dir.join("generations/current.json"),
-        record,
-        0o600,
-    )
+fn persist_current(state_dir: &Path, record: &GenerationRecord) -> Result<(), GenerationError> {
+    write_atomic_json(&state_dir.join("generations/current.json"), record, 0o600)
 }
 
 fn validate_seed(seed: &GenerationSeed) -> Result<(), GenerationError> {

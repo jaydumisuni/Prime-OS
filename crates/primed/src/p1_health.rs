@@ -1,7 +1,7 @@
 use crate::hardware;
 use prime_contracts::{
-    FingerprintConfidence, GenerationHealthReport, GenerationRecord, GenerationState, HardwareGraph,
-    HostIdentity, GENERATION_HEALTH_SCHEMA, HOST_IDENTITY_SCHEMA,
+    FingerprintConfidence, GenerationHealthReport, GenerationRecord, GenerationState,
+    HardwareGraph, HostIdentity, GENERATION_HEALTH_SCHEMA, HOST_IDENTITY_SCHEMA,
 };
 
 pub fn build_report(
@@ -87,7 +87,9 @@ fn host_identity_limitations(host: &HostIdentity, hardware_graph: &HardwareGraph
     }
     match host.hardware_fingerprint.digest.as_deref() {
         Some(digest) if canonical_sha256(digest) => {}
-        Some(_) => limitations.push("Prime Host fingerprint digest is not canonical sha256".to_owned()),
+        Some(_) => {
+            limitations.push("Prime Host fingerprint digest is not canonical sha256".to_owned())
+        }
         None => limitations.push("Prime Host fingerprint digest is not enrolled".to_owned()),
     }
     if host.hardware_fingerprint.observed_at.is_none() {
