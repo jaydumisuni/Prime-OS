@@ -81,8 +81,53 @@ Prime treats sysfs bus/class entries as kernel projections and does not make the
 
 Probe gaps are explicit `limitations`. A partial graph is allowed so recovery remains diagnosable, but Prime health/capability projection reports degradation rather than claiming complete hardware truth.
 
+## Generic discovery vs P1 proof-host acceptance
+
+The reusable `prime-hardware` scanner remains generic Linux discovery. It contains no branch that pretends every machine is the HP proof target.
+
+P1-specific acceptance is evaluated separately by `primed::hardware::p1_baseline_limitations`. That function consumes the already-normalized `prime.hardware-graph.v1` record and returns an empty limitation set only when the frozen First-Light proof-host baseline is mechanically present.
+
+This separation is permanent in principle:
+
+```text
+Linux/kernel discovery
+        ↓
+prime.hardware-graph.v1
+        ↓
+phase/product acceptance evaluator
+```
+
+A future Prime Host may be supported without satisfying the HP 290 G4 **P1 proof fixture**. Conversely, detecting an HP model string alone never proves P1 hardware acceptance.
+
 ## P1 proof target
 
-The HP 290 G4 proof must independently demonstrate at least the expected i7-10700 CPU family/model observation, memory, Intel UHD 630 PCI display function, Samsung NVMe, Crucial SATA storage, Ethernet, USB/input, audio path, UEFI state and virtualization capability where the host exposes them.
+For the frozen HP 290 G4 / Kratos First-Light target, the current P1 baseline evaluator requires:
 
-The implementation remains generic Linux hardware discovery; HP-specific constants are proof expectations, never probe logic.
+- `x86_64` Host architecture;
+- DMI vendor `HP`;
+- DMI product `HP 290 G4 Microtower PC`;
+- UEFI boot state;
+- CPU vendor `GenuineIntel`;
+- CPU model containing `i7-10700`;
+- at least 8,000,000,000 bytes of observed physical memory;
+- an Intel (`0x8086`) PCI `DISPLAY` function bound to the `i915` kernel driver;
+- at least one connected DRM connector with at least one advertised mode;
+- at least one discovered input device;
+- at least one discovered sound card;
+- at least one discovered USB device;
+- at least one non-wireless Ethernet interface with a bound kernel driver;
+- one writable, non-removable disk of at least 900,000,000,000 bytes;
+- a second writable, non-removable disk of at least 450,000,000,000 bytes;
+- no unresolved generic Hardware Graph probe limitations.
+
+The disk thresholds intentionally validate the frozen approximately 1 TB + 500 GB proof-host topology without depending on model/serial strings. Storage serials remain private/not exported, and the evaluator does not require a brand label to masquerade as mechanical disk identity.
+
+The graphics gate intentionally requires the active Linux `i915` binding rather than merely seeing an Intel PCI ID. A display controller that exists but has no usable P1 driver is not accepted.
+
+The Ethernet, input, audio, USB and connected-output requirements are discovery/driver-presence gates. Functional transfer, audio playback, pointer/keyboard interaction and compositor rendering still require live P1 proof; inventory presence alone is not promoted into behavioral success.
+
+## Generation-health relationship
+
+The eventual P1 `prime.generation-health.v1.hardware_baseline_ready` field may be `true` only when this P1 baseline evaluator returns no limitations for the exact booted Host graph used by that health campaign.
+
+Hosted QEMU evidence is useful engineering proof but is not expected to satisfy the HP/Kratos baseline and therefore cannot by itself promote a P1 physical generation to `KNOWN_GOOD`.
