@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_IMAGE="quay.io/fedora/fedora-bootc:44-x86_64@sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074"
+SOURCE_TAG="quay.io/fedora/fedora-bootc:44-x86_64"
+LOCKED_DIGEST="sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074"
 
-docker pull "$BASE_IMAGE"
+docker pull "$SOURCE_TAG"
+CURRENT_REF="$(docker image inspect "$SOURCE_TAG" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep '^quay.io/fedora/fedora-bootc@sha256:' | head -n1)"
+CURRENT_DIGEST="${CURRENT_REF##*@}"
+
+test -n "$CURRENT_REF"
+test -n "$CURRENT_DIGEST"
+
+echo "P1_FEDORA_SOURCE_TAG=$SOURCE_TAG"
+echo "P1_FEDORA_LOCKED_DIGEST=$LOCKED_DIGEST"
+echo "P1_FEDORA_CURRENT_REF=$CURRENT_REF"
+echo "P1_FEDORA_CURRENT_DIGEST=$CURRENT_DIGEST"
+if [[ "$CURRENT_DIGEST" == "$LOCKED_DIGEST" ]]; then
+  echo "P1_FEDORA_BASE_LOCK_MATCH=true"
+else
+  echo "P1_FEDORA_BASE_LOCK_MATCH=false"
+fi
+
 docker run --rm \
   -e CARGO_TERM_COLOR=never \
   -v "$PWD:/work" \
   -w /work \
-  "$BASE_IMAGE" \
+  "$CURRENT_REF" \
   bash -ceu '
     dnf -y install \
       ca-certificates \
