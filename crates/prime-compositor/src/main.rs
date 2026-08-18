@@ -53,7 +53,7 @@ struct Readiness {
     renderer_ready: bool,
     outputs_ready: bool,
     shell_ready: bool,
-    connected_clients: u64,
+    clients_accepted: u64,
     input_events_seen: u64,
     last_udev_event: Option<String>,
     limitations: Vec<String>,
@@ -146,8 +146,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .insert_client(client_stream, Arc::new(PrimeClientState))
         {
             Ok(_) => {
-                runtime.readiness.connected_clients =
-                    runtime.readiness.connected_clients.saturating_add(1);
+                runtime.readiness.clients_accepted =
+                    runtime.readiness.clients_accepted.saturating_add(1);
             }
             Err(error) => {
                 eprintln!("prime-compositor rejected Wayland client: {error}");
@@ -216,7 +216,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             renderer_ready: false,
             outputs_ready: false,
             shell_ready: false,
-            connected_clients: 0,
+            clients_accepted: 0,
             input_events_seen: 0,
             last_udev_event: None,
             limitations: vec![
