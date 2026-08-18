@@ -5,4 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 smithay.workspace = true
+time.workspace = true
