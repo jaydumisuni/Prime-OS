@@ -1,13 +1,14 @@
 {
   "schema": "prime.image-base-lock.v1",
   "source_tag": "quay.io/fedora/fedora-bootc:44-x86_64",
-  "pinned_reference": "quay.io/fedora/fedora-bootc:44-x86_64@sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074",
+  "pinned_reference": "quay.io/fedora/fedora-bootc:44-x86_64@sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781",
   "registry_repository": "quay.io/fedora/fedora-bootc",
   "os": "linux",
   "architecture": "amd64",
-  "manifest_digest": "sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074",
-  "resolved_at": "2026-08-15T11:00:59Z",
-  "resolver_workflow_run": 31880978435,
-  "verification": "skopeo listed active Fedora 44 architecture tags and resolved 44-x86_64 directly to this manifest digest",
-  "retention_limitation": "Fedora publishes moving active release tags on Quay. An older untagged child manifest became unreachable during P1 work, so this external lock is suitable for current P1 proof but is not a permanent archival guarantee. Accepted Prime base inputs must eventually be mirrored into a Prime-controlled immutable registry namespace."
+  "manifest_digest": "sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781",
+  "resolved_at": "2026-08-18T23:07:04Z",
+  "resolver_workflow_run": 32195704770,
+  "supersedes_manifest_digest": "sha256:130e3ea9633a00381ba8ea9b168fd04a4f90161eaa38af23c9eb927a0f1e5074",
+  "verification": "A fresh hosted construction runner pulled the Fedora 44 x86_64 source tag and Docker reported the architecture image RepoDigest quay.io/fedora/fedora-bootc@sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781. The superseded manifest returned manifest unknown on a fresh runner before any Smithay/native compilation began.",
+  "retention_limitation": "Fedora publishes moving active release tags on Quay and may make older untagged child manifests unreachable. This refreshed external lock is suitable only for a new P1 proof campaign; it does not inherit proof from the superseded base digest. Accepted Prime base inputs must be mirrored into a Prime-controlled immutable registry namespace before long-term stable retention can be claimed."
 }
