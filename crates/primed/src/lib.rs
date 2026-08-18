@@ -64,6 +64,7 @@ impl CoreState {
         };
         let hardware_status = status_for(&hardware.limitations);
         let host_status = status_for(&fingerprint_limitations);
+        let generation_limitations = crate::generation::health_limitations(&generation);
 
         let root_storage_usable = storage.root_mount_id.and_then(|root_id| {
             storage
@@ -81,6 +82,7 @@ impl CoreState {
         let mut health_limitations = hardware.limitations.clone();
         health_limitations.extend(fingerprint_limitations.clone());
         health_limitations.extend(storage_core_limitations);
+        health_limitations.extend(generation_limitations.clone());
         health_limitations.sort();
         health_limitations.dedup();
 
@@ -95,9 +97,9 @@ impl CoreState {
             evidence_refs: vec!["prime.hardware-graph.v1".to_owned()],
         };
         let generation_health = CapabilityHealth {
-            status: HealthStatus::Healthy,
+            status: crate::generation::health_status(&generation),
             observed_at: observed_at.clone(),
-            evidence_refs: vec!["prime.generation.v1".to_owned()],
+            evidence_refs: generation.evidence_refs.clone(),
         };
         let interface_health = CapabilityHealth {
             status: HealthStatus::Healthy,
@@ -162,6 +164,10 @@ impl CoreState {
         } else {
             CapabilityAvailability::Degraded
         };
+
+        let mut generation_capability_limitations = generation_limitations;
+        generation_capability_limitations
+            .push("P1.5 owns exhaustive update/rollback proof".to_owned());
 
         let capabilities = vec![
             CapabilityDescriptor {
@@ -266,11 +272,14 @@ impl CoreState {
                 effects: Vec::new(),
                 accepts: CapabilityAccepts::default(),
                 permissions: vec!["prime.generation.read".to_owned()],
-                resources: json!({}),
+                resources: json!({
+                    "state": &generation.state,
+                    "boot_attempts_remaining": generation.boot_attempts_remaining,
+                }),
                 hardware_requirements: Vec::new(),
                 limits: json!({}),
                 health: generation_health,
-                limitations: vec!["P1.5 owns exhaustive update/rollback proof".to_owned()],
+                limitations: generation_capability_limitations,
                 placement: placement.clone(),
                 expected_evidence: vec!["prime.generation.v1".to_owned()],
                 rollback: CapabilityRollback {
