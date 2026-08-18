@@ -1,0 +1,82 @@
+name: Construction Smithay Lock
+
+# Construction machinery only. This workflow may resolve and record the
+# dependency graph, but it is not a Prime proof/acceptance authority.
+on:
+  push:
+    branches:
+      - construction/p1-smithay-lock
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install exact construction toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustc +1.97.1 --version --verbose
+          cargo +1.97.1 --version
+      - name: Resolve exact dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.97.1 generate-lockfile
+          cargo +1.97.1 metadata --locked --no-deps --format-version 1 >/dev/null
+          mkdir -p construction
+          cargo +1.97.1 tree -p prime-compositor -e features | tee construction/smithay-features.txt
+          for required in \
+            backend_drm \
+            backend_gbm \
+            backend_libinput \
+            backend_udev \
+            backend_session_libseat \
+            desktop \
+            renderer_gl \
+            wayland_frontend; do
+            grep -F "smithay feature \"${required}\"" construction/smithay-features.txt >/dev/null
+          done
+          for forbidden in \
+            backend_winit \
+            backend_x11 \
+            xwayland \
+            backend_vulkan \
+            renderer_pixman \
+            renderer_multi; do
+            if grep -F "smithay feature \"${forbidden}\"" construction/smithay-features.txt >/dev/null; then
+              echo "forbidden Smithay feature activated: ${forbidden}" >&2
+              exit 1
+            fi
+          done
+      - name: Record construction evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'schema=prime.construction-smithay-lock.v1'
+            echo "source_revision=$(git rev-parse HEAD)"
+            echo "rustc=$(rustc +1.97.1 --version)"
+            echo "cargo=$(cargo +1.97.1 --version)"
+            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
+            echo 'smithay_version=0.7.0'
+            echo 'smithay_default_features=false'
+          } > construction/smithay-lock-report.txt
+      - name: Commit generated lock evidence to construction branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock construction/smithay-features.txt construction/smithay-lock-report.txt
+          git diff --cached --exit-code && { echo 'no lock delta produced' >&2; exit 1; } || true
+          git commit -m 'construction: resolve Smithay 0.7.0 lock graph'
+          git push origin HEAD:construction/p1-smithay-lock
