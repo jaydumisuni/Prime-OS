@@ -1,6 +1,66 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PRIME_BASE_IMAGE
+
+# Build prime-compositor inside the exact Prime Fedora substrate so Kratos does
+# not need compositor development packages merely to produce the Prime image.
+FROM ${PRIME_BASE_IMAGE} AS compositor-builder
+ARG TARGETARCH
+ENV RUSTUP_HOME=/opt/prime-rustup \
+    CARGO_HOME=/opt/prime-cargo \
+    PATH=/opt/prime-cargo/bin:${PATH}
+
+RUN --mount=type=tmpfs,target=/tmp \
+    set -eux; \
+    test "${TARGETARCH}" = "amd64"; \
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
+    dnf -y install \
+        ca-certificates \
+        curl \
+        gcc \
+        gcc-c++ \
+        make \
+        pkgconf-pkg-config \
+        'pkgconfig(libinput)' \
+        'pkgconfig(libudev)' \
+        'pkgconfig(gbm)' \
+        'pkgconfig(libseat)' \
+        'pkgconfig(xkbcommon)' \
+        'pkgconfig(wayland-server)' \
+        'pkgconfig(egl)' \
+        'pkgconfig(glesv2)' \
+        'pkgconfig(libdrm)'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(libinput)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libinput-devel-1.31.3-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(libudev)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'systemd-devel-259.8-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(gbm)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'mesa-libgbm-devel-26.1.6-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(libseat)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libseat-devel-0.9.3-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(xkbcommon)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libxkbcommon-devel-1.13.1-2.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(wayland-server)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'wayland-devel-1.25.0-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(egl)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libglvnd-devel-1.7.0-9.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(glesv2)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libglvnd-devel-1.7.0-9.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(libdrm)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libdrm-devel-2.4.134-1.fc44.x86_64'; \
+    rm -rf "${RUSTUP_HOME}" "${CARGO_HOME}"; \
+    mkdir -p "${RUSTUP_HOME}" "${CARGO_HOME}"; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+      sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path; \
+    rustup component add rustfmt clippy --toolchain 1.97.1; \
+    test "$(rustc --version | cut -d ' ' -f2)" = '1.97.1'; \
+    dnf clean all
+
+WORKDIR /source
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN set -eux; \
+    cargo metadata --locked --no-deps --format-version 1 >/dev/null; \
+    cargo fmt --all -- --check; \
+    cargo clippy --locked -p prime-compositor --all-targets -- -D warnings; \
+    cargo build --locked --release -p prime-compositor; \
+    test -x target/release/prime-compositor; \
+    ! ldd target/release/prime-compositor | grep -q 'not found'; \
+    sha256sum target/release/prime-compositor > /prime-compositor.sha256
+
 FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
@@ -46,6 +106,13 @@ RUN set -eux; \
     grep -q '^ID=fedora$' /usr/lib/os-release; \
     grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
     dnf -y install \
+        libinput-1.31.3-1.fc44 \
+        libseat-0.9.3-1.fc44 \
+        systemd-boot-unsigned-259.8-1.fc44 \
+        systemd-ukify-259.8-1.fc44; \
+    rpm -q \
+        libinput-1.31.3-1.fc44 \
+        libseat-0.9.3-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
@@ -87,18 +154,25 @@ RUN set -eux; \
 RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install
 COPY target/release/primed /usr/libexec/prime/primed
 COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
+COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
 COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
 COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
 COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
 COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
 
 RUN set -eux; \
-    chmod 0755 /usr/libexec/prime/primed /usr/libexec/prime/prime-recovery; \
+    chmod 0755 \
+        /usr/libexec/prime/primed \
+        /usr/libexec/prime/prime-recovery \
+        /usr/libexec/prime/prime-compositor; \
     chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
+    ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \
+    /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
     systemctl enable primed.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
     test -f /usr/lib/systemd/system/prime-recovery.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
+    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
     bootc install print-configuration > /tmp/prime-install-config.json; \
     python3 -c 'import json; c=json.load(open("/tmp/prime-install-config.json")); assert c.get("bootloader") == "systemd", c'; \
     rm -f /tmp/prime-install-config.json
@@ -124,6 +198,7 @@ RUN set -eux; \
     python3 -c 'import json; json.load(open("/usr/lib/prime/generation-seed.json", "r", encoding="utf-8"))'; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
+    test -x /usr/libexec/prime/prime-compositor; \
     test -L /etc/systemd/system/multi-user.target.wants/primed.service; \
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer; \
     bootc container lint --fatal-warnings
@@ -222,5 +297,7 @@ RUN set -eux; \
     grep -q '^ID=prime$' /usr/lib/os-release; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
+    test -x /usr/libexec/prime/prime-compositor; \
+    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
     test -f /usr/lib/systemd/system/prime-recovery.service
