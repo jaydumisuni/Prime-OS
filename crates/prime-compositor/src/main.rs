@@ -1,8 +1,11 @@
 use serde::Serialize;
 use smithay::{
     backend::{
-        drm::DrmNode,
+        allocator::gbm::GbmDevice,
+        drm::{DrmDeviceFd, DrmNode},
+        egl::{context::ContextPriority, EGLContext, EGLDisplay},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
+        renderer::gles::GlesRenderer,
         session::{
             libseat::{LibSeatSession, LibSeatSessionNotifier},
             Event as SessionEvent, Session,
@@ -18,6 +21,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
+    utils::DeviceFd,
     wayland::socket::ListeningSocketSource,
 };
 use std::{
@@ -36,12 +40,14 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
 const DEFAULT_READINESS_PATH: &str = "/run/prime/compositor/readiness.json";
+const RENDERER_REVALIDATION_LIMITATION: &str =
+    "Renderer and DRM access require revalidation after session activation";
 
 #[derive(Debug, Serialize)]
 struct Readiness {
     schema: &'static str,
     observed_at: String,
-    phase: &'static str,
+    phase: String,
     direct_tty_backend: bool,
     seat_name: String,
     wayland_socket: String,
@@ -65,6 +71,7 @@ struct Readiness {
 struct Runtime {
     display_handle: DisplayHandle,
     _session: LibSeatSession,
+    _renderer: GlesRenderer,
     readiness_path: PathBuf,
     readiness: Readiness,
 }
@@ -79,6 +86,22 @@ impl Runtime {
     fn persist_best_effort(&mut self) {
         if let Err(error) = self.persist() {
             eprintln!("prime-compositor could not persist readiness: {error}");
+        }
+    }
+
+    fn require_renderer_revalidation(&mut self, phase: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.drm_access_ready = false;
+        self.readiness.renderer_ready = false;
+        if !self
+            .readiness
+            .limitations
+            .iter()
+            .any(|item| item == RENDERER_REVALIDATION_LIMITATION)
+        {
+            self.readiness
+                .limitations
+                .push(RENDERER_REVALIDATION_LIMITATION.to_owned());
         }
     }
 }
@@ -105,6 +128,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (mut session, notifier) = LibSeatSession::new()?;
     let seat_name = session.seat();
     let session_active = session.is_active();
+    if !session_active {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("libseat session {seat_name} is inactive; renderer initialization requires an active seat"),
+        )
+        .into());
+    }
 
     let gpu_paths = all_gpus(&seat_name)?;
     if gpu_paths.is_empty() {
@@ -126,7 +156,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         &primary_gpu_path,
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
     )?;
-    session.close(drm_fd)?;
+    let drm_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
+    let gbm = GbmDevice::new(drm_fd)?;
+    let egl_display = unsafe { EGLDisplay::new(gbm)? };
+    let egl_context = EGLContext::new_with_priority(&egl_display, ContextPriority::High)?;
+    let renderer = unsafe { GlesRenderer::new(egl_context)? };
 
     let udev_backend = UdevBackend::new(&seat_name)?;
     let udev_device_count = udev_backend.device_list().count();
@@ -209,11 +243,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut runtime = Runtime {
         display_handle,
         _session: session,
+        _renderer: renderer,
         readiness_path,
         readiness: Readiness {
             schema: READINESS_SCHEMA,
             observed_at: now_rfc3339()?,
-            phase: "BACKEND_PREFLIGHT",
+            phase: "RENDERER_READY".to_owned(),
             direct_tty_backend: true,
             seat_name,
             wayland_socket: socket_name.to_string_lossy().into_owned(),
@@ -222,10 +257,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             udev_device_count,
             drm_access_ready: true,
             libinput_bound: true,
-            session_active,
+            session_active: true,
             wayland_listener_ready: true,
             wayland_protocols_ready: false,
-            renderer_ready: false,
+            renderer_ready: true,
             outputs_ready: false,
             shell_ready: false,
             clients_accepted: 0,
@@ -233,7 +268,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             last_udev_event: None,
             limitations: vec![
                 "Wayland compositor protocol globals are not initialized yet".to_owned(),
-                "GBM/EGL/GLES renderer is not initialized yet".to_owned(),
                 "DRM outputs are not configured yet".to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
@@ -262,13 +296,16 @@ fn install_session_notifier(
                 SessionEvent::PauseSession => {
                     libinput_context.suspend();
                     runtime.readiness.session_active = false;
+                    runtime.require_renderer_revalidation("SESSION_PAUSED");
                 }
                 SessionEvent::ActivateSession => {
                     if libinput_context.resume().is_err() {
                         eprintln!("prime-compositor could not resume libinput");
                         runtime.readiness.session_active = false;
+                        runtime.require_renderer_revalidation("SESSION_RESUME_FAILED");
                     } else {
                         runtime.readiness.session_active = true;
+                        runtime.require_renderer_revalidation("RENDERER_REVALIDATION_REQUIRED");
                     }
                 }
             }
