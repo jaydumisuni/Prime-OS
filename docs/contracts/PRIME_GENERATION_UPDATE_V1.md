@@ -131,6 +131,21 @@ The evidence carrier is:
 
 A health report can promote only the **same generation ID and immutable image digest** currently in `HEALTH_PROVING`. Empty/mismatched identity, any false required gate, or any limitation prevents promotion.
 
+### Reconciled P1 report builder
+
+`primed::p1_health::build_report` is the single P1 reconciliation point for the report above. It does not decide that all gates have passed merely because it was called.
+
+It derives:
+
+- `generation_id` and `image_digest` from the exact current `GenerationRecord`;
+- Host readiness from the enrolled `prime.host-identity.v1` record, matching Host/Hardware Graph architecture, SHA-256 enrollment evidence and HIGH/MEDIUM fingerprint confidence;
+- `hardware_baseline_ready` from `primed::hardware::p1_baseline_limitations` and therefore the frozen HP 290 G4 / Kratos baseline;
+- `core_interface_ready`, `shell_ready`, and `recovery_ready` only from explicit owning-layer inputs.
+
+The builder keeps every unearned input false and emits a limitation for it. It also emits a limitation if a caller attempts to describe a generation that is not in `HEALTH_PROVING` as a P1 health candidate.
+
+This prevents the implementation from spreading five unrelated booleans across service code or inferring Shell/recovery success from process existence. The report is reconciled evidence; promotion remains a separate generation-authority action.
+
 On successful promotion Prime first persists the health report as append-only evidence under:
 
 ```text
