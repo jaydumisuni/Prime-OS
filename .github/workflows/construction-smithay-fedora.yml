@@ -1,0 +1,38 @@
+name: Construction Smithay Fedora
+
+# Temporary construction adapter. This is not Prime proof authority and must be
+# removed before the P1 candidate is frozen for merge.
+on:
+  pull_request:
+    branches:
+      - build/p1-first-light
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    if: ${{ github.head_ref == 'construction/p1-smithay-lock' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PRIME_CONSTRUCTION_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PRIME_CONSTRUCTION_SHA }}
+          fetch-depth: 0
+      - name: Freeze construction candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
+          test -f construction/prove-smithay-fedora44.sh
+          printf 'PRIME_SMITHAY_CONSTRUCTION_SHA=%s\n' "$PRIME_CONSTRUCTION_SHA"
+      - name: Compile locked Smithay graph on pinned Fedora 44
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x construction/prove-smithay-fedora44.sh
+          construction/prove-smithay-fedora44.sh
