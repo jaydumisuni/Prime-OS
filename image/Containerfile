@@ -137,6 +137,7 @@ RUN set -eux; \
 FROM rootfs AS uki-tools
 ARG PRIME_COMPOSEFS_DIGEST
 COPY image/scripts/prepare-uki-cmdlines.py /tmp/prepare-uki-cmdlines.py
+COPY image/scripts/check-uki-contract.py /tmp/check-uki-contract.py
 RUN --mount=type=bind,from=split,target=/target,ro \
     --mount=type=bind,from=split,source=/kernel,target=/kernel,ro \
     set -eux; \
@@ -188,7 +189,12 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     test -s "${recovery}"; \
     ukify inspect --json=short "${normal}" > /tmp/prime-normal-uki.json; \
     ukify inspect --json=short "${recovery}" > /tmp/prime-recovery-uki.json; \
-    python3 -c 'import json,pathlib; before=json.load(open("/tmp/prime-provisional-uki.json", "r", encoding="utf-8")); normal=json.load(open("/tmp/prime-normal-uki.json", "r", encoding="utf-8")); recovery=json.load(open("/tmp/prime-recovery-uki.json", "r", encoding="utf-8")); normal_cmd=pathlib.Path("/tmp/prime-normal-cmdline").read_text(encoding="utf-8"); recovery_cmd=pathlib.Path("/tmp/prime-recovery-cmdline").read_text(encoding="utf-8"); [(_ for _ in ()).throw(AssertionError((section,before.get(section),normal.get(section)))) for section in (".linux",".initrd",".osrel",".uname") if before[section]["sha256"] != normal[section]["sha256"]]; [(_ for _ in ()).throw(AssertionError((section,before.get(section),recovery.get(section)))) for section in (".linux",".initrd",".uname") if before[section]["sha256"] != recovery[section]["sha256"]]; assert normal[".cmdline"]["text"].strip() == normal_cmd; assert recovery[".cmdline"]["text"].strip() == recovery_cmd; assert "systemd.unit=prime-recovery.target" in recovery_cmd; assert "prime.recovery=1" in recovery_cmd; assert "Prime OS Recovery" in recovery[".osrel"]["text"]; assert "VERSION_ID=\\\"0.0\\\"" in recovery[".osrel"]["text"]'; \
+    python3 /tmp/check-uki-contract.py \
+      --provisional /tmp/prime-provisional-uki.json \
+      --normal /tmp/prime-normal-uki.json \
+      --recovery /tmp/prime-recovery-uki.json \
+      --normal-cmdline /tmp/prime-normal-cmdline \
+      --recovery-cmdline /tmp/prime-recovery-cmdline; \
     rm -f \
       "${provisional}" \
       /tmp/prime-provisional-uki.json \
