@@ -1,5 +1,6 @@
 use prime_contracts::{
-    GenerationRecord, GenerationSeed, GenerationState, GENERATION_SCHEMA, GENERATION_SEED_SCHEMA,
+    GenerationHealthReport, GenerationRecord, GenerationSeed, GenerationState, HealthStatus,
+    GENERATION_HEALTH_SCHEMA, GENERATION_SCHEMA, GENERATION_SEED_SCHEMA,
 };
 use serde::Deserialize;
 use std::fs::{self, File, OpenOptions};
@@ -60,6 +61,17 @@ pub enum GenerationError {
     ArchitectureMismatch { reported: String, host: String },
     #[error("persisted generation state is incompatible with the booted generation: {0}")]
     PersistedMismatch(&'static str),
+    #[error("generation state transition {from:?} -> {to:?} is not allowed")]
+    InvalidStateTransition {
+        from: GenerationState,
+        to: GenerationState,
+    },
+    #[error("generation transition evidence reference is empty")]
+    EvidenceReference,
+    #[error("generation health report is incompatible with the current generation: {0}")]
+    HealthBindingMismatch(&'static str),
+    #[error("generation health report is incomplete")]
+    HealthIncomplete,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +125,102 @@ pub fn load_or_bind(
     let seed = load_seed(seed_path)?;
     let booted = read_bootc_status(bootc_path, host_arch)?;
     bind_seed(state_dir, &seed, &booted)
+}
+
+pub fn begin_health_proving(
+    state_dir: &Path,
+    current: &GenerationRecord,
+    evidence_ref: &str,
+) -> Result<GenerationRecord, GenerationError> {
+    validate_record(current)?;
+    if evidence_ref.trim().is_empty() {
+        return Err(GenerationError::EvidenceReference);
+    }
+
+    match current.state {
+        GenerationState::HealthProving | GenerationState::KnownGood => Ok(current.clone()),
+        GenerationState::BootTry => {
+            let mut updated = current.clone();
+            updated.state = GenerationState::HealthProving;
+            if !updated.evidence_refs.iter().any(|item| item == evidence_ref) {
+                updated.evidence_refs.push(evidence_ref.to_owned());
+            }
+            persist_current(state_dir, &updated)?;
+            Ok(updated)
+        }
+        _ => Err(GenerationError::InvalidStateTransition {
+            from: current.state.clone(),
+            to: GenerationState::HealthProving,
+        }),
+    }
+}
+
+pub fn promote_known_good(
+    state_dir: &Path,
+    current: &GenerationRecord,
+    report: &GenerationHealthReport,
+) -> Result<GenerationRecord, GenerationError> {
+    validate_record(current)?;
+    validate_health_report(current, report)?;
+
+    if current.state == GenerationState::KnownGood {
+        return Ok(current.clone());
+    }
+    if current.state != GenerationState::HealthProving {
+        return Err(GenerationError::InvalidStateTransition {
+            from: current.state.clone(),
+            to: GenerationState::KnownGood,
+        });
+    }
+    if !report.all_required_ready() {
+        return Err(GenerationError::HealthIncomplete);
+    }
+
+    let evidence_id = Uuid::now_v7();
+    let evidence_dir = state_dir.join("evidence/generation-health");
+    fs::create_dir_all(&evidence_dir)?;
+    fs::set_permissions(&evidence_dir, fs::Permissions::from_mode(0o700))?;
+    let evidence_path = evidence_dir.join(format!("{evidence_id}.json"));
+    write_new_json(&evidence_path, report, 0o600)?;
+    File::open(&evidence_dir)?.sync_all()?;
+
+    let mut updated = current.clone();
+    updated.state = GenerationState::KnownGood;
+    updated.boot_attempts_remaining = None;
+    updated
+        .evidence_refs
+        .push(format!("{GENERATION_HEALTH_SCHEMA}:{evidence_id}"));
+    persist_current(state_dir, &updated)?;
+    Ok(updated)
+}
+
+pub fn health_status(record: &GenerationRecord) -> HealthStatus {
+    match record.state {
+        GenerationState::KnownGood => HealthStatus::Healthy,
+        GenerationState::Rejected => HealthStatus::Failed,
+        GenerationState::RolledBack | GenerationState::Recovery => HealthStatus::Degraded,
+        GenerationState::Staged | GenerationState::BootTry | GenerationState::HealthProving => {
+            HealthStatus::Unknown
+        }
+    }
+}
+
+pub fn health_limitations(record: &GenerationRecord) -> Vec<String> {
+    match record.state {
+        GenerationState::KnownGood => Vec::new(),
+        GenerationState::Staged => vec![
+            "Current generation is STAGED and has not entered boot health proof".to_owned(),
+        ],
+        GenerationState::BootTry => vec![
+            "Current generation is BOOT_TRY and has not entered P1 health proving".to_owned(),
+        ],
+        GenerationState::HealthProving => vec![
+            "Current generation is HEALTH_PROVING and has not earned KNOWN_GOOD".to_owned(),
+        ],
+        GenerationState::Rejected => vec!["Current generation is REJECTED".to_owned()],
+        GenerationState::RolledBack => vec!["Current generation is ROLLED_BACK".to_owned()],
+        GenerationState::Recovery => vec!["Current generation is in RECOVERY state".to_owned()],
+    }
 }
 
 pub fn parse_bootc_status(
@@ -222,8 +330,19 @@ fn bind_seed(
     };
     fs::create_dir_all(&generations_dir)?;
     fs::set_permissions(&generations_dir, fs::Permissions::from_mode(0o700))?;
-    write_atomic_json(&current_path, &record, 0o600)?;
+    persist_current(state_dir, &record)?;
     Ok(record)
+}
+
+fn persist_current(
+    state_dir: &Path,
+    record: &GenerationRecord,
+) -> Result<(), GenerationError> {
+    write_atomic_json(
+        &state_dir.join("generations/current.json"),
+        record,
+        0o600,
+    )
 }
 
 fn validate_seed(seed: &GenerationSeed) -> Result<(), GenerationError> {
@@ -269,6 +388,34 @@ fn validate_record(record: &GenerationRecord) -> Result<(), GenerationError> {
     }
     if record.created_at.trim().is_empty() {
         return Err(GenerationError::CreatedAt);
+    }
+    Ok(())
+}
+
+fn validate_health_report(
+    current: &GenerationRecord,
+    report: &GenerationHealthReport,
+) -> Result<(), GenerationError> {
+    if report.schema != GENERATION_HEALTH_SCHEMA {
+        return Err(GenerationError::Schema {
+            found: report.schema.clone(),
+            expected: GENERATION_HEALTH_SCHEMA,
+        });
+    }
+    if report.generation_id != current.generation_id {
+        return Err(GenerationError::HealthBindingMismatch(
+            "generation ID differs",
+        ));
+    }
+    if report.image_digest != current.image_digest {
+        return Err(GenerationError::HealthBindingMismatch(
+            "image digest differs",
+        ));
+    }
+    if report.observed_at.trim().is_empty() {
+        return Err(GenerationError::HealthBindingMismatch(
+            "observed_at is empty",
+        ));
     }
     Ok(())
 }
@@ -322,6 +469,23 @@ fn normalize_arch(value: &str) -> Option<&'static str> {
     }
 }
 
+fn write_new_json<T: serde::Serialize>(
+    path: &Path,
+    value: &T,
+    mode: u32,
+) -> Result<(), GenerationError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(path)?;
+    file.write_all(&serde_json::to_vec_pretty(value)?)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
 fn write_atomic_json<T: serde::Serialize>(
     path: &Path,
     value: &T,
@@ -367,6 +531,21 @@ mod tests {
             source_revision: "abcdef123456".to_owned(),
             base_image_digest: digest('a'),
             boot_attempt_limit: 3,
+        }
+    }
+
+    fn health_report(record: &GenerationRecord) -> GenerationHealthReport {
+        GenerationHealthReport {
+            schema: GENERATION_HEALTH_SCHEMA.to_owned(),
+            generation_id: record.generation_id.clone(),
+            image_digest: record.image_digest.clone(),
+            observed_at: "2026-08-18T21:00:00Z".to_owned(),
+            core_interface_ready: true,
+            host_identity_ready: true,
+            hardware_baseline_ready: true,
+            shell_ready: true,
+            recovery_ready: true,
+            limitations: Vec::new(),
         }
     }
 
@@ -512,6 +691,95 @@ mod tests {
         assert_eq!(record.boot_attempts_remaining, Some(3));
         assert_eq!(record.image_digest, booted.image_digest);
         assert!(dir.path().join("generations/current.json").is_file());
+        assert_eq!(health_status(&record), HealthStatus::Unknown);
+        assert!(!health_limitations(&record).is_empty());
+    }
+
+    #[test]
+    fn boot_try_enters_health_proving_without_becoming_known_good() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let booted = BootedImageIdentity {
+            image_digest: digest('b'),
+            architecture: "x86_64".to_owned(),
+        };
+        let record = bind_seed(dir.path(), &seed(), &booted).expect("bind");
+        let proving = begin_health_proving(dir.path(), &record, "prime.core.socket.bound.v1")
+            .expect("health proving");
+        assert_eq!(proving.state, GenerationState::HealthProving);
+        assert_eq!(proving.boot_attempts_remaining, Some(3));
+        assert!(proving
+            .evidence_refs
+            .iter()
+            .any(|item| item == "prime.core.socket.bound.v1"));
+        assert_eq!(health_status(&proving), HealthStatus::Unknown);
+    }
+
+    #[test]
+    fn incomplete_health_report_cannot_promote_known_good() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let booted = BootedImageIdentity {
+            image_digest: digest('b'),
+            architecture: "x86_64".to_owned(),
+        };
+        let record = bind_seed(dir.path(), &seed(), &booted).expect("bind");
+        let proving = begin_health_proving(dir.path(), &record, "prime.core.socket.bound.v1")
+            .expect("health proving");
+        let mut report = health_report(&proving);
+        report.shell_ready = false;
+        report
+            .limitations
+            .push("Prime Shell is not ready".to_owned());
+        assert!(matches!(
+            promote_known_good(dir.path(), &proving, &report),
+            Err(GenerationError::HealthIncomplete)
+        ));
+        let persisted: GenerationRecord = serde_json::from_slice(
+            &fs::read(dir.path().join("generations/current.json")).expect("current"),
+        )
+        .expect("record");
+        assert_eq!(persisted.state, GenerationState::HealthProving);
+    }
+
+    #[test]
+    fn complete_health_report_promotes_exact_generation_and_persists_evidence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let booted = BootedImageIdentity {
+            image_digest: digest('b'),
+            architecture: "x86_64".to_owned(),
+        };
+        let record = bind_seed(dir.path(), &seed(), &booted).expect("bind");
+        let proving = begin_health_proving(dir.path(), &record, "prime.core.socket.bound.v1")
+            .expect("health proving");
+        let report = health_report(&proving);
+        let known_good = promote_known_good(dir.path(), &proving, &report).expect("known good");
+        assert_eq!(known_good.state, GenerationState::KnownGood);
+        assert_eq!(known_good.boot_attempts_remaining, None);
+        assert_eq!(health_status(&known_good), HealthStatus::Healthy);
+        assert!(health_limitations(&known_good).is_empty());
+        assert_eq!(
+            fs::read_dir(dir.path().join("evidence/generation-health"))
+                .expect("evidence dir")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn health_report_cannot_promote_a_different_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let booted = BootedImageIdentity {
+            image_digest: digest('b'),
+            architecture: "x86_64".to_owned(),
+        };
+        let record = bind_seed(dir.path(), &seed(), &booted).expect("bind");
+        let proving = begin_health_proving(dir.path(), &record, "prime.core.socket.bound.v1")
+            .expect("health proving");
+        let mut report = health_report(&proving);
+        report.image_digest = digest('c');
+        assert!(matches!(
+            promote_known_good(dir.path(), &proving, &report),
+            Err(GenerationError::HealthBindingMismatch(_))
+        ));
     }
 
     #[test]
