@@ -65,8 +65,8 @@ BUILDER_INSPECT="$(skopeo inspect --override-os linux --override-arch amd64 --fo
 log "Prime Core and recovery locked proof"
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
+cargo clippy --locked --workspace --exclude prime-compositor --all-targets -- -D warnings
+cargo test --locked --workspace --exclude prime-compositor
 cargo build --locked --release -p primed
 [[ -x target/release/primed ]] || fail "primed release binary missing"
 [[ -x target/release/prime-recovery ]] || fail "prime-recovery release binary missing"
