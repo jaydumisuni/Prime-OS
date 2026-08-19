@@ -3,6 +3,7 @@ use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_layer_shell, delegate_output, delegate_shm, delegate_xdg_shell,
     desktop::{PopupKind, PopupManager, Space, Window},
+    input::{SeatHandler, SeatState},
     reexports::wayland_server::{
         backend::GlobalId,
         protocol::{wl_buffer, wl_output::WlOutput, wl_surface::WlSurface},
@@ -28,6 +29,7 @@ pub(crate) struct ProtocolState {
     pub(crate) shm_state: ShmState,
     pub(crate) xdg_shell_state: XdgShellState,
     pub(crate) layer_shell_state: WlrLayerShellState,
+    pub(crate) seat_state: SeatState<Runtime>,
     pub(crate) space: Space<Window>,
     pub(crate) popups: PopupManager,
     layer_surfaces: Vec<LayerSurface>,
@@ -47,18 +49,30 @@ impl ProtocolState {
         let output_global = output.create_global::<Runtime>(display_handle);
         let xdg_shell_state = XdgShellState::new::<Runtime>(display_handle);
         let layer_shell_state = WlrLayerShellState::new::<Runtime>(display_handle);
+        let seat_state = SeatState::new();
 
         Self {
             compositor_state,
             shm_state,
             xdg_shell_state,
             layer_shell_state,
+            seat_state,
             space: Space::default(),
             popups: PopupManager::default(),
             layer_surfaces: Vec::new(),
             _output_manager_state: output_manager_state,
             _output_global: output_global,
         }
+    }
+}
+
+impl SeatHandler for Runtime {
+    type KeyboardFocus = WlSurface;
+    type PointerFocus = WlSurface;
+    type TouchFocus = WlSurface;
+
+    fn seat_state(&mut self) -> &mut SeatState<Self> {
+        &mut self.protocols.seat_state
     }
 }
 
