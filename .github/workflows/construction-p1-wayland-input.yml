@@ -19,7 +19,7 @@ jobs:
       PRIME_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
       PRIME_HEAD_REF: ${{ github.head_ref }}
       PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
-      INPUT_HASH: 49fb2b43d3fcb978aa395c3e085eaa4af29d61f0
+      INPUT_HASH: 3a31369e2eb3f08cba745662945052f890cdf91e
       MAIN_HASH: 4def083eb6732eaa64ebfbfd1cfff9189d8a1d4d
       PROTOCOLS_HASH: d21fcceafb4c57f8073552b0393dd8ed54ad917b
       READINESS_HASH: 07f69216395e68144e7d9c76277afe3da32131bb
