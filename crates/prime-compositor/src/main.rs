@@ -1,3 +1,4 @@
+mod input;
 mod output;
 mod protocols;
 
@@ -67,6 +68,10 @@ struct Readiness {
     session_active: bool,
     wayland_listener_ready: bool,
     wayland_protocols_ready: bool,
+    wayland_seat_ready: bool,
+    keyboard_ready: bool,
+    pointer_ready: bool,
+    input_delivery_ready: bool,
     renderer_ready: bool,
     outputs_ready: bool,
     shell_ready: bool,
@@ -129,6 +134,7 @@ impl Runtime {
     fn invalidate_wayland_protocols(&mut self) {
         self.readiness.phase = "WAYLAND_PROTOCOL_ERROR".to_owned();
         self.readiness.wayland_protocols_ready = false;
+        self.readiness.input_delivery_ready = false;
         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
     }
 }
@@ -203,7 +209,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         mode.size.w, mode.size.h, mode.refresh
     );
 
-    let protocols = protocols::ProtocolState::new(&display_handle, &physical_output);
+    let protocols = protocols::ProtocolState::new(&display_handle, &physical_output, &seat_name)?;
 
     let udev_backend = UdevBackend::new(&seat_name)?;
     let udev_device_count = udev_backend.device_list().count();
@@ -264,8 +270,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
 
-    loop_handle.insert_source(libinput_backend, |_, _, runtime| {
-        runtime.readiness.input_events_seen = runtime.readiness.input_events_seen.saturating_add(1);
+    loop_handle.insert_source(libinput_backend, |event, _, runtime| {
+        input::process_input_event(runtime, event);
     })?;
 
     loop_handle.insert_source(drm_notifier, |event, _, runtime| match event {
@@ -315,7 +321,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         readiness: Readiness {
             schema: READINESS_SCHEMA,
             observed_at: now_rfc3339()?,
-            phase: "WAYLAND_PROTOCOLS_READY".to_owned(),
+            phase: "WAYLAND_INPUT_READY".to_owned(),
             direct_tty_backend: true,
             seat_name,
             wayland_socket: socket_name.to_string_lossy().into_owned(),
@@ -327,6 +333,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             session_active: true,
             wayland_listener_ready: true,
             wayland_protocols_ready: true,
+            wayland_seat_ready: true,
+            keyboard_ready: true,
+            pointer_ready: true,
+            input_delivery_ready: true,
             renderer_ready: true,
             outputs_ready: true,
             shell_ready: false,
@@ -334,7 +344,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             input_events_seen: 0,
             last_udev_event: None,
             limitations: vec![
-                "Wayland seat/input delivery is not initialized yet".to_owned(),
+                "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
+                "Layer-shell pointer hit-testing waits for the mapped-surface/frame responsibility".to_owned(),
+                "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
                 "Client surfaces are not rendered to the KMS output yet".to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
@@ -364,15 +376,18 @@ fn install_session_notifier(
                     libinput_context.suspend();
                     runtime.output_manager.pause();
                     runtime.readiness.session_active = false;
+                    runtime.readiness.input_delivery_ready = false;
                     runtime.require_graphics_revalidation("SESSION_PAUSED");
                 }
                 SessionEvent::ActivateSession => {
                     if libinput_context.resume().is_err() {
                         eprintln!("prime-compositor could not resume libinput");
                         runtime.readiness.session_active = false;
+                        runtime.readiness.input_delivery_ready = false;
                         runtime.require_graphics_revalidation("SESSION_RESUME_FAILED");
                     } else {
                         runtime.readiness.session_active = true;
+                        runtime.readiness.input_delivery_ready = true;
                         runtime.require_graphics_revalidation("RENDERER_REVALIDATION_REQUIRED");
                     }
                 }
