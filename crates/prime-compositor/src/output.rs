@@ -137,7 +137,7 @@ pub fn initialize_primary_output(
         .iter()
         .copied()
         .collect::<FormatSet>();
-    if renderer_formats.is_empty() {
+    if renderer_formats.indexset().is_empty() {
         return Err(io::Error::other("EGL renderer reports no renderable dmabuf formats").into());
     }
 
