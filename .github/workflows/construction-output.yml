@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   compile:
-    if: ${{ github.head_ref == 'construction/p1-compositor-output' }}
+    if: ${{ startsWith(github.head_ref, 'construction/p1-compositor-output') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
