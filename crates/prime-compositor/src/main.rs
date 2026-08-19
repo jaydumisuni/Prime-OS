@@ -1,8 +1,10 @@
+mod output;
+
 use serde::Serialize;
 use smithay::{
     backend::{
         allocator::gbm::GbmDevice,
-        drm::{DrmDeviceFd, DrmNode},
+        drm::{DrmDeviceFd, DrmEvent, DrmNode},
         egl::{context::ContextPriority, EGLContext, EGLDisplay},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::gles::GlesRenderer,
@@ -40,8 +42,11 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
 const DEFAULT_READINESS_PATH: &str = "/run/prime/compositor/readiness.json";
-const RENDERER_REVALIDATION_LIMITATION: &str =
-    "Renderer and DRM access require revalidation after session activation";
+const GRAPHICS_REVALIDATION_LIMITATION: &str =
+    "Renderer, DRM access and output require revalidation after session activation";
+const OUTPUT_ERROR_LIMITATION: &str = "DRM output requires revalidation after notifier error";
+const OUTPUT_TOPOLOGY_LIMITATION: &str =
+    "DRM topology changed; selected output requires revalidation";
 
 #[derive(Debug, Serialize)]
 struct Readiness {
@@ -71,6 +76,9 @@ struct Readiness {
 struct Runtime {
     display_handle: DisplayHandle,
     _session: LibSeatSession,
+    _output: smithay::output::Output,
+    _drm_output: output::PrimeDrmOutput,
+    output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
     readiness_path: PathBuf,
     readiness: Readiness,
@@ -89,20 +97,29 @@ impl Runtime {
         }
     }
 
-    fn require_renderer_revalidation(&mut self, phase: &str) {
-        self.readiness.phase = phase.to_owned();
-        self.readiness.drm_access_ready = false;
-        self.readiness.renderer_ready = false;
+    fn add_limitation(&mut self, limitation: &str) {
         if !self
             .readiness
             .limitations
             .iter()
-            .any(|item| item == RENDERER_REVALIDATION_LIMITATION)
+            .any(|item| item == limitation)
         {
-            self.readiness
-                .limitations
-                .push(RENDERER_REVALIDATION_LIMITATION.to_owned());
+            self.readiness.limitations.push(limitation.to_owned());
         }
+    }
+
+    fn require_graphics_revalidation(&mut self, phase: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.drm_access_ready = false;
+        self.readiness.renderer_ready = false;
+        self.readiness.outputs_ready = false;
+        self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
+    }
+
+    fn invalidate_output(&mut self, phase: &str, limitation: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.outputs_ready = false;
+        self.add_limitation(limitation);
     }
 }
 
@@ -131,7 +148,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !session_active {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("libseat session {seat_name} is inactive; renderer initialization requires an active seat"),
+            format!("libseat session {seat_name} is inactive; output initialization requires an active seat"),
         )
         .into());
     }
@@ -157,10 +174,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
     )?;
     let drm_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
-    let gbm = GbmDevice::new(drm_fd)?;
-    let egl_display = unsafe { EGLDisplay::new(gbm)? };
+    let gbm = GbmDevice::new(drm_fd.clone())?;
+    let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
     let egl_context = EGLContext::new_with_priority(&egl_display, ContextPriority::High)?;
-    let renderer = unsafe { GlesRenderer::new(egl_context)? };
+    let mut renderer = unsafe { GlesRenderer::new(egl_context)? };
+    let output::OutputBackend {
+        output: physical_output,
+        manager: output_manager,
+        drm_output,
+        notifier: drm_notifier,
+        connector_name,
+        mode,
+    } = output::initialize_primary_output(drm_fd, gbm, &mut renderer)?;
+    eprintln!(
+        "prime-compositor initialized output {connector_name} at {}x{} {}mHz",
+        mode.size.w, mode.size.h, mode.refresh
+    );
 
     let udev_backend = UdevBackend::new(&seat_name)?;
     let udev_device_count = udev_backend.device_list().count();
@@ -218,6 +247,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         runtime.readiness.input_events_seen = runtime.readiness.input_events_seen.saturating_add(1);
     })?;
 
+    loop_handle.insert_source(drm_notifier, |event, _, runtime| {
+        match event {
+            DrmEvent::VBlank(_) => {}
+            DrmEvent::Error(error) => {
+                eprintln!("prime-compositor DRM event processing failed: {error}");
+                runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
+                runtime.persist_best_effort();
+            }
+        }
+    })?;
+
     install_session_notifier(&loop_handle, notifier, libinput_context)?;
 
     loop_handle.insert_source(udev_backend, |event, _, runtime| {
@@ -230,11 +270,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             UdevEvent::Changed { device_id } => {
                 runtime.readiness.last_udev_event = Some(format!("CHANGED:{device_id}"));
+                runtime.invalidate_output(
+                    "OUTPUT_REVALIDATION_REQUIRED",
+                    OUTPUT_TOPOLOGY_LIMITATION,
+                );
             }
             UdevEvent::Removed { device_id } => {
                 runtime.readiness.udev_device_count =
                     runtime.readiness.udev_device_count.saturating_sub(1);
                 runtime.readiness.last_udev_event = Some(format!("REMOVED:{device_id}"));
+                runtime.invalidate_output(
+                    "OUTPUT_REVALIDATION_REQUIRED",
+                    OUTPUT_TOPOLOGY_LIMITATION,
+                );
             }
         }
         runtime.persist_best_effort();
@@ -243,12 +291,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut runtime = Runtime {
         display_handle,
         _session: session,
+        _output: physical_output,
+        _drm_output: drm_output,
+        output_manager,
         _renderer: renderer,
         readiness_path,
         readiness: Readiness {
             schema: READINESS_SCHEMA,
             observed_at: now_rfc3339()?,
-            phase: "RENDERER_READY".to_owned(),
+            phase: "OUTPUTS_READY".to_owned(),
             direct_tty_backend: true,
             seat_name,
             wayland_socket: socket_name.to_string_lossy().into_owned(),
@@ -261,14 +312,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             wayland_listener_ready: true,
             wayland_protocols_ready: false,
             renderer_ready: true,
-            outputs_ready: false,
+            outputs_ready: true,
             shell_ready: false,
             clients_accepted: 0,
             input_events_seen: 0,
             last_udev_event: None,
             limitations: vec![
                 "Wayland compositor protocol globals are not initialized yet".to_owned(),
-                "DRM outputs are not configured yet".to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
         },
@@ -295,17 +345,18 @@ fn install_session_notifier(
             match event {
                 SessionEvent::PauseSession => {
                     libinput_context.suspend();
+                    runtime.output_manager.pause();
                     runtime.readiness.session_active = false;
-                    runtime.require_renderer_revalidation("SESSION_PAUSED");
+                    runtime.require_graphics_revalidation("SESSION_PAUSED");
                 }
                 SessionEvent::ActivateSession => {
                     if libinput_context.resume().is_err() {
                         eprintln!("prime-compositor could not resume libinput");
                         runtime.readiness.session_active = false;
-                        runtime.require_renderer_revalidation("SESSION_RESUME_FAILED");
+                        runtime.require_graphics_revalidation("SESSION_RESUME_FAILED");
                     } else {
                         runtime.readiness.session_active = true;
-                        runtime.require_renderer_revalidation("RENDERER_REVALIDATION_REQUIRED");
+                        runtime.require_graphics_revalidation("RENDERER_REVALIDATION_REQUIRED");
                     }
                 }
             }
