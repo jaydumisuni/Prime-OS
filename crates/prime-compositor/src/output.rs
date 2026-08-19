@@ -1,8 +1,6 @@
 use smithay::{
     backend::drm::DrmDevice,
-    reexports::drm::control::{
-        connector, crtc, Device as ControlDevice, Mode, ModeTypeFlags,
-    },
+    reexports::drm::control::{connector, crtc, Device as ControlDevice, Mode, ModeTypeFlags},
 };
 use std::{error::Error, io};
 
@@ -31,22 +29,18 @@ pub fn select_primary_output(device: &DrmDevice) -> Result<OutputSelection, Box<
             .find(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
             .unwrap_or(connector.modes()[0]);
 
-        let mut encoder_handles = Vec::with_capacity(connector.encoders().len() + 1);
-        if let Some(current) = connector.current_encoder() {
-            encoder_handles.push(current);
-        }
-        for handle in connector.encoders() {
-            if !encoder_handles.contains(handle) {
-                encoder_handles.push(*handle);
-            }
-        }
+        let current_encoder = connector.current_encoder();
+        let mut encoder_handles = connector.encoders().to_vec();
         encoder_handles.sort_by_key(|handle| u32::from(*handle));
+        encoder_handles.dedup();
+        if let Some(current) = current_encoder {
+            encoder_handles.retain(|handle| *handle != current);
+            encoder_handles.insert(0, current);
+        }
 
         for encoder_handle in encoder_handles {
             let encoder = device.get_encoder(encoder_handle)?;
-            let mut possible_crtcs = resources
-                .filter_crtcs(encoder.possible_crtcs())
-                .collect::<Vec<_>>();
+            let mut possible_crtcs = resources.filter_crtcs(encoder.possible_crtcs());
             possible_crtcs.sort_by_key(|handle| u32::from(*handle));
 
             if let Some(current) = encoder.crtc() {
