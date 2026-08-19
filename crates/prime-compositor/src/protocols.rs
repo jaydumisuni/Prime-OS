@@ -1,9 +1,14 @@
 use crate::{PrimeClientState, Runtime};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_layer_shell, delegate_output, delegate_shm, delegate_xdg_shell,
+    delegate_compositor, delegate_layer_shell, delegate_output, delegate_seat, delegate_shm,
+    delegate_xdg_shell,
     desktop::{PopupKind, PopupManager, Space, Window},
-    input::{SeatHandler, SeatState},
+    input::{
+        keyboard::{KeyboardHandle, XkbConfig},
+        pointer::PointerHandle,
+        SeatHandler, SeatState,
+    },
     reexports::wayland_server::{
         backend::GlobalId,
         protocol::{wl_buffer, wl_output::WlOutput, wl_surface::WlSurface},
@@ -30,6 +35,8 @@ pub(crate) struct ProtocolState {
     pub(crate) xdg_shell_state: XdgShellState,
     pub(crate) layer_shell_state: WlrLayerShellState,
     pub(crate) seat_state: SeatState<Runtime>,
+    pub(crate) keyboard: KeyboardHandle<Runtime>,
+    pub(crate) pointer: PointerHandle<Runtime>,
     pub(crate) space: Space<Window>,
     pub(crate) popups: PopupManager,
     layer_surfaces: Vec<LayerSurface>,
@@ -41,7 +48,8 @@ impl ProtocolState {
     pub(crate) fn new(
         display_handle: &smithay::reexports::wayland_server::DisplayHandle,
         output: &smithay::output::Output,
-    ) -> Self {
+        seat_name: &str,
+    ) -> Result<Self, smithay::input::keyboard::Error> {
         let compositor_state = CompositorState::new::<Runtime>(display_handle);
         let shm_state = ShmState::new::<Runtime>(display_handle, vec![]);
         let output_manager_state =
@@ -49,20 +57,25 @@ impl ProtocolState {
         let output_global = output.create_global::<Runtime>(display_handle);
         let xdg_shell_state = XdgShellState::new::<Runtime>(display_handle);
         let layer_shell_state = WlrLayerShellState::new::<Runtime>(display_handle);
-        let seat_state = SeatState::new();
+        let mut seat_state = SeatState::new();
+        let mut seat = seat_state.new_wl_seat(display_handle, seat_name.to_owned());
+        let keyboard = seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+        let pointer = seat.add_pointer();
 
-        Self {
+        Ok(Self {
             compositor_state,
             shm_state,
             xdg_shell_state,
             layer_shell_state,
             seat_state,
+            keyboard,
+            pointer,
             space: Space::default(),
             popups: PopupManager::default(),
             layer_surfaces: Vec::new(),
             _output_manager_state: output_manager_state,
             _output_global: output_global,
-        }
+        })
     }
 }
 
@@ -201,6 +214,7 @@ fn handle_xdg_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 }
 
 delegate_compositor!(Runtime);
+delegate_seat!(Runtime);
 delegate_shm!(Runtime);
 delegate_output!(Runtime);
 delegate_xdg_shell!(Runtime);
