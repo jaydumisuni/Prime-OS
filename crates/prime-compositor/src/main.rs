@@ -1,4 +1,5 @@
 mod output;
+mod protocols;
 
 use serde::Serialize;
 use smithay::{
@@ -24,7 +25,7 @@ use smithay::{
         },
     },
     utils::DeviceFd,
-    wayland::socket::ListeningSocketSource,
+    wayland::{compositor::CompositorClientState, socket::ListeningSocketSource},
 };
 use std::{
     env,
@@ -47,6 +48,8 @@ const GRAPHICS_REVALIDATION_LIMITATION: &str =
 const OUTPUT_ERROR_LIMITATION: &str = "DRM output requires revalidation after notifier error";
 const OUTPUT_TOPOLOGY_LIMITATION: &str =
     "DRM topology changed; selected output requires revalidation";
+const WAYLAND_PROTOCOL_ERROR_LIMITATION: &str =
+    "Wayland protocol dispatch requires compositor restart or explicit revalidation";
 
 #[derive(Debug, Serialize)]
 struct Readiness {
@@ -73,8 +76,9 @@ struct Readiness {
     limitations: Vec<String>,
 }
 
-struct Runtime {
+pub(crate) struct Runtime {
     display_handle: DisplayHandle,
+    protocols: protocols::ProtocolState,
     _output: smithay::output::Output,
     _drm_output: output::PrimeDrmOutput,
     output_manager: output::PrimeDrmOutputManager,
@@ -121,10 +125,18 @@ impl Runtime {
         self.readiness.outputs_ready = false;
         self.add_limitation(limitation);
     }
+
+    fn invalidate_wayland_protocols(&mut self) {
+        self.readiness.phase = "WAYLAND_PROTOCOL_ERROR".to_owned();
+        self.readiness.wayland_protocols_ready = false;
+        self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
+    }
 }
 
 #[derive(Default)]
-struct PrimeClientState;
+pub(crate) struct PrimeClientState {
+    pub(crate) compositor_state: CompositorClientState,
+}
 
 impl ClientData for PrimeClientState {
     fn initialized(&self, _client_id: ClientId) {}
@@ -191,6 +203,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         mode.size.w, mode.size.h, mode.refresh
     );
 
+    let protocols = protocols::ProtocolState::new(&display_handle, &physical_output);
+
     let udev_backend = UdevBackend::new(&seat_name)?;
     let udev_device_count = udev_backend.device_list().count();
     if udev_device_count == 0 {
@@ -214,7 +228,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let loop_handle = event_loop.handle();
     loop_handle.insert_source(listening_socket, |client_stream, _, runtime| match runtime
         .display_handle
-        .insert_client(client_stream, Arc::new(PrimeClientState))
+        .insert_client(client_stream, Arc::new(PrimeClientState::default()))
     {
         Ok(_) => {
             runtime.readiness.clients_accepted =
@@ -228,16 +242,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     loop_handle.insert_source(
         Generic::new(display, Interest::READ, Mode::Level),
         |_, display, runtime| {
+            let mut protocol_error = false;
             // SAFETY: calloop owns the Display source for the lifetime of this event source,
             // matching Smithay's v0.7.0 Smallvil listener pattern.
             unsafe {
                 let display = display.get_mut();
                 if let Err(error) = display.dispatch_clients(runtime) {
                     eprintln!("prime-compositor Wayland dispatch failed: {error}");
+                    protocol_error = true;
                 }
                 if let Err(error) = display.flush_clients() {
                     eprintln!("prime-compositor Wayland flush failed: {error}");
+                    protocol_error = true;
                 }
+            }
+            if protocol_error {
+                runtime.invalidate_wayland_protocols();
+                runtime.persist_best_effort();
             }
             Ok(PostAction::Continue)
         },
@@ -284,6 +305,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut runtime = Runtime {
         display_handle,
+        protocols,
         _output: physical_output,
         _drm_output: drm_output,
         output_manager,
@@ -293,7 +315,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         readiness: Readiness {
             schema: READINESS_SCHEMA,
             observed_at: now_rfc3339()?,
-            phase: "OUTPUTS_READY".to_owned(),
+            phase: "WAYLAND_PROTOCOLS_READY".to_owned(),
             direct_tty_backend: true,
             seat_name,
             wayland_socket: socket_name.to_string_lossy().into_owned(),
@@ -304,7 +326,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             libinput_bound: true,
             session_active: true,
             wayland_listener_ready: true,
-            wayland_protocols_ready: false,
+            wayland_protocols_ready: true,
             renderer_ready: true,
             outputs_ready: true,
             shell_ready: false,
@@ -312,7 +334,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             input_events_seen: 0,
             last_udev_event: None,
             limitations: vec![
-                "Wayland compositor protocol globals are not initialized yet".to_owned(),
+                "Wayland seat/input delivery is not initialized yet".to_owned(),
+                "Client surfaces are not rendered to the KMS output yet".to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
         },
