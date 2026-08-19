@@ -35,6 +35,22 @@ It is a protocol/global/dispatch milestone, not a rendering, input, Shell or vis
 
 No new Smithay feature is required. These facilities are already part of Prime's locked `wayland_frontend`/`desktop` graph.
 
+## Internal Smithay seat state is not a public seat claim
+
+Compiler evidence from Smithay v0.7.0 establishes that `delegate_xdg_shell!(Runtime)` requires `Runtime: SeatHandler` even when P1 does not publish a Wayland seat global.
+
+Prime therefore retains one internal `SeatState<Runtime>` and implements `SeatHandler` with `WlSurface` focus target types solely to satisfy Smithay's XDG dispatch type contract.
+
+This internal state must **not** be confused with a public input responsibility. This phase deliberately does not:
+
+- call `SeatState::new_seat`;
+- register `delegate_seat!`;
+- create a `wl_seat` global;
+- add keyboard, pointer or touch capabilities;
+- route libinput events into Wayland seat focus/input delivery.
+
+Those are later input responsibilities. The presence of `SeatState<Runtime>` alone does not permit Prime to claim a public Wayland seat or input readiness.
+
 ## Client compositor state
 
 Every accepted client must carry Smithay `CompositorClientState` in its `ClientData`.
@@ -45,6 +61,7 @@ Every accepted client must carry Smithay `CompositorClientState` in its `ClientD
 
 Before readiness is published, the compositor must implement and register the Smithay dispatch/delegate surface required by the globals above:
 
+- `SeatHandler` with internal `SeatState<Runtime>` only;
 - `CompositorHandler` and `BufferHandler`;
 - `ShmHandler`;
 - `OutputHandler`;
@@ -55,6 +72,8 @@ Before readiness is published, the compositor must implement and register the Sm
 - `delegate_output!`;
 - `delegate_xdg_shell!`;
 - `delegate_layer_shell!`.
+
+`delegate_seat!` is deliberately absent in this phase.
 
 The Wayland `Display` remains owned by its calloop source. Client dispatch and flush remain inside that source callback.
 
@@ -112,7 +131,7 @@ drm_access_ready=true
 shell_ready=false
 ```
 
-The protocol state must remain retained for the compositor process lifetime.
+The protocol state, including internal `SeatState<Runtime>`, must remain retained for the compositor process lifetime.
 
 ## Wayland protocol fail-closed rule
 
@@ -139,7 +158,7 @@ Prime must not infer visual usability from `wayland_protocols_ready=true` when `
 
 `WAYLAND_PROTOCOLS_READY` does **not** claim:
 
-- a `wl_seat` global;
+- a public `wl_seat` global;
 - keyboard delivery to Wayland clients;
 - pointer delivery to Wayland clients;
 - touch/tablet input;
@@ -173,6 +192,8 @@ Before the protocol implementation may move into the product branch:
 - dynamic-link closure and `prime-compositor --help` must remain valid;
 - construction-only workflows/helpers must not be selectively promoted.
 
+The accepted hosted construction candidate must also prove that adding the compiler-required internal `SeatState`/`SeatHandler` plumbing does not require dependency or Smithay feature expansion.
+
 ## Live/client proof gate
 
 Hosted construction proves server implementation/buildability only.
@@ -186,4 +207,4 @@ Before the protocol phase can count toward P1 Host acceptance, the physical Krat
 - a WLR layer-shell client can create a layer surface and receive initial configure;
 - the compositor remains truthful if the client disconnects or a protocol error occurs.
 
-Rendering those surfaces, routing input and running Prime Shell are subsequent gates.
+Rendering those surfaces, publishing a Wayland seat, routing input and running Prime Shell are subsequent gates.
