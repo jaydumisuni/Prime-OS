@@ -64,6 +64,21 @@ jobs:
               git push origin HEAD:"$GITHUB_HEAD_REF"
             fi
           fi
+      - name: Apply mechanical proof preparation when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f construction/prepare-proof.py; then
+            python3 construction/prepare-proof.py
+            git diff --check
+            if ! git diff --quiet -- tools/prove-p1-local.sh; then
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git add tools/prove-p1-local.sh
+              git commit -m 'construction: close compositor proof assertions'
+              git push origin HEAD:"$GITHUB_HEAD_REF"
+            fi
+          fi
       - name: Compile locked Smithay graph on pinned Fedora 44
         shell: bash
         run: |
