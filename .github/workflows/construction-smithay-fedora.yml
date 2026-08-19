@@ -49,6 +49,21 @@ jobs:
             git push origin HEAD:"$GITHUB_HEAD_REF"
           fi
           printf 'PRIME_CONSTRUCTION_LOCK_SHA256=%s\n' "$(sha256sum Cargo.lock | cut -d ' ' -f1)"
+      - name: Apply mechanical image preparation when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f construction/prepare-image.py; then
+            python3 construction/prepare-image.py
+            git diff --check
+            if ! git diff --quiet -- image/Containerfile; then
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git add image/Containerfile
+              git commit -m 'construction: apply renderer runtime image closure'
+              git push origin HEAD:"$GITHUB_HEAD_REF"
+            fi
+          fi
       - name: Compile locked Smithay graph on pinned Fedora 44
         shell: bash
         run: |
