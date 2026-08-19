@@ -7,7 +7,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
+      PRIME_HEAD_REF: ${{ github.head_ref }}
       LIB_PATCH_HASH: 59806dcfc790dacdc3cabb9b844c24eb0a01b275
       MAIN_PATCH_HASH: 0a4f120a69197008766f7082b462cfb26fafc45c
       SERVER_PATCH_HASH: 3721298c531d0d886f34c1c56b7868cc16a7eed8
@@ -43,10 +44,12 @@ jobs:
           test "$(git hash-object construction/core-server.patch)" = "$SERVER_PATCH_HASH"
           test "$(git hash-object construction/core-capability-contract.patch)" = "$CAP_PATCH_HASH"
           test "$(git hash-object construction/core-rustfmt.patch)" = "$RUSTFMT_PATCH_HASH"
-          git apply --check construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
-          git apply construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
-          git apply --check construction/core-rustfmt.patch
-          git apply construction/core-rustfmt.patch
+          if test "$(git hash-object crates/primed/src/lib.rs)" != "$LIB_HASH"; then
+            git apply --check construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
+            git apply construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
+            git apply --check construction/core-rustfmt.patch
+            git apply construction/core-rustfmt.patch
+          fi
           test "$(git hash-object crates/primed/src/lib.rs)" = "$LIB_HASH"
           test "$(git hash-object crates/primed/src/main.rs)" = "$MAIN_HASH"
           test "$(git hash-object crates/primed/src/server.rs)" = "$SERVER_HASH"
@@ -88,3 +91,16 @@ jobs:
               cargo build --locked -p primed --release --bin primed
               echo PRIME_CORE_SYSTEM_STATUS_BUILD=PASS
             '
+      - name: Materialize proven product blobs on construction head
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/primed/src/lib.rs crates/primed/src/main.rs crates/primed/src/server.rs crates/primed/src/system_status.rs docs/contracts/PRIME_CAPABILITY_INTERFACE_V1.md docs/contracts/PRIME_SYSTEM_STATUS_V1.md; then
+            echo 'Proven product blobs already materialized.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/primed/src/lib.rs crates/primed/src/main.rs crates/primed/src/server.rs crates/primed/src/system_status.rs docs/contracts/PRIME_CAPABILITY_INTERFACE_V1.md docs/contracts/PRIME_SYSTEM_STATUS_V1.md
+          git commit -m 'construction: materialize proven Core status blobs'
+          git push origin "HEAD:${PRIME_HEAD_REF}"
