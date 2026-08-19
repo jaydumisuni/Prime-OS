@@ -16,12 +16,8 @@ use smithay::{
         },
         output::{OutputHandler, OutputManagerState},
         shell::{
-            wlr_layer::{
-                Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState,
-            },
-            xdg::{
-                PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            },
+            wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
     },
