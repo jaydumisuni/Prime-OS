@@ -106,13 +106,22 @@ RUN set -eux; \
     grep -q '^ID=fedora$' /usr/lib/os-release; \
     grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
     dnf -y install \
+        libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        mesa-dri-drivers-26.1.6-1.fc44 \
+        mesa-libEGL-26.1.6-1.fc44 \
+        mesa-libgbm-26.1.6-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
     rpm -q \
+        libdrm-2.4.134-1.fc44 \
+        libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        mesa-dri-drivers-26.1.6-1.fc44 \
+        mesa-libEGL-26.1.6-1.fc44 \
+        mesa-libgbm-26.1.6-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
@@ -167,6 +176,16 @@ RUN set -eux; \
         /usr/libexec/prime/prime-compositor; \
     chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
     ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \
+    test -e /usr/lib64/libEGL.so.1; \
+    test -e /usr/lib64/libEGL_mesa.so.0; \
+    test -e /usr/lib64/libgbm.so.1; \
+    test -e /usr/lib64/libdrm.so.2; \
+    test -e /usr/lib64/dri/iris_dri.so; \
+    rpm -qf /usr/lib64/libEGL.so.1 | grep -Fx 'libglvnd-egl-1.7.0-9.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.6-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.6-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.6-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
     systemctl enable primed.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
