@@ -1,4 +1,4 @@
-name: Construction P1 Output Selection
+name: Construction P1 Output KMS
 
 # Temporary construction transport only. Not Prime acceptance authority.
 on:
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
-      - name: Compile output-selection API on locked Fedora
+      - name: Compile direct-TTY output API on locked Fedora
         shell: bash
         run: |
           set -euo pipefail
@@ -54,7 +54,8 @@ jobs:
               rustup component add rustfmt clippy --toolchain 1.97.1
               cargo metadata --locked --no-deps --format-version 1 >/dev/null
               cargo fmt --all -- --check
-              cargo clippy --locked -p prime-compositor --lib -- -D warnings
+              cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
               cargo test --locked -p prime-compositor --lib
-              echo PRIME_OUTPUT_SELECTION_COMPILE=PASS
+              cargo build --locked -p prime-compositor --release --bin output_probe
+              echo PRIME_OUTPUT_KMS_COMPILE=PASS
             '
