@@ -10,6 +10,7 @@ use smithay::{
     },
     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
+    wayland::seat::WaylandFocus,
 };
 use std::convert::TryInto;
 
@@ -17,10 +18,10 @@ pub(crate) fn process_input_event<B: InputBackend>(runtime: &mut Runtime, event:
     runtime.readiness.input_events_seen = runtime.readiness.input_events_seen.saturating_add(1);
 
     match event {
-        InputEvent::Keyboard { event, .. } => keyboard_key(runtime, event),
-        InputEvent::PointerMotion { event, .. } => pointer_motion(runtime, event),
-        InputEvent::PointerButton { event, .. } => pointer_button(runtime, event),
-        InputEvent::PointerAxis { event, .. } => pointer_axis(runtime, event),
+        InputEvent::Keyboard { event, .. } => keyboard_key::<B>(runtime, event),
+        InputEvent::PointerMotion { event, .. } => pointer_motion::<B>(runtime, event),
+        InputEvent::PointerButton { event, .. } => pointer_button::<B>(runtime, event),
+        InputEvent::PointerAxis { event, .. } => pointer_axis::<B>(runtime, event),
         _ => {}
     }
 }
