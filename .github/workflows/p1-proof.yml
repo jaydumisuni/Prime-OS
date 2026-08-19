@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: prime-p1-proof-${{ github.event.pull_request.head.sha || github.sha }}
@@ -34,6 +35,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_P1_CANDIDATE_SHA"
           printf 'P1_PROOF_CANDIDATE=%s\n' "$PRIME_P1_CANDIDATE_SHA"
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run canonical Prime P1 proof
         shell: bash
         run: |
