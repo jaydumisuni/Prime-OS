@@ -1,0 +1,63 @@
+name: Construction Prove Fedora Mirror Lock
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-fedora-mirror-lock-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-fedora-mirror-lock' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EXPECTED_LOCK_HASH: 6c7fd03a1cd8683298501b96b993b9422b5c1f98
+      EXPECTED_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+      EXPECTED_MIRROR: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Freeze exact lock candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object image/fedora-base.lock.json)" = "$EXPECTED_LOCK_HASH"
+          test "$(python3 -c 'import json; print(json.load(open("image/fedora-base.lock.json"))["pinned_reference"])')" = "$EXPECTED_MIRROR"
+          test "$(python3 -c 'import json; print(json.load(open("image/fedora-base.lock.json"))["source_image_id"])')" = "$EXPECTED_IMAGE_ID"
+          git diff --check "${{ github.event.pull_request.base.sha }}"..HEAD
+      - name: Login to Prime-owned GHCR substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Prove mirror identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$EXPECTED_MIRROR"
+          test "$(docker image inspect "$EXPECTED_MIRROR" --format '{{.Id}}')" = "$EXPECTED_IMAGE_ID"
+          test "$(docker image inspect "$EXPECTED_MIRROR" --format '{{index .RepoDigests 0}}')" = "$EXPECTED_MIRROR"
+          echo PRIME_FEDORA_MIRROR_IDENTITY=PASS
+      - name: Build real compositor-builder from locked mirror
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json; print(json.load(open("image/fedora-base.lock.json"))["pinned_reference"])')"
+          docker build \
+            --platform=linux/amd64 \
+            --target compositor-builder \
+            --build-arg PRIME_BASE_IMAGE="$base" \
+            -f image/Containerfile \
+            .
+          echo PRIME_FEDORA_MIRROR_BUILDER=PASS
