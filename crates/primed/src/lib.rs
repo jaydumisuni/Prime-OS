@@ -8,6 +8,7 @@ pub mod policy;
 pub mod registry;
 pub mod server;
 pub mod storage;
+pub mod system_status;
 
 use prime_contracts::{
     CapabilityAccepts, CapabilityAvailability, CapabilityDescriptor, CapabilityHealth,
@@ -31,6 +32,7 @@ pub struct CoreState {
     pub systemd_run: Arc<PathBuf>,
     pub storage_mountinfo: Arc<PathBuf>,
     pub storage_policy_file: Arc<PathBuf>,
+    pub system_root: Arc<PathBuf>,
     pub started_at: String,
 }
 
@@ -45,6 +47,7 @@ impl CoreState {
         systemd_run: PathBuf,
         storage_mountinfo: PathBuf,
         storage_policy_file: PathBuf,
+        system_root: PathBuf,
         observed_at: String,
     ) -> Self {
         let provider = CapabilityProvider {
@@ -329,6 +332,13 @@ impl CoreState {
                     ],
                 },
             },
+            crate::system_status::capability_descriptor(
+                &system_root,
+                &hardware,
+                provider.clone(),
+                placement.clone(),
+                observed_at.clone(),
+            ),
             CapabilityDescriptor {
                 capability_id: "prime.capability.interface".to_owned(),
                 capability_version: "1.0.0".to_owned(),
@@ -364,8 +374,39 @@ impl CoreState {
             systemd_run: Arc::new(systemd_run),
             storage_mountinfo: Arc::new(storage_mountinfo),
             storage_policy_file: Arc::new(storage_policy_file),
+            system_root: Arc::new(system_root),
             started_at: observed_at,
         }
+    }
+
+    pub fn capabilities_snapshot(&self) -> Vec<CapabilityDescriptor> {
+        let observed_at =
+            crate::identity::now_rfc3339().unwrap_or_else(|_| self.started_at.clone());
+        let provider = CapabilityProvider {
+            id: "prime".to_owned(),
+            generation_id: self.generation.generation_id.clone(),
+        };
+        let placement = CapabilityPlacement {
+            scope: "HOST_LOCAL".to_owned(),
+            host_id: self.host.host_id,
+        };
+        let refreshed = crate::system_status::capability_descriptor(
+            &self.system_root,
+            &self.hardware,
+            provider,
+            placement,
+            observed_at,
+        );
+        let mut capabilities = (*self.capabilities).clone();
+        if let Some(existing) = capabilities
+            .iter_mut()
+            .find(|item| item.capability_id == crate::system_status::SYSTEM_STATUS_CAPABILITY)
+        {
+            *existing = refreshed;
+        } else {
+            capabilities.push(refreshed);
+        }
+        capabilities
     }
 
     pub fn begin_generation_health_proving(

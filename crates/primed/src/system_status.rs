@@ -79,11 +79,13 @@ pub fn capability_descriptor(
         HealthStatus::Degraded
     };
     let limitations = status.limitations.clone();
-    let resources = serde_json::to_value(status).unwrap_or_else(|_| json!({
-        "schema": SYSTEM_STATUS_SCHEMA,
-        "observed_at": observed_at,
-        "limitations": ["Prime could not serialize system status"]
-    }));
+    let resources = serde_json::to_value(status).unwrap_or_else(|_| {
+        json!({
+            "schema": SYSTEM_STATUS_SCHEMA,
+            "observed_at": observed_at,
+            "limitations": ["Prime could not serialize system status"]
+        })
+    });
 
     CapabilityDescriptor {
         capability_id: SYSTEM_STATUS_CAPABILITY.to_owned(),
@@ -200,14 +202,12 @@ fn observe(root: &Path, hardware: &HardwareGraph, observed_at: String) -> System
         thermal_zones,
         network_control: ControlTruth {
             ready: false,
-            limitations: vec![
-                "Prime P1 has not earned a network mutation backend yet".to_owned(),
-            ],
+            limitations: vec!["Prime P1 has not earned a network mutation backend yet".to_owned()],
         },
         audio_control: ControlTruth {
             ready: false,
             limitations: vec![
-                "Prime P1 has not earned an audio mixer/control backend yet".to_owned(),
+                "Prime P1 has not earned an audio mixer/control backend yet".to_owned()
             ],
         },
         power_mutation: ControlTruth {
@@ -247,9 +247,7 @@ fn list_names(path: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prime_contracts::{
-        HardwareInventory, NetworkHardware, SoundHardware, ThermalHardware,
-    };
+    use prime_contracts::{HardwareInventory, NetworkHardware, SoundHardware, ThermalHardware};
     use tempfile::TempDir;
 
     fn write(root: &Path, path: &str, value: &str) {
@@ -267,7 +265,11 @@ mod tests {
         write(temp.path(), "/sys/class/net/enp1s0/carrier", "1\n");
         write(temp.path(), "/sys/class/power_supply/AC/type", "Mains\n");
         write(temp.path(), "/sys/class/power_supply/AC/online", "1\n");
-        write(temp.path(), "/sys/class/thermal/thermal_zone0/temp", "47000\n");
+        write(
+            temp.path(),
+            "/sys/class/thermal/thermal_zone0/temp",
+            "47000\n",
+        );
 
         let hardware = HardwareGraph {
             schema: "prime.hardware-graph.v1".to_owned(),
@@ -297,7 +299,10 @@ mod tests {
         assert_eq!(snapshot.network_links[0].oper_state.as_deref(), Some("up"));
         assert_eq!(snapshot.network_links[0].carrier, Some(true));
         assert_eq!(snapshot.power_supplies[0].online, Some(true));
-        assert_eq!(snapshot.thermal_zones[0].temperature_millicelsius, Some(47000));
+        assert_eq!(
+            snapshot.thermal_zones[0].temperature_millicelsius,
+            Some(47000)
+        );
         assert!(!snapshot.network_control.ready);
         assert!(!snapshot.audio_control.ready);
         assert!(!snapshot.power_mutation.ready);

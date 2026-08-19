@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         systemd_run,
         storage_mountinfo,
         storage_policy_file,
+        PathBuf::from("/"),
         observed_at,
     );
 

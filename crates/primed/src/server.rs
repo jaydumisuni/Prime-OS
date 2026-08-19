@@ -348,17 +348,14 @@ async fn route(
                 interface_version: negotiated.to_owned(),
                 host_id: state.host.host_id,
                 generation_id: state.generation.generation_id.clone(),
-                capabilities: (*state.capabilities).clone(),
+                capabilities: state.capabilities_snapshot(),
             },
             true,
         ),
         path if path.starts_with("/v1/capabilities/") => {
             let id = path.trim_start_matches("/v1/capabilities/");
-            match state
-                .capabilities
-                .iter()
-                .find(|item| item.capability_id == id)
-            {
+            let capabilities = state.capabilities_snapshot();
+            match capabilities.iter().find(|item| item.capability_id == id) {
                 Some(capability) => json_response(StatusCode::OK, capability, true),
                 None => error_response(
                     StatusCode::NOT_FOUND,
