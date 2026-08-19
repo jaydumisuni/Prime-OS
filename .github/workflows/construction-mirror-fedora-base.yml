@@ -1,0 +1,51 @@
+name: Construction Mirror Fedora Base
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-input-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    if: ${{ github.head_ref == 'construction/p1-wayland-input' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE: quay.io/fedora/fedora-bootc:44-x86_64
+      SOURCE_DIGEST: sha256:9dbd80ffc9fd873db097ea719f5a51c370f85568cca232c23052aae11774a36f
+      SOURCE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+      TARGET_TAG: ghcr.io/jaydumisuni/prime-fedora-base:fedora44-amd64-9dbd80ffc9fd
+    steps:
+      - name: Pull and verify exact Fedora source
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$SOURCE"
+          test "$(docker image inspect "$SOURCE" --format '{{.Id}}')" = "$SOURCE_IMAGE_ID"
+          test "$(docker image inspect "$SOURCE" --format '{{index .RepoDigests 0}}')" = "quay.io/fedora/fedora-bootc@$SOURCE_DIGEST"
+      - name: Mirror exact source into Prime-owned GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$SOURCE" "$TARGET_TAG"
+          docker push "$TARGET_TAG"
+          docker image rm "$TARGET_TAG" >/dev/null 2>&1 || true
+          docker pull "$TARGET_TAG"
+          target_digest="$(docker image inspect "$TARGET_TAG" --format '{{index .RepoDigests 0}}')"
+          target_id="$(docker image inspect "$TARGET_TAG" --format '{{.Id}}')"
+          test "$target_id" = "$SOURCE_IMAGE_ID"
+          case "$target_digest" in
+            ghcr.io/jaydumisuni/prime-fedora-base@sha256:*) ;;
+            *) echo "unexpected target digest: $target_digest" >&2; exit 1 ;;
+          esac
+          printf 'PRIME_FEDORA_MIRROR=%s\n' "$target_digest"
+          printf 'PRIME_FEDORA_SOURCE_DIGEST=%s\n' "$SOURCE_DIGEST"
+          printf 'PRIME_FEDORA_IMAGE_ID=%s\n' "$target_id"
