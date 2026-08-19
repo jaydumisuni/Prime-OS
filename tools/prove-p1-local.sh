@@ -171,9 +171,9 @@ log "Inspect final Prime image and recovery contract"
       libglvnd-egl-1.7.0-9.fc44 \
       libinput-1.31.3-1.fc44 \
       libseat-0.9.3-1.fc44 \
-      mesa-dri-drivers-26.1.6-1.fc44 \
-      mesa-libEGL-26.1.6-1.fc44 \
-      mesa-libgbm-26.1.6-1.fc44 \
+      mesa-dri-drivers-26.1.7-1.fc44 \
+      mesa-libEGL-26.1.7-1.fc44 \
+      mesa-libgbm-26.1.7-1.fc44 \
       systemd-boot-unsigned-259.8-1.fc44 \
       systemd-ukify-259.8-1.fc44
     grep -q "^ID=prime$" /usr/lib/os-release
@@ -184,10 +184,10 @@ log "Inspect final Prime image and recovery contract"
     test -e /usr/lib64/libdrm.so.2
     test -e /usr/lib64/dri/iris_dri.so
     test "$(rpm -qf /usr/lib64/libEGL.so.1)" = "libglvnd-egl-1.7.0-9.fc44.x86_64"
-    test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.6-1.fc44.x86_64"
-    test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.6-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.7-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.7-1.fc44.x86_64"
     test "$(rpm -qf /usr/lib64/libdrm.so.2)" = "libdrm-2.4.134-1.fc44.x86_64"
-    test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.6-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.7-1.fc44.x86_64"
     ! ldd /usr/libexec/prime/prime-compositor | grep -q "not found"
     /usr/libexec/prime/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
     test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service

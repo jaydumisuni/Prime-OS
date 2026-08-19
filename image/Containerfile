@@ -33,7 +33,7 @@ RUN --mount=type=tmpfs,target=/tmp \
         'pkgconfig(libdrm)'; \
     test "$(rpm -q --whatprovides 'pkgconfig(libinput)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libinput-devel-1.31.3-1.fc44.x86_64'; \
     test "$(rpm -q --whatprovides 'pkgconfig(libudev)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'systemd-devel-259.8-1.fc44.x86_64'; \
-    test "$(rpm -q --whatprovides 'pkgconfig(gbm)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'mesa-libgbm-devel-26.1.6-1.fc44.x86_64'; \
+    test "$(rpm -q --whatprovides 'pkgconfig(gbm)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'mesa-libgbm-devel-26.1.7-1.fc44.x86_64'; \
     test "$(rpm -q --whatprovides 'pkgconfig(libseat)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libseat-devel-0.9.3-1.fc44.x86_64'; \
     test "$(rpm -q --whatprovides 'pkgconfig(xkbcommon)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'libxkbcommon-devel-1.13.1-2.fc44.x86_64'; \
     test "$(rpm -q --whatprovides 'pkgconfig(wayland-server)' --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n')" = 'wayland-devel-1.25.0-1.fc44.x86_64'; \
@@ -109,9 +109,9 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
-        mesa-dri-drivers-26.1.6-1.fc44 \
-        mesa-libEGL-26.1.6-1.fc44 \
-        mesa-libgbm-26.1.6-1.fc44 \
+        mesa-dri-drivers-26.1.7-1.fc44 \
+        mesa-libEGL-26.1.7-1.fc44 \
+        mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
     rpm -q \
@@ -119,9 +119,9 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
-        mesa-dri-drivers-26.1.6-1.fc44 \
-        mesa-libEGL-26.1.6-1.fc44 \
-        mesa-libgbm-26.1.6-1.fc44 \
+        mesa-dri-drivers-26.1.7-1.fc44 \
+        mesa-libEGL-26.1.7-1.fc44 \
+        mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
@@ -182,10 +182,10 @@ RUN set -eux; \
     test -e /usr/lib64/libdrm.so.2; \
     test -e /usr/lib64/dri/iris_dri.so; \
     rpm -qf /usr/lib64/libEGL.so.1 | grep -Fx 'libglvnd-egl-1.7.0-9.fc44.x86_64'; \
-    rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.6-1.fc44.x86_64'; \
-    rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.6-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.7-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.7-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
-    rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.6-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.7-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
     systemctl enable primed.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
