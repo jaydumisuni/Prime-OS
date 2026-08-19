@@ -1,0 +1,34 @@
+name: Construction Resolve Fedora Base
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-input-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: ${{ github.head_ref == 'construction/p1-wayland-input' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve current Fedora 44 x86_64 source image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='quay.io/fedora/fedora-bootc:44-x86_64'
+          docker pull "$source"
+          repo_digest="$(docker image inspect "$source" --format '{{index .RepoDigests 0}}')"
+          image_id="$(docker image inspect "$source" --format '{{.Id}}')"
+          arch="$(docker image inspect "$source" --format '{{.Architecture}}')"
+          os="$(docker image inspect "$source" --format '{{.Os}}')"
+          printf 'PRIME_FEDORA_SOURCE=%s\n' "$source"
+          printf 'PRIME_FEDORA_REPODIGEST=%s\n' "$repo_digest"
+          printf 'PRIME_FEDORA_IMAGE_ID=%s\n' "$image_id"
+          printf 'PRIME_FEDORA_OS=%s\n' "$os"
+          printf 'PRIME_FEDORA_ARCH=%s\n' "$arch"
+          test "$os" = linux
+          test "$arch" = amd64
