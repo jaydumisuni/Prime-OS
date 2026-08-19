@@ -1,4 +1,4 @@
-name: Construction P1 Mesa Pin Retention
+name: Construction P1 Mesa 26.1.7 Refresh
 
 # Temporary construction transport only. Not Prime acceptance authority.
 on:
@@ -14,7 +14,7 @@ jobs:
   compile:
     if: ${{ startsWith(github.head_ref, 'construction/p1-compositor-output') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       PRIME_CONSTRUCTION_SHA: ${{ github.event.pull_request.head.sha }}
       PRIME_BASE_IMAGE: quay.io/fedora/fedora-bootc:44-x86_64@sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781
@@ -28,7 +28,19 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
-      - name: Prove retained Mesa package pins and compositor build
+      - name: Verify package authority files
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'mesa-libgbm-devel-26.1.7-1.fc44.x86_64' image/Containerfile
+          grep -Fq 'mesa-dri-drivers-26.1.7-1.fc44' image/Containerfile
+          grep -Fq 'mesa-libEGL-26.1.7-1.fc44' image/Containerfile
+          grep -Fq 'mesa-libgbm-26.1.7-1.fc44' image/Containerfile
+          grep -Fq 'mesa-dri-drivers-26.1.7-1.fc44' tools/prove-p1-local.sh
+          grep -Fq 'mesa-libEGL-26.1.7-1.fc44' tools/prove-p1-local.sh
+          grep -Fq 'mesa-libgbm-26.1.7-1.fc44' tools/prove-p1-local.sh
+          ! grep -RFn '26.1.6-1.fc44' image/Containerfile tools/prove-p1-local.sh
+      - name: Prove exact Mesa packages and compositor build
         shell: bash
         run: |
           set -euo pipefail
@@ -43,21 +55,21 @@ jobs:
               dnf -y install \
                 ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
                 "pkgconfig(libinput)" "pkgconfig(libudev)" \
-                mesa-libgbm-devel-26.1.6-1.fc44 \
-                mesa-dri-drivers-26.1.6-1.fc44 \
-                mesa-libEGL-26.1.6-1.fc44 \
-                mesa-libgbm-26.1.6-1.fc44 \
+                mesa-libgbm-devel-26.1.7-1.fc44 \
+                mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 \
+                mesa-libgbm-26.1.7-1.fc44 \
                 "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
                 "pkgconfig(wayland-server)" "pkgconfig(egl)" \
                 "pkgconfig(glesv2)" "pkgconfig(libdrm)"
-              test "$(rpm -q --whatprovides "pkgconfig(gbm)" --qf "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n")" = "mesa-libgbm-devel-26.1.6-1.fc44.x86_64"
+              test "$(rpm -q --whatprovides "pkgconfig(gbm)" --qf "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n")" = "mesa-libgbm-devel-26.1.7-1.fc44.x86_64"
               rpm -q \
-                mesa-dri-drivers-26.1.6-1.fc44 \
-                mesa-libEGL-26.1.6-1.fc44 \
-                mesa-libgbm-26.1.6-1.fc44
-              test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.6-1.fc44.x86_64"
-              test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.6-1.fc44.x86_64"
-              test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.6-1.fc44.x86_64"
+                mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 \
+                mesa-libgbm-26.1.7-1.fc44
+              test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.7-1.fc44.x86_64"
+              test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.7-1.fc44.x86_64"
+              test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.7-1.fc44.x86_64"
               rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
               mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
@@ -70,5 +82,18 @@ jobs:
               cargo build --locked -p prime-compositor --release --bin prime-compositor
               ! ldd target/release/prime-compositor | grep -q "not found"
               target/release/prime-compositor --help
-              echo PRIME_MESA_2616_RETENTION=PASS
+              echo PRIME_MESA_2617_PACKAGE_CLOSURE=PASS
             '
+      - name: Build exact compositor-builder stage
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform=linux/amd64 \
+            --target compositor-builder \
+            --build-arg PRIME_BASE_IMAGE="$PRIME_BASE_IMAGE" \
+            -f image/Containerfile \
+            .
+          echo PRIME_MESA_2617_BUILDER_STAGE=PASS
