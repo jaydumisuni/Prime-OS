@@ -152,6 +152,7 @@ log "Inspect final Prime image and recovery contract"
   --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
     test -x /usr/libexec/prime/primed
     test -x /usr/libexec/prime/prime-recovery
+    test -x /usr/libexec/prime/prime-compositor
     test -x /usr/sbin/bootc
     test -x /usr/sbin/systemd-run
     test -x /usr/bin/ukify
@@ -165,9 +166,31 @@ log "Inspect final Prime image and recovery contract"
     test -L /etc/systemd/system/multi-user.target.wants/primed.service
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
     ! rpm -q bootupd >/dev/null 2>&1
-    rpm -q systemd-ukify-259.8-1.fc44 systemd-boot-unsigned-259.8-1.fc44
+    rpm -q \
+      libdrm-2.4.134-1.fc44 \
+      libglvnd-egl-1.7.0-9.fc44 \
+      libinput-1.31.3-1.fc44 \
+      libseat-0.9.3-1.fc44 \
+      mesa-dri-drivers-26.1.6-1.fc44 \
+      mesa-libEGL-26.1.6-1.fc44 \
+      mesa-libgbm-26.1.6-1.fc44 \
+      systemd-boot-unsigned-259.8-1.fc44 \
+      systemd-ukify-259.8-1.fc44
     grep -q "^ID=prime$" /usr/lib/os-release
     grep -q "^PRETTY_NAME=\"Prime OS P1 First Light\"$" /usr/lib/os-release
+    test -e /usr/lib64/libEGL.so.1
+    test -e /usr/lib64/libEGL_mesa.so.0
+    test -e /usr/lib64/libgbm.so.1
+    test -e /usr/lib64/libdrm.so.2
+    test -e /usr/lib64/dri/iris_dri.so
+    test "$(rpm -qf /usr/lib64/libEGL.so.1)" = "libglvnd-egl-1.7.0-9.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.6-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.6-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/libdrm.so.2)" = "libdrm-2.4.134-1.fc44.x86_64"
+    test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.6-1.fc44.x86_64"
+    ! ldd /usr/libexec/prime/prime-compositor | grep -q "not found"
+    /usr/libexec/prime/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
+    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service
     normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
     recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
     test -n "$normal"
