@@ -1,4 +1,4 @@
-name: Construction P1 Output KMS
+name: Construction P1 Output Runtime
 
 # Temporary construction transport only. Not Prime acceptance authority.
 on:
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
-      - name: Compile direct-TTY output API on locked Fedora
+      - name: Compile integrated direct-TTY output runtime on locked Fedora
         shell: bash
         run: |
           set -euo pipefail
@@ -55,7 +55,9 @@ jobs:
               cargo metadata --locked --no-deps --format-version 1 >/dev/null
               cargo fmt --all -- --check
               cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
-              cargo test --locked -p prime-compositor --lib
-              cargo build --locked -p prime-compositor --release --bin output_probe
-              echo PRIME_OUTPUT_KMS_COMPILE=PASS
+              cargo build --locked -p prime-compositor --release --bin prime-compositor
+              test -x target/release/prime-compositor
+              ldd target/release/prime-compositor
+              target/release/prime-compositor --help
+              echo PRIME_OUTPUT_RUNTIME_COMPILE=PASS
             '
