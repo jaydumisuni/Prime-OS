@@ -1,0 +1,86 @@
+name: Construction P1 Input Exact
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-input-proof-base2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-input-proof2' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      INPUT_HASH: d3e719cfebb284fed897a590b6d221a8f9220818
+      MAIN_HASH: 4def083eb6732eaa64ebfbfd1cfff9189d8a1d4d
+      PROTOCOLS_HASH: d21fcceafb4c57f8073552b0393dd8ed54ad917b
+      READINESS_HASH: 07f69216395e68144e7d9c76277afe3da32131bb
+      INPUT_CONTRACT_HASH: ce978e22c91d7a110245a7fe3ac0f7784ca14607
+      PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+      PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Freeze exact five-file candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git hash-object crates/prime-compositor/src/input.rs)" = "$INPUT_HASH"
+          test "$(git hash-object crates/prime-compositor/src/main.rs)" = "$MAIN_HASH"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = "$READINESS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_WAYLAND_INPUT_V1.md)" = "$INPUT_CONTRACT_HASH"
+          test "$(git diff --name-only '${{ github.event.pull_request.base.sha }}'..HEAD | sort)" = $'crates/prime-compositor/src/input.rs\ncrates/prime-compositor/src/main.rs\ncrates/prime-compositor/src/protocols.rs\ndocs/contracts/PRIME_COMPOSITOR_READINESS_V1.md\ndocs/contracts/PRIME_P1_WAYLAND_INPUT_V1.md'
+          git diff --check "${{ github.event.pull_request.base.sha }}"..HEAD
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Prove exact INPUT candidate on locked Prime substrate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$PRIME_BASE_IMAGE"
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" \
+            -w /work \
+            "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install \
+                ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 \
+                mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 \
+                mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" "pkgconfig(libdrm)"
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y --profile minimal --default-toolchain 1.97.1 --no-modify-path
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check
+              cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
+              cargo build --locked -p prime-compositor --release --bin prime-compositor
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-compositor --help
+              echo PRIME_WAYLAND_INPUT_BUILD=PASS
+            '
