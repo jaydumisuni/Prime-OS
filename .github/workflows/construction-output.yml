@@ -1,0 +1,60 @@
+name: Construction P1 Output Selection
+
+# Temporary construction transport only. Not Prime acceptance authority.
+on:
+  pull_request:
+    branches:
+      - build/p1-first-light
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    if: ${{ github.head_ref == 'construction/p1-compositor-output' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PRIME_CONSTRUCTION_SHA: ${{ github.event.pull_request.head.sha }}
+      PRIME_BASE_IMAGE: quay.io/fedora/fedora-bootc:44-x86_64@sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PRIME_CONSTRUCTION_SHA }}
+          fetch-depth: 0
+      - name: Freeze exact construction SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
+      - name: Compile output-selection API on locked Fedora
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$PRIME_BASE_IMAGE"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" \
+            -w /work \
+            "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install \
+                ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" "pkgconfig(gbm)" \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" "pkgconfig(libdrm)"
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y --profile minimal --default-toolchain 1.97.1 --no-modify-path
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check
+              cargo clippy --locked -p prime-compositor --lib -- -D warnings
+              cargo test --locked -p prime-compositor --lib
+              echo PRIME_OUTPUT_SELECTION_COMPILE=PASS
+            '
