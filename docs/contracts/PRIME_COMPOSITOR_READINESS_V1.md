@@ -10,15 +10,17 @@ Authority: `docs/contracts/PRIME_P1_SHELL_COMPOSITOR_V1.md`
 
 Prime must distinguish compositor process existence from actual graphical responsibility. This contract defines the machine-readable readiness record for `prime-compositor` so Prime Core, proof tooling and later Prime Shell integration can reason about what the compositor has mechanically earned.
 
-P1 currently defines two earned initialization phases:
+P1 defines three earned initialization phases:
 
 ```text
 BACKEND_PREFLIGHT
       ↓
 RENDERER_READY
+      ↓
+OUTPUTS_READY
 ```
 
-Neither phase claims a configured display output, frame scanout, complete Wayland desktop protocol state, Prime Shell, or owner visual acceptance.
+`BACKEND_PREFLIGHT` and `RENDERER_READY` do not claim a configured display output. `OUTPUTS_READY` claims only the P1 minimum physical KMS responsibility defined below: one selected connected output has a real Smithay DRM surface/compositor initialized through the retained single-GPU renderer path. It still does not claim complete Wayland desktop protocol state, Prime Shell, multi-output policy, hotplug reconciliation, or owner visual acceptance.
 
 ## Default record location
 
@@ -44,7 +46,7 @@ The current P1 record contains:
 {
   "schema": "prime.compositor-readiness.v1",
   "observed_at": "RFC3339",
-  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
+  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|OUTPUT_ERROR|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
   "direct_tty_backend": true,
   "seat_name": "seat0",
   "wayland_socket": "wayland-0",
@@ -57,7 +59,7 @@ The current P1 record contains:
   "wayland_listener_ready": true,
   "wayland_protocols_ready": false,
   "renderer_ready": true,
-  "outputs_ready": false,
+  "outputs_ready": true,
   "shell_ready": false,
   "clients_accepted": 0,
   "input_events_seen": 0,
@@ -125,28 +127,88 @@ outputs_ready=false
 shell_ready=false
 ```
 
-Renderer initialization proves that the selected seat/device path can construct Prime's GBM/EGL/GLES rendering body. It does **not** prove connector modesetting, CRTC/plane configuration, swapchain/allocator behavior, frame rendering, scanout, protocol globals, or Shell output.
+Renderer initialization proves that the selected seat/device path can construct Prime's GBM/EGL/GLES rendering body. It does **not** prove connector modesetting, CRTC/plane configuration, swapchain/allocator behavior, scanout, protocol globals, or Shell output.
+
+## OUTPUTS_READY requirements
+
+`phase=OUTPUTS_READY` extends `RENDERER_READY` with the P1 minimum physical KMS output responsibility. It may be persisted only after all of the following additional conditions hold on the same retained active session/device path:
+
+1. `DrmDevice::new` succeeds on the retained libseat-owned `DrmDeviceFd` with connector state initialized through Smithay rather than by direct unmanaged ioctls;
+2. DRM resource handles are read from that `DrmDevice`;
+3. Prime deterministically selects one connector whose state is `Connected` and which exposes at least one mode;
+4. the connector's preferred DRM mode is selected when it carries `ModeTypeFlags::PREFERRED`, otherwise the connector's first reported mode is used;
+5. the connector's current encoder is preferred when usable, with deterministic numeric encoder fallback;
+6. encoder compatibility is validated through `encoder.possible_crtcs()` and `ResourceHandles::filter_crtcs(...)`;
+7. the current encoder CRTC is preferred when it is in that compatible set, otherwise deterministic numeric CRTC fallback is used;
+8. a `GbmAllocator` is created from the same GBM device with `RENDERING | SCANOUT` buffer flags;
+9. the retained GLES/EGL context reports at least one renderable dmabuf format;
+10. P1 scanout format candidates are restricted to the conservative 8-bit `Abgr8888` and `Argb8888` set for this phase;
+11. `GbmFramebufferExporter` is created with no client import node, so client direct-scanout remains disabled until Prime's later Wayland/dmabuf protocol responsibility is proven;
+12. a Smithay `Output` mode source is created for the selected connector and mode without exposing a Wayland output global;
+13. the selected CRTC's DRM plane set is recovered from the same `DrmDevice`;
+14. `DrmOutputManager::initialize_output` succeeds for the selected connector, CRTC, mode, planes, allocator/exporter and retained GLES renderer;
+15. the initialized `DrmOutputManager`, `DrmOutput`, Smithay `Output` and renderer remain owned by the compositor runtime rather than being dropped after initialization;
+16. the `DrmDeviceNotifier` returned with the DRM device is registered with calloop before readiness is published;
+17. the readiness record can be persisted with `outputs_ready=true` only after the above ownership and event-source registration are complete.
+
+Smithay v0.7.0's `DrmOutputManager::initialize_output` creates the real DRM surface/compositor and internally submits a composited fallback frame to establish the primary-plane format/bandwidth state. Prime therefore does not treat connector discovery alone as output readiness.
+
+The construction path uses `DrmOutputRenderElements::default()`, whose allocator-backed fallback is black. This earns the KMS/output body without claiming Prime Shell pixels or client-surface rendering.
+
+`OUTPUTS_READY` permits:
+
+```text
+drm_access_ready=true
+renderer_ready=true
+outputs_ready=true
+```
+
+but still requires:
+
+```text
+wayland_protocols_ready=false
+shell_ready=false
+```
+
+P1 earns exactly one selected physical output in this phase. Multi-output layout, mirrored/extended policy, connector hotplug reconciliation, client dmabuf direct-scanout and continuous frame scheduling are later responsibilities and must not be inferred from `outputs_ready=true`.
+
+## DRM notifier fail-closed rule
+
+Smithay's P1 DRM notifier exposes `DrmEvent::VBlank(crtc)` and `DrmEvent::Error(error)`.
+
+Before Prime implements its queued frame/vblank lifecycle, observing `VBlank` does not itself change readiness and does not earn a stronger phase.
+
+A `DrmEvent::Error` after `OUTPUTS_READY` invalidates output truth. Prime must at least:
+
+- set `outputs_ready=false`;
+- transition to `OUTPUT_ERROR`;
+- persist an explicit output/DRM limitation;
+- not restore `outputs_ready=true` without re-running the output responsibility or another future evidence-equivalent revalidation path.
+
+A DRM notifier error does not permit Prime to continue advertising a healthy configured output merely because the process and GLES renderer still exist.
 
 ## Session pause/resume fail-closed rule
 
-A renderer that was valid before libseat deactivation is not automatically declared valid after activation.
+A renderer or output that was valid before libseat deactivation is not automatically declared valid after activation.
 
 On `PauseSession`, Prime must at least:
 
 - suspend libinput;
+- pause the retained `DrmOutputManager` when `OUTPUTS_READY` has been earned;
 - set `session_active=false`;
 - set `drm_access_ready=false`;
 - set `renderer_ready=false`;
+- set `outputs_ready=false`;
 - transition the readiness phase to `SESSION_PAUSED`;
-- record an explicit renderer/DRM revalidation limitation.
+- record an explicit renderer/DRM/output revalidation limitation.
 
-On `ActivateSession`, Prime may resume libinput. Until an explicit renderer/device revalidation mechanism is implemented and passes, Prime must **not** restore renderer truth optimistically. Successful input resume therefore transitions to:
+On `ActivateSession`, Prime may resume libinput. Until an explicit renderer/device/output revalidation mechanism is implemented and passes, Prime must **not** restore renderer or output truth optimistically. Successful input resume therefore transitions to:
 
 ```text
 RENDERER_REVALIDATION_REQUIRED
 ```
 
-with both `drm_access_ready=false` and `renderer_ready=false`.
+with `drm_access_ready=false`, `renderer_ready=false` and `outputs_ready=false`.
 
 A failed input resume transitions to:
 
@@ -156,17 +218,17 @@ SESSION_RESUME_FAILED
 
 and remains non-ready.
 
-Restarting/reinitializing the compositor through the full renderer path is currently a valid way to earn `RENDERER_READY` again. A later hot revalidation slice may improve this, but must not weaken the fail-closed rule.
+Restarting/reinitializing the compositor through the full renderer/output path is currently a valid way to earn `OUTPUTS_READY` again. A later hot revalidation slice may improve this, but must not weaken the fail-closed rule.
 
 ## Field semantics
 
 ### `phase`
 
-Describes the strongest currently earned compositor initialization state, or an explicit invalidated session state. It is not a progress percentage.
+Describes the strongest currently earned compositor initialization state, or an explicit invalidated session/output state. It is not a progress percentage.
 
 ### `direct_tty_backend`
 
-`true` means the implementation is using the Smithay direct Linux session/Udev/DRM/libinput path rather than nested winit/X11 construction backends. It does not mean scanout is configured.
+`true` means the implementation is using the Smithay direct Linux session/Udev/DRM/libinput path rather than nested winit/X11 construction backends. It does not by itself mean scanout is configured.
 
 ### `seat_name`
 
@@ -190,7 +252,7 @@ The initial value comes from `device_list()`. Smithay v0.7.0 emits only subseque
 
 ### `drm_access_ready`
 
-May be `true` only when the current readiness phase has earned seat-mediated access to the selected DRM node. BACKEND_PREFLIGHT proves an actual open/close through libseat. RENDERER_READY retains the opened device through `DrmDeviceFd` for renderer ownership.
+May be `true` only when the current readiness phase has earned seat-mediated access to the selected DRM node. BACKEND_PREFLIGHT proves an actual open/close through libseat. RENDERER_READY and OUTPUTS_READY retain the opened device through `DrmDeviceFd` for renderer/KMS ownership.
 
 Merely seeing `/dev/dri/card*`, successfully calling `stat`, or constructing `DrmNode` is insufficient.
 
@@ -214,7 +276,7 @@ A listening socket alone is not a usable desktop protocol implementation.
 
 ### `wayland_protocols_ready`
 
-Must remain `false` through BACKEND_PREFLIGHT and RENDERER_READY. It may become `true` only after the required Wayland compositor/shell/input/output globals and dispatch state are initialized and proven.
+Must remain `false` through BACKEND_PREFLIGHT, RENDERER_READY and OUTPUTS_READY. It may become `true` only after the required Wayland compositor/shell/input/output globals and dispatch state are initialized and proven.
 
 ### `renderer_ready`
 
@@ -224,11 +286,17 @@ It is invalidated on session pause and is not automatically restored merely beca
 
 ### `outputs_ready`
 
-Must remain `false` through RENDERER_READY. It requires a later DRM connector/CRTC/output configuration slice and actual output proof.
+Must remain `false` through RENDERER_READY.
+
+It may become `true` only in an earned output phase that has a retained Smithay DRM device/output-manager/output ownership chain for a real selected connector/CRTC/mode and has completed `DrmOutputManager::initialize_output` successfully.
+
+It does not mean Wayland output globals, client surfaces, Shell pixels, multi-output policy or owner visual acceptance are ready.
+
+It is invalidated by session pause or a DRM notifier error and must not be restored without explicit revalidation.
 
 ### `shell_ready`
 
-Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process or renderer health.
+Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process, renderer or KMS output health.
 
 ### `clients_accepted`
 
@@ -252,13 +320,9 @@ BACKEND_PREFLIGHT must report that protocol globals, renderer, DRM outputs and P
 
 RENDERER_READY removes only the renderer limitation; it must continue to report protocol/output/Shell limitations.
 
-Session invalidation adds the explicit limitation:
+OUTPUTS_READY removes the DRM-output limitation; it must continue to report protocol/Shell limitations and must not imply client surface or Prime Shell rendering.
 
-```text
-Renderer and DRM access require revalidation after session activation
-```
-
-until renderer/device readiness is actually re-earned.
+Session invalidation adds an explicit graphics revalidation limitation until renderer/device/output readiness is actually re-earned. Output notifier failure adds an explicit DRM/output limitation until output responsibility is re-earned.
 
 ## Wayland display ownership
 
@@ -266,9 +330,13 @@ The Wayland `Display` object is owned by its calloop event source, matching Smit
 
 `DisplayHandle` is retained only for handle-level operations such as inserting accepted clients; it is not treated as owning the display or as exposing `flush_clients()`.
 
+`OUTPUTS_READY` does not create or expose a Wayland output global. The internal Smithay `Output` exists only as the mode/state source retained by the KMS output path until the later protocol-global slice earns publication.
+
 ## Udev event truth
 
 Smithay v0.7.0 documents `UdevBackend::device_list()` as the initial snapshot and the inserted event source as subsequent changes only. Prime therefore seeds `udev_device_count` once and adjusts it only on later `Added` and `Removed` events.
+
+The initial P1 `OUTPUTS_READY` phase is not a hotplug reconciliation implementation. A later connector change/removal policy must explicitly reconcile the selected output before Prime can claim dynamic-output correctness.
 
 ## Runtime readiness-file safety
 
@@ -280,13 +348,14 @@ The file remains a runtime projection. These durability mechanics do not convert
 
 `prime-compositor --probe` executes the same current initialization path through readiness persistence, prints the resulting JSON readiness object, and exits before entering the long-running dispatch loop.
 
-Once the renderer slice is product-side, probe success may earn `RENDERER_READY`; it still must not set:
+Once the output slice is product-side, successful probe initialization may earn `OUTPUTS_READY`; it still must not set:
 
 - `wayland_protocols_ready`;
-- `outputs_ready`;
 - `shell_ready`.
 
-This mode exists so Kratos can prove the least-privileged libseat/device/GBM/EGL/GLES boundary before Prime enables a permanent compositor service.
+Because `OUTPUTS_READY` requires real KMS initialization, an output-capable `--probe` is not a passive metadata check: on the physical proof Host it may reset/configure the selected connector and establish the black allocator-backed fallback frame before exiting. Proof procedures must treat that as an intentional graphics-device action.
+
+This mode exists so Kratos can prove the least-privileged libseat/device/GBM/EGL/GLES/KMS boundary before Prime enables a permanent compositor service.
 
 ## Service boundary
 
@@ -303,26 +372,27 @@ Before a new readiness phase may be promoted into the product candidate:
 - Clippy passes with `-D warnings`;
 - release build succeeds on the exact Fedora base lock;
 - runtime linkage remains valid;
-- construction-only scripts/workflows do not leak into product history;
+- construction-only scripts/workflows/probe binaries do not leak into product history;
 - responsibility-specific fields fail closed when their underlying resource/session is invalidated.
 
-Physical graphics acceptance additionally requires Kratos to execute `--probe` through the intended least-privileged session/device boundary.
+Physical graphics acceptance additionally requires Kratos to execute `--probe` through the intended least-privileged session/device boundary and mechanically observe the selected physical output behavior.
 
 Hosted construction proves buildability only. It is not physical graphics acceptance.
 
 ## Non-claims
 
-`RENDERER_READY` does not claim:
+`OUTPUTS_READY` does not claim:
 
-- connector discovery acceptance;
-- DRM master/modesetting/atomic commit success;
-- GBM scanout allocator/swapchain success;
-- a configured output;
-- frame rendering or scanout;
 - Wayland compositor protocol completeness;
+- a published Wayland output global;
+- client dmabuf direct-scanout;
+- client surface composition;
+- Prime Shell or Orb pixels;
 - keyboard/pointer behavior completeness;
-- Prime Shell or Orb;
+- continuous frame scheduling or vblank lifecycle completeness;
+- multi-output layout or hotplug reconciliation;
 - service credential acceptance;
 - multi-GPU rendering;
 - XWayland, X11, winit, Vulkan or Pixman support;
-- HP/Kratos physical graphics acceptance.
+- owner visual acceptance;
+- HP/Kratos physical graphics acceptance until that proof is actually executed.
