@@ -43,10 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = initialize_primary_output(drm_fd, gbm, &mut renderer)?;
     println!(
         "PRIME_OUTPUT_PROBE=READY connector={} mode={}x{} refresh_millihz={}",
-        backend.connector_name,
-        backend.mode.size.w,
-        backend.mode.size.h,
-        backend.mode.refresh
+        backend.connector_name, backend.mode.size.w, backend.mode.size.h, backend.mode.refresh
     );
     Ok(())
 }
