@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   compile:
@@ -17,7 +18,7 @@ jobs:
     env:
       PRIME_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
       PRIME_HEAD_REF: ${{ github.head_ref }}
-      PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:REPLACE_AFTER_MIRROR
+      PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
       INPUT_HASH: 97c26a957242b5183d8715eb494e28155a87a849
       MAIN_HASH: 4def083eb6732eaa64ebfbfd1cfff9189d8a1d4d
       PROTOCOLS_HASH: d21fcceafb4c57f8073552b0393dd8ed54ad917b
@@ -55,15 +56,19 @@ jobs:
           test "$(git hash-object crates/prime-compositor/src/main.rs)" = "$MAIN_HASH"
           test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = "$READINESS_HASH"
           git diff --check
+      - name: Login to Prime-owned GHCR substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Compile exact candidate on Prime-owned Fedora mirror
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$PRIME_BASE_IMAGE" == *REPLACE_AFTER_MIRROR* ]]; then
-            echo 'Prime-owned Fedora mirror digest not frozen yet.' >&2
-            exit 2
-          fi
           docker pull "$PRIME_BASE_IMAGE"
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = 'sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb'
           docker run --rm \
             -e RUSTUP_HOME=/tmp/prime-rustup \
             -e CARGO_HOME=/tmp/prime-cargo \
