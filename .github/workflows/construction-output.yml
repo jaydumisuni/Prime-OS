@@ -8,15 +8,16 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   compile:
-    if: ${{ startsWith(github.head_ref, 'construction/p1-compositor-output') }}
+    if: ${{ github.head_ref == 'construction/p1-compositor-output-mesa-refresh' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       PRIME_CONSTRUCTION_SHA: ${{ github.event.pull_request.head.sha }}
+      PRIME_HEAD_REF: ${{ github.head_ref }}
       PRIME_BASE_IMAGE: quay.io/fedora/fedora-bootc:44-x86_64@sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781
     steps:
       - uses: actions/checkout@v6
@@ -28,6 +29,49 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
+      - name: Generate guarded Mesa refresh
+        id: refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old = "26.1.6-1.fc44"
+          new = "26.1.7-1.fc44"
+          paths = [Path("image/Containerfile"), Path("tools/prove-p1-local.sh")]
+          changed = 0
+          counts = {}
+          for path in paths:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              counts[str(path)] = count
+              if count:
+                  path.write_text(text.replace(old, new), encoding="utf-8")
+                  changed += count
+          if changed == 0:
+              print("Mesa authority files already contain no 26.1.6 pin")
+          else:
+              print(f"Replaced {changed} exact Mesa pin occurrences: {counts}")
+          for path in paths:
+              text = path.read_text(encoding="utf-8")
+              if old in text:
+                  raise SystemExit(f"stale Mesa pin remains in {path}")
+              if new not in text:
+                  raise SystemExit(f"refreshed Mesa pin missing in {path}")
+          PY
+          if git diff --quiet -- image/Containerfile tools/prove-p1-local.sh; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            test "$(git diff --name-only | sort)" = $'image/Containerfile\ntools/prove-p1-local.sh'
+            git diff --check
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add image/Containerfile tools/prove-p1-local.sh
+            git commit -m "construction: refresh Mesa package pins to 26.1.7"
+            git push origin "HEAD:${PRIME_HEAD_REF}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Verify package authority files
         shell: bash
         run: |
