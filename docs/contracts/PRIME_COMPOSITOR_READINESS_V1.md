@@ -46,7 +46,7 @@ The current P1 record contains:
 {
   "schema": "prime.compositor-readiness.v1",
   "observed_at": "RFC3339",
-  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|OUTPUT_ERROR|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
+  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
   "direct_tty_backend": true,
   "seat_name": "seat0",
   "wayland_socket": "wayland-0",
@@ -187,6 +187,23 @@ A `DrmEvent::Error` after `OUTPUTS_READY` invalidates output truth. Prime must a
 
 A DRM notifier error does not permit Prime to continue advertising a healthy configured output merely because the process and GLES renderer still exist.
 
+## DRM topology fail-closed rule
+
+P1 does not yet implement connector hotplug or DRM-topology reconciliation. Therefore a post-startup `UdevEvent::Changed` or `UdevEvent::Removed` invalidates the selected output claim even when the process and GLES renderer remain alive.
+
+Prime must at least:
+
+- retain the diagnostic `last_udev_event` value;
+- update `udev_device_count` for removals;
+- set `outputs_ready=false`;
+- transition to `OUTPUT_REVALIDATION_REQUIRED`;
+- persist an explicit topology/output revalidation limitation;
+- not restore `outputs_ready=true` until the output responsibility is rerun or a future evidence-equivalent hotplug reconciliation path succeeds.
+
+`UdevEvent::Added` may update discovery count and diagnostics without invalidating an already selected output; it does not itself earn multi-output correctness or alter P1's single-output policy.
+
+This deliberately over-invalidates when a changed/removed DRM device is not the selected P1 device. P1 prefers stale-truth prevention over optimistic multi-device inference until device-specific hotplug ownership is implemented.
+
 ## Session pause/resume fail-closed rule
 
 A renderer or output that was valid before libseat deactivation is not automatically declared valid after activation.
@@ -292,7 +309,7 @@ It may become `true` only in an earned output phase that has a retained Smithay 
 
 It does not mean Wayland output globals, client surfaces, Shell pixels, multi-output policy or owner visual acceptance are ready.
 
-It is invalidated by session pause or a DRM notifier error and must not be restored without explicit revalidation.
+It is invalidated by session pause, a DRM notifier error, or a post-startup DRM topology `Changed`/`Removed` event and must not be restored without explicit revalidation.
 
 ### `shell_ready`
 
@@ -322,7 +339,7 @@ RENDERER_READY removes only the renderer limitation; it must continue to report 
 
 OUTPUTS_READY removes the DRM-output limitation; it must continue to report protocol/Shell limitations and must not imply client surface or Prime Shell rendering.
 
-Session invalidation adds an explicit graphics revalidation limitation until renderer/device/output readiness is actually re-earned. Output notifier failure adds an explicit DRM/output limitation until output responsibility is re-earned.
+Session invalidation adds an explicit graphics revalidation limitation until renderer/device/output readiness is actually re-earned. Output notifier failure adds an explicit DRM/output limitation until output responsibility is re-earned. DRM topology change/removal adds an explicit topology/output limitation until output responsibility is re-earned.
 
 ## Wayland display ownership
 
@@ -336,7 +353,7 @@ The Wayland `Display` object is owned by its calloop event source, matching Smit
 
 Smithay v0.7.0 documents `UdevBackend::device_list()` as the initial snapshot and the inserted event source as subsequent changes only. Prime therefore seeds `udev_device_count` once and adjusts it only on later `Added` and `Removed` events.
 
-The initial P1 `OUTPUTS_READY` phase is not a hotplug reconciliation implementation. A later connector change/removal policy must explicitly reconcile the selected output before Prime can claim dynamic-output correctness.
+The initial P1 `OUTPUTS_READY` phase is not a hotplug reconciliation implementation. `Changed` or `Removed` therefore fail the output claim closed as `OUTPUT_REVALIDATION_REQUIRED`; Prime does not continue advertising `outputs_ready=true` from stale startup state. A later connector/device-specific hotplug policy may avoid over-invalidation, but it must explicitly reconcile the selected output before Prime can claim dynamic-output correctness.
 
 ## Runtime readiness-file safety
 
