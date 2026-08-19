@@ -247,14 +247,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         runtime.readiness.input_events_seen = runtime.readiness.input_events_seen.saturating_add(1);
     })?;
 
-    loop_handle.insert_source(drm_notifier, |event, _, runtime| {
-        match event {
-            DrmEvent::VBlank(_) => {}
-            DrmEvent::Error(error) => {
-                eprintln!("prime-compositor DRM event processing failed: {error}");
-                runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
-                runtime.persist_best_effort();
-            }
+    loop_handle.insert_source(drm_notifier, |event, _, runtime| match event {
+        DrmEvent::VBlank(_) => {}
+        DrmEvent::Error(error) => {
+            eprintln!("prime-compositor DRM event processing failed: {error}");
+            runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
+            runtime.persist_best_effort();
         }
     })?;
 
@@ -270,19 +268,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             UdevEvent::Changed { device_id } => {
                 runtime.readiness.last_udev_event = Some(format!("CHANGED:{device_id}"));
-                runtime.invalidate_output(
-                    "OUTPUT_REVALIDATION_REQUIRED",
-                    OUTPUT_TOPOLOGY_LIMITATION,
-                );
+                runtime
+                    .invalidate_output("OUTPUT_REVALIDATION_REQUIRED", OUTPUT_TOPOLOGY_LIMITATION);
             }
             UdevEvent::Removed { device_id } => {
                 runtime.readiness.udev_device_count =
                     runtime.readiness.udev_device_count.saturating_sub(1);
                 runtime.readiness.last_udev_event = Some(format!("REMOVED:{device_id}"));
-                runtime.invalidate_output(
-                    "OUTPUT_REVALIDATION_REQUIRED",
-                    OUTPUT_TOPOLOGY_LIMITATION,
-                );
+                runtime
+                    .invalidate_output("OUTPUT_REVALIDATION_REQUIRED", OUTPUT_TOPOLOGY_LIMITATION);
             }
         }
         runtime.persist_best_effort();
