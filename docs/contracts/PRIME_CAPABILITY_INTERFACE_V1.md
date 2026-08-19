@@ -120,6 +120,8 @@ Origins may later map this descriptor into its own capability compiler/Node proj
 
 Host health combines the truth required for Prime Host authority; capability health remains capability-specific. An optional storage reserve policy being unconfigured degrades the storage/update-preflight capability but does not crash unrelated Host authority. Loss of root local-physical capacity truth degrades Host health because Prime can no longer prove update/storage safety.
 
+`prime.system.status` is an additive P1 read capability governed by `PRIME_SYSTEM_STATUS_V1.md`. Its resources are refreshed when capability reads are served. Status observation does not imply network/audio/power mutation authority.
+
 ## Evidence
 
 Capability observations carry timestamps and evidence references where applicable. Mechanical state is Prime truth; independent engineering assurance remains Sergeant's separate responsibility.
