@@ -1,4 +1,4 @@
-name: Construction P1 Output Runtime
+name: Construction P1 Mesa Pin Retention
 
 # Temporary construction transport only. Not Prime acceptance authority.
 on:
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_CONSTRUCTION_SHA"
-      - name: Compile integrated direct-TTY output runtime on locked Fedora
+      - name: Prove retained Mesa package pins and compositor build
         shell: bash
         run: |
           set -euo pipefail
@@ -42,10 +42,22 @@ jobs:
             bash -ceu '
               dnf -y install \
                 ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
-                "pkgconfig(libinput)" "pkgconfig(libudev)" "pkgconfig(gbm)" \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.6-1.fc44 \
+                mesa-dri-drivers-26.1.6-1.fc44 \
+                mesa-libEGL-26.1.6-1.fc44 \
+                mesa-libgbm-26.1.6-1.fc44 \
                 "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
                 "pkgconfig(wayland-server)" "pkgconfig(egl)" \
                 "pkgconfig(glesv2)" "pkgconfig(libdrm)"
+              test "$(rpm -q --whatprovides "pkgconfig(gbm)" --qf "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n")" = "mesa-libgbm-devel-26.1.6-1.fc44.x86_64"
+              rpm -q \
+                mesa-dri-drivers-26.1.6-1.fc44 \
+                mesa-libEGL-26.1.6-1.fc44 \
+                mesa-libgbm-26.1.6-1.fc44
+              test "$(rpm -qf /usr/lib64/libEGL_mesa.so.0)" = "mesa-libEGL-26.1.6-1.fc44.x86_64"
+              test "$(rpm -qf /usr/lib64/libgbm.so.1)" = "mesa-libgbm-26.1.6-1.fc44.x86_64"
+              test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.6-1.fc44.x86_64"
               rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
               mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
@@ -56,8 +68,7 @@ jobs:
               cargo fmt --all -- --check
               cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
               cargo build --locked -p prime-compositor --release --bin prime-compositor
-              test -x target/release/prime-compositor
-              ldd target/release/prime-compositor
+              ! ldd target/release/prime-compositor | grep -q "not found"
               target/release/prime-compositor --help
-              echo PRIME_OUTPUT_RUNTIME_COMPILE=PASS
+              echo PRIME_MESA_2616_RETENTION=PASS
             '
