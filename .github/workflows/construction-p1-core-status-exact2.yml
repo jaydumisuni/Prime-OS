@@ -1,0 +1,86 @@
+name: Construction P1 Core Status Exact 2
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-core-status-proof-base2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-core-status-proof2' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LIB_PATCH_HASH: 59806dcfc790dacdc3cabb9b844c24eb0a01b275
+      MAIN_PATCH_HASH: 0a4f120a69197008766f7082b462cfb26fafc45c
+      SERVER_PATCH_HASH: 3721298c531d0d886f34c1c56b7868cc16a7eed8
+      CAP_PATCH_HASH: 4e0886db8d54d6f340119a1aeb1dca64db6331d6
+      LIB_HASH: 9597cae396605a117db28fb25b67aa81b4c15815
+      MAIN_HASH: 8db839f89fff8401b471cae1eb2e70142c2ff279
+      SERVER_HASH: 7473672148dee888316539b17bda3997cbd9476b
+      STATUS_HASH: c2e5c704bbbf3767ef311b2a38f22c6e131f476d
+      CAP_CONTRACT_HASH: a3a6be7c2d738aaa8dea6813e5be0dba553a35fb
+      STATUS_CONTRACT_HASH: ed5f4f50b181a492215481d433173ae83eba91a9
+      PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+      PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Reconcile exact Tenfold Core candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object construction/core-lib.patch)" = "$LIB_PATCH_HASH"
+          test "$(git hash-object construction/core-main.patch)" = "$MAIN_PATCH_HASH"
+          test "$(git hash-object construction/core-server.patch)" = "$SERVER_PATCH_HASH"
+          test "$(git hash-object construction/core-capability-contract.patch)" = "$CAP_PATCH_HASH"
+          git apply --check construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
+          git apply construction/core-lib.patch construction/core-main.patch construction/core-server.patch construction/core-capability-contract.patch
+          test "$(git hash-object crates/primed/src/lib.rs)" = "$LIB_HASH"
+          test "$(git hash-object crates/primed/src/main.rs)" = "$MAIN_HASH"
+          test "$(git hash-object crates/primed/src/server.rs)" = "$SERVER_HASH"
+          test "$(git hash-object crates/primed/src/system_status.rs)" = "$STATUS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_CAPABILITY_INTERFACE_V1.md)" = "$CAP_CONTRACT_HASH"
+          test "$(git hash-object docs/contracts/PRIME_SYSTEM_STATUS_V1.md)" = "$STATUS_CONTRACT_HASH"
+          git diff --check
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Prove exact Core status candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$PRIME_BASE_IMAGE"
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" \
+            -w /work \
+            "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y --profile minimal --default-toolchain 1.97.1 --no-modify-path
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check
+              cargo clippy --locked -p primed --all-targets -- -D warnings
+              cargo test --locked -p primed
+              cargo build --locked -p primed --release --bin primed
+              echo PRIME_CORE_SYSTEM_STATUS_BUILD=PASS
+            '
