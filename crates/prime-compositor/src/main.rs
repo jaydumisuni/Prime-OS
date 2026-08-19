@@ -75,11 +75,11 @@ struct Readiness {
 
 struct Runtime {
     display_handle: DisplayHandle,
-    _session: LibSeatSession,
     _output: smithay::output::Output,
     _drm_output: output::PrimeDrmOutput,
     output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
+    _session: LibSeatSession,
     readiness_path: PathBuf,
     readiness: Readiness,
 }
@@ -284,11 +284,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut runtime = Runtime {
         display_handle,
-        _session: session,
         _output: physical_output,
         _drm_output: drm_output,
         output_manager,
         _renderer: renderer,
+        _session: session,
         readiness_path,
         readiness: Readiness {
             schema: READINESS_SCHEMA,
