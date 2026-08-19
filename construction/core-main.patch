@@ -1,0 +1,12 @@
+diff --git a/crates/primed/src/main.rs b/crates/primed/src/main.rs
+index e97fe7e..8db839f 100644
+--- a/crates/primed/src/main.rs
++++ b/crates/primed/src/main.rs
+@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
+         systemd_run,
+         storage_mountinfo,
+         storage_policy_file,
++        PathBuf::from("/"),
+         observed_at,
+     );
+ 
