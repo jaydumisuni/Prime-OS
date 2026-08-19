@@ -1,16 +1,14 @@
 use crate::Runtime;
 use smithay::{
     backend::input::{
-        Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent,
-        PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+        Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+        PointerButtonEvent, PointerMotionEvent,
     },
     input::{
         keyboard::FilterResult,
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
-    reexports::wayland_server::{
-        protocol::{wl_pointer, wl_surface::WlSurface},
-    },
+    reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 use std::convert::TryInto;
@@ -126,7 +124,10 @@ fn pointer_axis<B: InputBackend>(runtime: &mut Runtime, event: B::PointerAxisEve
     pointer.frame(runtime);
 }
 
-fn surface_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+fn surface_under(
+    runtime: &Runtime,
+    location: Point<f64, Logical>,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
     runtime
         .protocols
         .space
