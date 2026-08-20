@@ -22,7 +22,10 @@ use wayland_client::{
 };
 
 const BACKGROUND_NAMESPACE: &str = "prime.shell.background";
+const RAIL_NAMESPACE: &str = "prime.shell.rail";
+const RAIL_HEIGHT: u32 = 44;
 const PRIME_BACKGROUND_ARGB: u32 = 0xff11141a;
+const PRIME_RAIL_ARGB: u32 = 0xff1a1e27;
 
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
@@ -40,28 +43,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     let shm = Shm::bind(&globals, &queue_handle)?;
     let pool = SlotPool::new(4, &shm)?;
 
-    let surface = compositor.create_surface(&queue_handle);
-    let layer = layer_shell.create_layer_surface(
+    let background_surface = compositor.create_surface(&queue_handle);
+    let background = layer_shell.create_layer_surface(
         &queue_handle,
-        surface,
+        background_surface,
         Layer::Background,
         Some(BACKGROUND_NAMESPACE),
         None,
     );
-    layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    layer.set_exclusive_zone(-1);
-    layer.set_size(0, 0);
-    layer.commit();
+    background.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+    background.set_keyboard_interactivity(KeyboardInteractivity::None);
+    background.set_exclusive_zone(-1);
+    background.set_size(0, 0);
+    background.commit();
+
+    let rail_surface = compositor.create_surface(&queue_handle);
+    let rail = layer_shell.create_layer_surface(
+        &queue_handle,
+        rail_surface,
+        Layer::Top,
+        Some(RAIL_NAMESPACE),
+        None,
+    );
+    rail.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+    rail.set_keyboard_interactivity(KeyboardInteractivity::None);
+    rail.set_exclusive_zone(i32::try_from(RAIL_HEIGHT)?);
+    rail.set_size(0, RAIL_HEIGHT);
+    rail.commit();
 
     let mut shell = PrimeShell {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &queue_handle),
         shm,
         pool,
-        layer,
-        width: 1,
-        height: 1,
+        background,
+        rail,
         exit: false,
     };
 
@@ -77,30 +93,34 @@ struct PrimeShell {
     output_state: OutputState,
     shm: Shm,
     pool: SlotPool,
-    layer: LayerSurface,
-    width: u32,
-    height: u32,
+    background: LayerSurface,
+    rail: LayerSurface,
     exit: bool,
 }
 
 impl PrimeShell {
-    fn draw_background(&mut self) -> Result<(), Box<dyn Error>> {
-        let width = i32::try_from(self.width)?;
-        let height = i32::try_from(self.height)?;
+    fn draw_layer(
+        pool: &mut SlotPool,
+        layer: &LayerSurface,
+        width: u32,
+        height: u32,
+        color: u32,
+        role: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        let width = i32::try_from(width)?;
+        let height = i32::try_from(height)?;
         let stride = width
             .checked_mul(4)
-            .ok_or_else(|| io::Error::other("Prime Shell background stride overflow"))?;
-        let (buffer, canvas) =
-            self.pool
-                .create_buffer(width, height, stride, wl_shm::Format::Argb8888)?;
-        let pixel = PRIME_BACKGROUND_ARGB.to_le_bytes();
+            .ok_or_else(|| io::Error::other(format!("Prime Shell {role} stride overflow")))?;
+        let (buffer, canvas) = pool.create_buffer(width, height, stride, wl_shm::Format::Argb8888)?;
+        let pixel = color.to_le_bytes();
         for bytes in canvas.chunks_exact_mut(4) {
             bytes.copy_from_slice(&pixel);
         }
 
-        self.layer.wl_surface().damage_buffer(0, 0, width, height);
-        buffer.attach_to(self.layer.wl_surface())?;
-        self.layer.commit();
+        layer.wl_surface().damage_buffer(0, 0, width, height);
+        buffer.attach_to(layer.wl_surface())?;
+        layer.commit();
         Ok(())
     }
 }
@@ -196,29 +216,43 @@ impl LayerShellHandler for PrimeShell {
         &mut self,
         _connection: &Connection,
         _queue_handle: &QueueHandle<Self>,
-        _layer: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+        let role = if layer.wl_surface() == self.background.wl_surface() {
+            "background"
+        } else if layer.wl_surface() == self.rail.wl_surface() {
+            "rail"
+        } else {
+            return;
+        };
+        let color = if role == "background" {
+            PRIME_BACKGROUND_ARGB
+        } else {
+            PRIME_RAIL_ARGB
+        };
+
         let Some(width) = NonZeroU32::new(configure.new_size.0) else {
-            eprintln!(
-                "prime-shell received zero background width; refusing to map an ambiguous surface"
-            );
+            eprintln!("prime-shell received zero {role} width; refusing to map an ambiguous surface");
             self.exit = true;
             return;
         };
         let Some(height) = NonZeroU32::new(configure.new_size.1) else {
-            eprintln!(
-                "prime-shell received zero background height; refusing to map an ambiguous surface"
-            );
+            eprintln!("prime-shell received zero {role} height; refusing to map an ambiguous surface");
             self.exit = true;
             return;
         };
 
-        self.width = width.get();
-        self.height = height.get();
-        if let Err(error) = self.draw_background() {
-            eprintln!("prime-shell could not draw the background surface: {error}");
+        if let Err(error) = Self::draw_layer(
+            &mut self.pool,
+            layer,
+            width.get(),
+            height.get(),
+            color,
+            role,
+        ) {
+            eprintln!("prime-shell could not draw the {role} surface: {error}");
             self.exit = true;
         }
     }
