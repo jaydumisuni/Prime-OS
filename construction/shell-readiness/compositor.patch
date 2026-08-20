@@ -1,0 +1,315 @@
+diff --git a/crates/prime-compositor/src/shell.rs b/crates/prime-compositor/src/shell.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/prime-compositor/src/shell.rs
+@@ -0,0 +1,117 @@
++use smithay::{
++    backend::renderer::{
++        element::{surface::WaylandSurfaceRenderElement, AsRenderElements},
++        gles::GlesRenderer,
++    },
++    desktop::layer_map_for_output,
++    output::Output,
++    reexports::wayland_server::{
++        backend::ClientId, protocol::wl_surface::WlSurface, Resource,
++    },
++    utils::{IsAlive, Scale},
++    wayland::shell::wlr_layer::Layer,
++};
++
++pub(crate) const BACKGROUND_NAMESPACE: &str = "prime.shell.background";
++pub(crate) const RAIL_NAMESPACE: &str = "prime.shell.rail";
++pub(crate) const SHELL_NOT_PROVEN_LIMITATION: &str =
++    "Prime Shell persistent baseline has not retired in a selected-CRTC frame";
++pub(crate) const SHELL_REVALIDATION_LIMITATION: &str =
++    "Prime Shell readiness requires revalidation with frame/output/session state";
++
++#[derive(Clone)]
++pub(crate) struct ShellBaselineIdentity {
++    background: WlSurface,
++    rail: WlSurface,
++}
++
++pub(crate) fn is_persistent_namespace(namespace: &str) -> bool {
++    matches!(namespace, BACKGROUND_NAMESPACE | RAIL_NAMESPACE)
++}
++
++pub(crate) fn persistent_baseline_renderable(
++    renderer: &mut GlesRenderer,
++    output: &Output,
++) -> Option<ShellBaselineIdentity> {
++    let map = layer_map_for_output(output);
++    let scale: Scale<f64> = output.current_scale().fractional_scale().into();
++    let mut backgrounds: Vec<(ClientId, WlSurface)> = Vec::new();
++    let mut rails: Vec<(ClientId, WlSurface)> = Vec::new();
++
++    for layer in map.layers() {
++        if !layer.alive() {
++            continue;
++        }
++
++        let expected_layer = match layer.namespace() {
++            BACKGROUND_NAMESPACE => Layer::Background,
++            RAIL_NAMESPACE => Layer::Top,
++            _ => continue,
++        };
++        if layer.layer() != expected_layer {
++            continue;
++        }
++
++        let Some(geometry) = map.layer_geometry(layer) else {
++            continue;
++        };
++        let location = geometry.loc.to_physical_precise_round(scale);
++        let elements = AsRenderElements::<GlesRenderer>::render_elements::<
++            WaylandSurfaceRenderElement<GlesRenderer>,
++        >(layer, renderer, location, scale, 1.0);
++        if elements.is_empty() {
++            continue;
++        }
++
++        let surface = layer.wl_surface().clone();
++        let Some(client) = surface.client() else {
++            continue;
++        };
++        let candidate = (client.id(), surface);
++        if layer.namespace() == BACKGROUND_NAMESPACE {
++            backgrounds.push(candidate);
++        } else {
++            rails.push(candidate);
++        }
++    }
++
++    for (client, background) in backgrounds {
++        if let Some((_, rail)) = rails.iter().find(|(rail_client, _)| rail_client == &client) {
++            return Some(ShellBaselineIdentity {
++                background,
++                rail: rail.clone(),
++            });
++        }
++    }
++
++    None
++}
++
++pub(crate) fn persistent_baseline_alive_mapped(
++    output: &Output,
++    identity: &ShellBaselineIdentity,
++) -> bool {
++    let map = layer_map_for_output(output);
++    let mut background_alive = false;
++    let mut rail_alive = false;
++
++    for layer in map.layers() {
++        if !layer.alive() {
++            continue;
++        }
++
++        if layer.namespace() == BACKGROUND_NAMESPACE
++            && layer.layer() == Layer::Background
++            && layer.wl_surface() == &identity.background
++        {
++            background_alive = true;
++        } else if layer.namespace() == RAIL_NAMESPACE
++            && layer.layer() == Layer::Top
++            && layer.wl_surface() == &identity.rail
++        {
++            rail_alive = true;
++        }
++    }
++
++    background_alive && rail_alive
++}
++diff --git a/crates/prime-compositor/src/main.rs b/crates/prime-compositor/src/main.rs
++--- a/crates/prime-compositor/src/main.rs
+++++ b/crates/prime-compositor/src/main.rs
++@@ -1,4 +1,5 @@
++ mod frame;
++ mod input;
++ mod output;
++ mod protocols;
+++mod shell;
++@@ -75,6 +76,8 @@ struct Readiness {
++     frames_queued: u64,
++     frames_submitted: u64,
++     mapped_surface_frames_submitted: u64,
+++    shell_frame_in_flight: bool,
+++    shell_frames_submitted: u64,
++     renderer_ready: bool,
++     outputs_ready: bool,
++     shell_ready: bool,
++@@ -119,6 +122,15 @@ impl Runtime {
++     fn remove_limitation(&mut self, limitation: &str) {
++         self.readiness.limitations.retain(|item| item != limitation);
++     }
++ 
+++    pub(crate) fn invalidate_shell_readiness(&mut self, limitation: &str) {
+++        if self.readiness.phase == "SHELL_READY" && self.readiness.frame_loop_ready {
+++            self.readiness.phase = "FRAME_LOOP_READY".to_owned();
+++        }
+++        self.readiness.shell_ready = false;
+++        self.readiness.shell_frame_in_flight = false;
+++        self.add_limitation(limitation);
+++    }
+++
++     pub(crate) fn request_frame(&mut self) {
++         frame::request(self);
++     }
++@@ -130,6 +142,7 @@ impl Runtime {
++         self.readiness.frame_in_flight = false;
++         self.frame.reset();
++         self.add_limitation(limitation);
+++        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
++     }
++ 
++     fn require_graphics_revalidation(&mut self, phase: &str) {
++@@ -143,6 +156,7 @@ impl Runtime {
++         self.frame.reset();
++         self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
++         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+++        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
++     }
++ 
++     fn invalidate_output(&mut self, phase: &str, limitation: &str) {
++@@ -155,6 +169,7 @@ impl Runtime {
++         self.frame.reset();
++         self.add_limitation(limitation);
++         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+++        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
++     }
++ 
++     fn invalidate_wayland_protocols(&mut self) {
++@@ -169,6 +184,7 @@ impl Runtime {
++         self.frame.reset();
++         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
++         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+++        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
++     }
++ }
++@@ -345,6 +361,8 @@ fn main() -> Result<(), Box<dyn Error>> {
++             frames_queued: 0,
++             frames_submitted: 0,
++             mapped_surface_frames_submitted: 0,
+++            shell_frame_in_flight: false,
+++            shell_frames_submitted: 0,
++             renderer_ready: true,
++             outputs_ready: true,
++             shell_ready: false,
++@@ -357,7 +375,7 @@ fn main() -> Result<(), Box<dyn Error>> {
++                 "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
++                 frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
++-                "Prime Shell is not started yet".to_owned(),
+++                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
++             ],
++         },
++     };
++diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
++--- a/crates/prime-compositor/src/frame.rs
+++++ b/crates/prime-compositor/src/frame.rs
++@@ -22,6 +22,8 @@ pub(crate) struct FrameState {
++     pub(crate) requested: bool,
++     pub(crate) in_flight: bool,
++     pub(crate) in_flight_had_mapped_surface: bool,
+++    pub(crate) in_flight_had_shell_baseline: bool,
+++    pub(crate) in_flight_shell_baseline: Option<crate::shell::ShellBaselineIdentity>,
++     pub(crate) retry_at: Instant,
++     pub(crate) clock_started: Instant,
++ }
++@@ -33,6 +35,8 @@ impl FrameState {
++             requested: true,
++             in_flight: false,
++             in_flight_had_mapped_surface: false,
+++            in_flight_had_shell_baseline: false,
+++            in_flight_shell_baseline: None,
++             retry_at: now,
++             clock_started: now,
++         }
++@@ -42,6 +46,8 @@ impl FrameState {
++         self.requested = false;
++         self.in_flight = false;
++         self.in_flight_had_mapped_surface = false;
+++        self.in_flight_had_shell_baseline = false;
+++        self.in_flight_shell_baseline = None;
++         self.retry_at = Instant::now();
++     }
++ }
++@@ -67,6 +73,13 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
++ 
++     runtime.protocols.space.refresh();
++     layer_map_for_output(&runtime._output).arrange();
+++    let shell_baseline =
+++        crate::shell::persistent_baseline_renderable(&mut runtime._renderer, &runtime._output);
+++    let had_shell_baseline = shell_baseline.is_some();
+++    if runtime.readiness.shell_ready && !had_shell_baseline {
+++        runtime.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+++    }
+++
++     let elements = space_render_elements(
++         &mut runtime._renderer,
++         [&runtime.protocols.space],
++@@ -104,9 +117,12 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
++     runtime._drm_output.queue_frame(())?;
++     runtime.frame.in_flight = true;
++     runtime.frame.in_flight_had_mapped_surface = had_mapped_surface;
+++    runtime.frame.in_flight_had_shell_baseline = had_shell_baseline;
+++    runtime.frame.in_flight_shell_baseline = shell_baseline;
++     runtime.frame.requested = false;
++     runtime.readiness.frame_in_flight = true;
+++    runtime.readiness.shell_frame_in_flight = had_shell_baseline;
++     runtime.readiness.frames_queued = runtime.readiness.frames_queued.saturating_add(1);
++     Ok(())
++ }
++@@ -121,9 +137,12 @@ pub(crate) fn handle_vblank(
++ 
++     runtime._drm_output.frame_submitted()?;
++     let followup_frame_requested = runtime.frame.requested;
+++    let shell_baseline = runtime.frame.in_flight_shell_baseline.take();
+++    let had_shell_baseline = runtime.frame.in_flight_had_shell_baseline;
++     runtime.frame.in_flight = false;
++     runtime.readiness.frame_in_flight = false;
+++    runtime.readiness.shell_frame_in_flight = false;
++     runtime.readiness.frames_submitted = runtime.readiness.frames_submitted.saturating_add(1);
++ 
++     if !followup_frame_requested {
++@@ -149,6 +168,22 @@ pub(crate) fn handle_vblank(
++         runtime.readiness.phase = "FRAME_LOOP_READY".to_owned();
++         runtime.remove_limitation(FRAME_NOT_PROVEN_LIMITATION);
++     }
+++
+++    if had_shell_baseline {
+++        if let Some(identity) = shell_baseline.as_ref() {
+++            if runtime.readiness.frame_loop_ready
+++                && crate::shell::persistent_baseline_alive_mapped(&runtime._output, identity)
+++            {
+++                runtime.readiness.shell_frames_submitted =
+++                    runtime.readiness.shell_frames_submitted.saturating_add(1);
+++                runtime.readiness.shell_ready = true;
+++                runtime.readiness.phase = "SHELL_READY".to_owned();
+++                runtime.remove_limitation(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+++                runtime.remove_limitation(crate::shell::SHELL_REVALIDATION_LIMITATION);
+++            }
+++        }
+++    }
+++
++     runtime.frame.in_flight_had_mapped_surface = false;
+++    runtime.frame.in_flight_had_shell_baseline = false;
++     Ok(true)
++ }
++diff --git a/crates/prime-compositor/src/protocols.rs b/crates/prime-compositor/src/protocols.rs
++--- a/crates/prime-compositor/src/protocols.rs
+++++ b/crates/prime-compositor/src/protocols.rs
++@@ -220,10 +220,15 @@ impl WlrLayerShellHandler for Runtime {
++             .layers()
++             .find(|layer| layer.wl_surface() == surface.wl_surface())
++             .cloned();
++         if let Some(layer) = mapped {
+++            let persistent_shell = crate::shell::is_persistent_namespace(layer.namespace());
++             map.unmap_layer(&layer);
++             drop(map);
+++            if persistent_shell {
+++                self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+++            }
++             self.request_frame();
++         }
++     }
++ }
