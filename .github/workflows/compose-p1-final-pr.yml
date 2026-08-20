@@ -1,0 +1,61 @@
+name: Compose P1 Final From Frozen Evidence
+
+on:
+  pull_request:
+    branches: [construction/p1-final-compose-base]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  actions: read
+  packages: read
+
+env:
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  PARENT_RUN: '32404840933'
+  PARENT_ARTIFACT: prime-shell-power-ui-v4-c40aafc924cd1cf752794f77a4cc27ab20722462
+  PARENT_LOCK_SHA256: b5dc0bb1c8ec9d1db9cd4dd48a8e58a576307b625eff9c969f39a83b8d1b58b9
+  STORAGE_PATCH_SHA256: 3e08098a219aaac44714620f81f6dd442878d7e33c23a97656abd225e100e74e
+
+jobs:
+  compose:
+    if: ${{ github.head_ref == 'construction/p1-final-compose-trigger' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout integration authority
+        uses: actions/checkout@v6
+        with:
+          ref: construction/p1-first-light-integration
+          path: source
+          fetch-depth: 0
+
+      - name: Checkout exact product base
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PRODUCT_BASE }}
+          path: product
+          fetch-depth: 0
+
+      - name: Recover frozen Shell/Core handoff
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.PARENT_RUN }}
+          name: ${{ env.PARENT_ARTIFACT }}
+          path: /tmp/frozen
+
+      - name: Compose and publish exact proof branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash source/construction/p1-first-light/compose-final.sh \
+            "$PWD/product" \
+            /tmp/frozen \
+            "$PWD/source"
+
+      - name: Assert proof branch exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C product ls-remote --exit-code --heads origin refs/heads/proof/p1-first-light-final
