@@ -1,0 +1,109 @@
+name: Construction P1 FRAME Product-Only Promotion
+
+on:
+  push:
+    branches:
+      - construction/p1-frame-proof-base2
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: db29e1d8d089ccf9b5d3992a12393765fc0d2bbf
+      PRODUCT_SHA: 89db8570cd69b476d3ecc0364938350767b6f467
+      PROMOTION_BRANCH: promotion/p1-frame-20260820
+      FRAME_HASH: 93c9feb3310d5242db565890ff0134fa377e8da0
+      INPUT_HASH: 73e3649b16119124483d5c310222c06ad130e5ee
+      MAIN_HASH: 366a89dc5d3469065cf6bb3cdaaba3c0bd998a6e
+      PROTOCOLS_HASH: b847f3ecac0b72fcaa6a9c692a2e1e6784975240
+      READINESS_HASH: d9a0589b977bae4326c5e7220a3c84bb2a41ac14
+      FRAME_CONTRACT_HASH: 27f9a5a1f846ab23381fbcb3f4391e8671233ef8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Reconstruct exact proven FRAME milestone
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git apply --check construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply --check construction/frame-rustfmt.patch
+          git apply construction/frame-rustfmt.patch
+          git apply --check construction/frame-compiler-fix.patch
+          git apply construction/frame-compiler-fix.patch
+          git apply --check construction/frame-review-fix.patch
+          git apply construction/frame-review-fix.patch
+          git apply --check construction/frame-scanout-policy-fix.patch
+          git apply construction/frame-scanout-policy-fix.patch
+          git apply --check construction/frame-focus-review-fix.patch
+          git apply construction/frame-focus-review-fix.patch
+
+          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = "$FRAME_HASH"
+          test "$(git hash-object crates/prime-compositor/src/input.rs)" = "$INPUT_HASH"
+          test "$(git hash-object crates/prime-compositor/src/main.rs)" = "$MAIN_HASH"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = "$READINESS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)" = "$FRAME_CONTRACT_HASH"
+          git diff --check
+
+          tar -cf /tmp/prime-frame-product.tar \
+            crates/prime-compositor/src/frame.rs \
+            crates/prime-compositor/src/input.rs \
+            crates/prime-compositor/src/main.rs \
+            crates/prime-compositor/src/protocols.rs \
+            docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md \
+            docs/contracts/PRIME_P1_FRAME_LOOP_V1.md
+
+      - name: Build product-only promotion commit from frozen product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard
+          git clean -fd
+          git switch --detach "$PRODUCT_SHA"
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          git switch -c "$PROMOTION_BRANCH"
+          tar -xf /tmp/prime-frame-product.tar
+
+          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = "$FRAME_HASH"
+          test "$(git hash-object crates/prime-compositor/src/input.rs)" = "$INPUT_HASH"
+          test "$(git hash-object crates/prime-compositor/src/main.rs)" = "$MAIN_HASH"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = "$READINESS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)" = "$FRAME_CONTRACT_HASH"
+
+          git add -- \
+            crates/prime-compositor/src/frame.rs \
+            crates/prime-compositor/src/input.rs \
+            crates/prime-compositor/src/main.rs \
+            crates/prime-compositor/src/protocols.rs \
+            docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md \
+            docs/contracts/PRIME_P1_FRAME_LOOP_V1.md
+
+          expected="$(printf '%s\n' \
+            crates/prime-compositor/src/frame.rs \
+            crates/prime-compositor/src/input.rs \
+            crates/prime-compositor/src/main.rs \
+            crates/prime-compositor/src/protocols.rs \
+            docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md \
+            docs/contracts/PRIME_P1_FRAME_LOOP_V1.md | sort)"
+          actual="$(git diff --cached --name-only | sort)"
+          test "$actual" = "$expected"
+          test "$(git diff --cached --name-only | wc -l)" -eq 6
+          git diff --cached --check
+
+          git config user.name "THETECHGUY Prime Milestone"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "p1: promote proven FRAME lifecycle authority" \
+            -m "Source construction head: $SOURCE_SHA" \
+            -m "Proof: FRAME v3/v4/v5/v6/v7 gates passed; v7 run 32341547175." \
+            -m "Product-only promotion: exactly six reviewed product files; construction machinery excluded."
+          git push origin "HEAD:refs/heads/$PROMOTION_BRANCH"
