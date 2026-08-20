@@ -1,0 +1,153 @@
+name: Construction P1 Shell Storage UI
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-storage-ui-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  PARENT_RUN: 32404840933
+  PARENT_ARTIFACT: prime-shell-power-ui-v4-c40aafc924cd1cf752794f77a4cc27ab20722462
+  PARENT_LOCK_SHA256: b5dc0bb1c8ec9d1db9cd4dd48a8e58a576307b625eff9c969f39a83b8d1b58b9
+  PATCH_SHA256: 3e08098a219aaac44714620f81f6dd442878d7e33c23a97656abd225e100e74e
+  PATCH_GIT_BLOB: 735dbd90732185710865df566514bf1c38129786
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-storage-ui' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence exact storage UI patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          test "$(git diff --name-only "$base" HEAD)" = 'construction/shell-storage-ui/storage-ui.patch'
+          patch=construction/shell-storage-ui/storage-ui.patch
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$PATCH_SHA256"
+          test "$(git hash-object "$patch")" = "$PATCH_GIT_BLOB"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('construction/shell-storage-ui/storage-ui.patch')
+          data=p.read_bytes(); assert data.endswith(b'\n')
+          bad=[]
+          for n,line in enumerate(data.splitlines(),1):
+              if line.startswith(b'+') and not line.startswith(b'+++') and line.endswith((b' ',b'\t')):
+                  bad.append(n)
+          if bad: raise SystemExit(f'added payload trailing whitespace: {bad}')
+          print('PRIME_SHELL_STORAGE_UI_PATCH_FENCE=PASS')
+          PY
+          ! grep -F '/v1/storage/preflight' "$patch"
+          ! grep -F 'std::process::Command' "$patch"
+          echo PRIME_SHELL_STORAGE_UI_SCOPE=PASS
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.PARENT_RUN }}
+          name: ${{ env.PARENT_ARTIFACT }}
+          path: /tmp/parent
+
+      - name: Reconstruct frozen Shell and apply storage UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fx "CARGO_LOCK_SHA256=$PARENT_LOCK_SHA256" /tmp/parent/handoff/MANIFEST.env
+          cp -a /tmp/parent/handoff/. .
+          git apply --check construction/shell-storage-ui/storage-ui.patch
+          git apply construction/shell-storage-ui/storage-ui.patch
+          git diff --check
+          grep -F 'self.request("GET", "/v1/storage", None)' crates/prime-shell/src/core_client.rs
+          grep -F 'QUICK CONTROLS / SETTINGS' crates/prime-shell/src/visual.rs
+          grep -F 'STORAGE UNAVAILABLE:' crates/prime-shell/src/main.rs
+          grep -F 'RECOVERY RESERVE' crates/prime-shell/src/core_client.rs
+          grep -F '"apfs" | "hfs" | "hfsplus" | "hfs+"' crates/prime-shell/src/core_client.rs
+          ! grep -R -F '/v1/storage/preflight' crates/prime-shell/src
+          ! grep -R -F 'std::process::Command' crates/prime-shell/src
+          echo PRIME_SHELL_STORAGE_UI_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+
+      - name: Prove storage/settings surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-shell/src handoff/crates/prime-contracts/src handoff/crates/primed/src handoff/crates/prime-compositor/src
+          docker run --rm -e RUSTUP_HOME=/tmp/prime-rustup -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"; mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$PARENT_LOCK_SHA256"
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_STORAGE_UI_FMT=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo clippy --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_STORAGE_UI_CLIPPY=PASS
+              cargo test --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor 2>&1 | tee diag/tests.log
+              echo PRIME_SHELL_STORAGE_UI_TEST=PASS
+              cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
+              ! ldd target/release/primed | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              echo PRIME_SHELL_STORAGE_UI_BUILD=PASS
+            '
+          cp Cargo.toml Cargo.lock handoff/
+          cp crates/prime-shell/Cargo.toml handoff/crates/prime-shell/Cargo.toml
+          cp crates/prime-shell/src/main.rs crates/prime-shell/src/core_client.rs crates/prime-shell/src/visual.rs handoff/crates/prime-shell/src/
+          cp crates/prime-contracts/src/*.rs handoff/crates/prime-contracts/src/
+          cp crates/primed/src/lib.rs crates/primed/src/server.rs crates/primed/src/shell_api.rs crates/primed/src/power.rs crates/primed/src/system_status.rs handoff/crates/primed/src/
+          cp crates/prime-compositor/src/main.rs crates/prime-compositor/src/frame.rs crates/prime-compositor/src/protocols.rs crates/prime-compositor/src/shell.rs handoff/crates/prime-compositor/src/
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo PATCH_SHA256=$PATCH_SHA256
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo SHELL_MAIN_HASH=$(git hash-object crates/prime-shell/src/main.rs)
+            echo SHELL_CORE_CLIENT_HASH=$(git hash-object crates/prime-shell/src/core_client.rs)
+            echo SHELL_VISUAL_HASH=$(git hash-object crates/prime-shell/src/visual.rs)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_SHELL_STORAGE_UI_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-storage-ui-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
