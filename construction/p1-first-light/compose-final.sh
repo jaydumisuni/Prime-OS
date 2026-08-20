@@ -38,7 +38,6 @@ for p in sorted(pathlib.Path('crates').rglob('*.rs')):
 changed=sorted(p for p in set(before)|set(after) if before.get(p)!=after.get(p))
 expected=sorted([
     'crates/prime-shell/src/core_client.rs',
-    'crates/prime-shell/src/main.rs',
     'crates/prime-shell/src/visual.rs',
 ])
 assert changed == expected, (changed, expected)
