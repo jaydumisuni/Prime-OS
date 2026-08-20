@@ -12,6 +12,7 @@ permissions:
 
 env:
   PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  COMPILER_FIX_HASH: 5e3b5d5b3bf9de48ca50940451b2664c2ea69b11
 
 jobs:
   diagnose:
@@ -23,7 +24,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: Reconcile exact Tenfold FRAME v2 source
+      - name: Reconcile compiler-corrected Tenfold FRAME v2 source
         shell: bash
         run: |
           set -euo pipefail
@@ -31,12 +32,22 @@ jobs:
           git apply construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
           git apply --check construction/frame-rustfmt.patch
           git apply construction/frame-rustfmt.patch
-          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = 62688d8de9bd696481719018cd9fa114201e4946
-          test "$(git hash-object crates/prime-compositor/src/input.rs)" = 451baaced4f06cbf3500af9da1babab5a4beb689
+          test "$(git hash-object construction/frame-compiler-fix.patch)" = "$COMPILER_FIX_HASH"
+          git apply --check construction/frame-compiler-fix.patch
+          git apply construction/frame-compiler-fix.patch
           test "$(git hash-object crates/prime-compositor/src/main.rs)" = 366a89dc5d3469065cf6bb3cdaaba3c0bd998a6e
-          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = 45b2e9a3d64e2114ec6d2c9f66153ae2e71da599
           test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = d9a0589b977bae4326c5e7220a3c84bb2a41ac14
           test "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)" = 27f9a5a1f846ab23381fbcb3f4391e8671233ef8
+          mkdir -p diag
+          {
+            printf 'FRAME_HASH=%s\n' "$(git hash-object crates/prime-compositor/src/frame.rs)"
+            printf 'INPUT_HASH=%s\n' "$(git hash-object crates/prime-compositor/src/input.rs)"
+            printf 'MAIN_HASH=%s\n' "$(git hash-object crates/prime-compositor/src/main.rs)"
+            printf 'PROTOCOLS_HASH=%s\n' "$(git hash-object crates/prime-compositor/src/protocols.rs)"
+            printf 'READINESS_HASH=%s\n' "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)"
+            printf 'FRAME_CONTRACT_HASH=%s\n' "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)"
+          } | tee diag/hashes.log
+          git diff --check
       - name: Authenticate Prime-owned substrate
         shell: bash
         env:
