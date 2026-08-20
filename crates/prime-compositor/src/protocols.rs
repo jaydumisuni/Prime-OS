@@ -130,6 +130,7 @@ impl CompositorHandler for Runtime {
         handle_layer_commit(&self._output, surface);
         if crate::shell::persistent_layer_for_surface(&self._output, surface) {
             self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+            self.persist_best_effort();
         }
         self.request_frame();
     }
@@ -220,6 +221,7 @@ impl WlrLayerShellHandler for Runtime {
         } else if persistent_shell {
             self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
             self.request_frame();
+            self.persist_best_effort();
         }
     }
 
@@ -235,6 +237,7 @@ impl WlrLayerShellHandler for Runtime {
             drop(map);
             if persistent_shell {
                 self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+                self.persist_best_effort();
             }
             self.request_frame();
         }
