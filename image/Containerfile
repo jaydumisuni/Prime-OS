@@ -55,11 +55,14 @@ COPY crates ./crates
 RUN set -eux; \
     cargo metadata --locked --no-deps --format-version 1 >/dev/null; \
     cargo fmt --all -- --check; \
-    cargo clippy --locked -p prime-compositor --all-targets -- -D warnings; \
-    cargo build --locked --release -p prime-compositor; \
+    cargo clippy --locked -p prime-compositor -p prime-shell --all-targets -- -D warnings; \
+    cargo build --locked --release -p prime-compositor -p prime-shell; \
     test -x target/release/prime-compositor; \
+    test -x target/release/prime-shell; \
     ! ldd target/release/prime-compositor | grep -q 'not found'; \
-    sha256sum target/release/prime-compositor > /prime-compositor.sha256
+    ! ldd target/release/prime-shell | grep -q 'not found'; \
+    sha256sum target/release/prime-compositor > /prime-compositor.sha256; \
+    sha256sum target/release/prime-shell > /prime-shell.sha256
 
 FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
@@ -109,6 +112,8 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        libwayland-client-1.25.0-1.fc44 \
+        libxkbcommon-1.13.1-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -119,6 +124,8 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        libwayland-client-1.25.0-1.fc44 \
+        libxkbcommon-1.13.1-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -160,11 +167,18 @@ RUN set -eux; \
     chmod 0444 /usr/lib/prime/substrate-release.json; \
     python3 -c 'import json; d=json.load(open("/usr/lib/prime/substrate-release.json", "r", encoding="utf-8")); assert d["schema"]=="prime.substrate-release.v1"; assert d["id"]=="fedora"; assert d["version_id"]=="44"'
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install /usr/lib/sysusers.d
 COPY target/release/primed /usr/libexec/prime/primed
 COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
 COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
+COPY --from=compositor-builder /source/target/release/prime-shell /usr/libexec/prime/prime-shell
+COPY image/scripts/prime-shell-session /usr/libexec/prime/prime-shell-session
+COPY image/scripts/prime-first-light-witness /usr/libexec/prime/prime-first-light-witness
+COPY image/sysusers/prime-shell.conf /usr/lib/sysusers.d/prime-shell.conf
 COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/systemd/prime-compositor.service /usr/lib/systemd/system/prime-compositor.service
+COPY image/systemd/prime-shell.service /usr/lib/systemd/system/prime-shell.service
+COPY image/systemd/prime-first-light-witness.service /usr/lib/systemd/system/prime-first-light-witness.service
 COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
 COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
 COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
@@ -173,9 +187,13 @@ RUN set -eux; \
     chmod 0755 \
         /usr/libexec/prime/primed \
         /usr/libexec/prime/prime-recovery \
-        /usr/libexec/prime/prime-compositor; \
+        /usr/libexec/prime/prime-compositor \
+        /usr/libexec/prime/prime-shell \
+        /usr/libexec/prime/prime-shell-session \
+        /usr/libexec/prime/prime-first-light-witness; \
     chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
     ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \
+    ! ldd /usr/libexec/prime/prime-shell | grep -q 'not found'; \
     test -e /usr/lib64/libEGL.so.1; \
     test -e /usr/lib64/libEGL_mesa.so.0; \
     test -e /usr/lib64/libgbm.so.1; \
@@ -187,11 +205,15 @@ RUN set -eux; \
     rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.7-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
-    systemctl enable primed.service; \
+    systemctl enable primed.service prime-compositor.service prime-shell.service prime-first-light-witness.service; \
+    systemctl set-default graphical.target; \
+    systemctl mask getty@tty1.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
     test -f /usr/lib/systemd/system/prime-recovery.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
-    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     bootc install print-configuration > /tmp/prime-install-config.json; \
     python3 -c 'import json; c=json.load(open("/tmp/prime-install-config.json")); assert c.get("bootloader") == "systemd", c'; \
     rm -f /tmp/prime-install-config.json
@@ -218,7 +240,14 @@ RUN set -eux; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
     test -x /usr/libexec/prime/prime-compositor; \
+    test -x /usr/libexec/prime/prime-shell; \
+    test -x /usr/libexec/prime/prime-shell-session; \
+    test -x /usr/libexec/prime/prime-first-light-witness; \
+    test -f /usr/lib/sysusers.d/prime-shell.conf; \
     test -L /etc/systemd/system/multi-user.target.wants/primed.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer; \
     bootc container lint --fatal-warnings
 
@@ -317,6 +346,11 @@ RUN set -eux; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
     test -x /usr/libexec/prime/prime-compositor; \
-    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
+    test -x /usr/libexec/prime/prime-shell; \
+    test -x /usr/libexec/prime/prime-shell-session; \
+    test -x /usr/libexec/prime/prime-first-light-witness; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
     test -f /usr/lib/systemd/system/prime-recovery.service

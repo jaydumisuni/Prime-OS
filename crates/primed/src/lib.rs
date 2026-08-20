@@ -5,8 +5,10 @@ pub mod identity;
 pub mod launcher;
 pub mod p1_health;
 pub mod policy;
+pub mod power;
 pub mod registry;
 pub mod server;
+pub mod shell_api;
 pub mod storage;
 pub mod system_status;
 

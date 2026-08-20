@@ -1,0 +1,24 @@
+[Unit]
+Description=Prime P1 First-Light Mechanical Witness
+Requires=primed.service prime-compositor.service prime-shell.service
+After=primed.service prime-compositor.service prime-shell.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/prime/prime-first-light-witness
+User=root
+Group=prime-shell
+RemainAfterExit=yes
+TimeoutStartSec=100s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/prime
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=graphical.target

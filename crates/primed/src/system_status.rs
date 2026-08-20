@@ -211,11 +211,8 @@ fn observe(root: &Path, hardware: &HardwareGraph, observed_at: String) -> System
             ],
         },
         power_mutation: ControlTruth {
-            ready: false,
-            limitations: vec![
-                "Prime P1 Capability Interface exposes no restart/shutdown mutation route yet"
-                    .to_owned(),
-            ],
+            ready: true,
+            limitations: Vec::new(),
         },
         limitations,
     }
@@ -305,6 +302,6 @@ mod tests {
         );
         assert!(!snapshot.network_control.ready);
         assert!(!snapshot.audio_control.ready);
-        assert!(!snapshot.power_mutation.ready);
+        assert!(snapshot.power_mutation.ready);
     }
 }

@@ -65,8 +65,8 @@ BUILDER_INSPECT="$(skopeo inspect --override-os linux --override-arch amd64 --fo
 log "Prime Core and recovery locked proof"
 cargo metadata --locked --no-deps --format-version 1 >/dev/null
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --exclude prime-compositor --all-targets -- -D warnings
-cargo test --locked --workspace --exclude prime-compositor
+cargo clippy --locked --workspace --exclude prime-compositor --exclude prime-shell --all-targets -- -D warnings
+cargo test --locked --workspace --exclude prime-compositor --exclude prime-shell
 cargo build --locked --release -p primed
 [[ -x target/release/primed ]] || fail "primed release binary missing"
 [[ -x target/release/prime-recovery ]] || fail "prime-recovery release binary missing"
@@ -153,6 +153,10 @@ log "Inspect final Prime image and recovery contract"
     test -x /usr/libexec/prime/primed
     test -x /usr/libexec/prime/prime-recovery
     test -x /usr/libexec/prime/prime-compositor
+    test -x /usr/libexec/prime/prime-shell
+    test -x /usr/libexec/prime/prime-shell-session
+    test -x /usr/libexec/prime/prime-first-light-witness
+    test -f /usr/lib/sysusers.d/prime-shell.conf
     test -x /usr/sbin/bootc
     test -x /usr/sbin/systemd-run
     test -x /usr/bin/ukify
@@ -171,6 +175,8 @@ log "Inspect final Prime image and recovery contract"
       libglvnd-egl-1.7.0-9.fc44 \
       libinput-1.31.3-1.fc44 \
       libseat-0.9.3-1.fc44 \
+      libwayland-client-1.25.0-1.fc44 \
+      libxkbcommon-1.13.1-2.fc44 \
       mesa-dri-drivers-26.1.7-1.fc44 \
       mesa-libEGL-26.1.7-1.fc44 \
       mesa-libgbm-26.1.7-1.fc44 \
@@ -189,8 +195,11 @@ log "Inspect final Prime image and recovery contract"
     test "$(rpm -qf /usr/lib64/libdrm.so.2)" = "libdrm-2.4.134-1.fc44.x86_64"
     test "$(rpm -qf /usr/lib64/dri/iris_dri.so)" = "mesa-dri-drivers-26.1.7-1.fc44.x86_64"
     ! ldd /usr/libexec/prime/prime-compositor | grep -q "not found"
+    ! ldd /usr/libexec/prime/prime-shell | grep -q "not found"
     /usr/libexec/prime/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
-    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service
     normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
     recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
     test -n "$normal"
@@ -276,7 +285,7 @@ for candidate in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd; d
 done
 [[ -n "$OVMF" ]] || fail "OVMF_CODE firmware not found"
 set +e
-timeout --signal=TERM 90s qemu-system-x86_64 \
+timeout --signal=TERM 120s qemu-system-x86_64 \
   -machine q35,accel=tcg \
   -cpu max \
   -smp 2 \
@@ -313,12 +322,15 @@ sudo -n test -f "$HARDWARE_FILE"
 sudo -n test -f "$GENERATION_FILE"
 sudo -n python3 -c 'import json,sys; h=json.load(open(sys.argv[1])); hw=json.load(open(sys.argv[2])); assert h["host_id"]; assert str(h["host_arch"]).lower() in ("x86_64","amd64"); assert hw' "$IDENTITY_FILE" "$HARDWARE_FILE"
 sudo -n env EXPECTED_GENERATION_ID="$GENERATION_ID" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g["generation_id"]==os.environ["EXPECTED_GENERATION_ID"],g; assert g["state"]=="HEALTH_PROVING",g; assert "prime.core.socket.bound.v1" in g.get("evidence_refs",[]),g; assert g.get("boot_attempts_remaining")==3,g' "$GENERATION_FILE"
+WITNESS_FILE="$PRIME_DIR/first-light/mechanical.json"
+sudo -n test -f "$WITNESS_FILE"
+sudo -n python3 -c 'import json,sys; w=json.load(open(sys.argv[1])); assert w["schema"]=="prime.first-light-mechanical.v1",w; assert w["status"]=="SHELL_READY",w; assert w["compositor_phase"]=="SHELL_READY",w; assert w["shell_ready"] is True,w; assert w["frame_loop_ready"] is True,w; assert w["wayland_listener_ready"] is True,w; assert w["clients_accepted"]>=1,w; assert w["mapped_surface_frames_submitted"]>=1,w; assert w["core_socket_group_nonzero"] is True,w; assert w["owner_visual_acceptance"] is False,w' "$WITNESS_FILE"
 HOST_ID="$(sudo -n python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["host_id"])' "$IDENTITY_FILE")"
 cleanup_nbd
 
 log "Write local proof report"
 DISK_SHA256="$(sha256sum "$DISK" | awk '{print $1}')"
 export REPORT SOURCE_REVISION CREATED_AT GENERATION_ID BASE_IMAGE BASE_DIGEST BUILDER_REF BUILDER_DIGEST BUILDER_VERSION CANONICAL_DIGEST FINAL_DIGEST NORMAL_EMBEDDED_DIGEST RECOVERY_EMBEDDED_DIGEST DISK DISK_SHA256 HOST_ID
-python3 -c 'import json,os,pathlib; p={"schema":"prime.p1-local-proof.v1","ok":True,"source_revision":os.environ["SOURCE_REVISION"],"created_at":os.environ["CREATED_AT"],"generation_id":os.environ["GENERATION_ID"],"generation_state":"HEALTH_PROVING","known_good_proven":False,"base_image":os.environ["BASE_IMAGE"],"base_image_digest":os.environ["BASE_DIGEST"],"image_builder":os.environ["BUILDER_REF"],"image_builder_digest":os.environ["BUILDER_DIGEST"],"image_builder_version":os.environ["BUILDER_VERSION"],"prime_product_identity":True,"substrate":{"id":"fedora","version_id":"44","base_image_digest":os.environ["BASE_DIGEST"]},"composefs_canonical_digest":os.environ["CANONICAL_DIGEST"],"composefs_final_digest":os.environ["FINAL_DIGEST"],"normal_uki_embedded_digest":os.environ["NORMAL_EMBEDDED_DIGEST"],"recovery_uki_embedded_digest":os.environ["RECOVERY_EMBEDDED_DIGEST"],"recovery_uki_present":True,"recovery_boot_proven":False,"qcow2_path":os.environ["DISK"],"qcow2_sha256":os.environ["DISK_SHA256"],"qemu_uefi":"OVMF","prime_host_id":os.environ["HOST_ID"],"physical_kratos_boot_proven":False}; path=pathlib.Path(os.environ["REPORT"]); path.write_text(json.dumps(p,indent=2)+"\n",encoding="utf-8"); print(path.read_text())'
+python3 -c 'import json,os,pathlib; p={"schema":"prime.p1-local-proof.v1","ok":True,"source_revision":os.environ["SOURCE_REVISION"],"created_at":os.environ["CREATED_AT"],"generation_id":os.environ["GENERATION_ID"],"generation_state":"HEALTH_PROVING","known_good_proven":False,"base_image":os.environ["BASE_IMAGE"],"base_image_digest":os.environ["BASE_DIGEST"],"image_builder":os.environ["BUILDER_REF"],"image_builder_digest":os.environ["BUILDER_DIGEST"],"image_builder_version":os.environ["BUILDER_VERSION"],"prime_product_identity":True,"substrate":{"id":"fedora","version_id":"44","base_image_digest":os.environ["BASE_DIGEST"]},"composefs_canonical_digest":os.environ["CANONICAL_DIGEST"],"composefs_final_digest":os.environ["FINAL_DIGEST"],"normal_uki_embedded_digest":os.environ["NORMAL_EMBEDDED_DIGEST"],"recovery_uki_embedded_digest":os.environ["RECOVERY_EMBEDDED_DIGEST"],"recovery_uki_present":True,"recovery_boot_proven":False,"qcow2_path":os.environ["DISK"],"qcow2_sha256":os.environ["DISK_SHA256"],"qemu_uefi":"OVMF","prime_host_id":os.environ["HOST_ID"],"mechanical_shell_ready":True,"owner_visual_acceptance":False,"physical_kratos_boot_proven":False}; path=pathlib.Path(os.environ["REPORT"]); path.write_text(json.dumps(p,indent=2)+"\n",encoding="utf-8"); print(path.read_text())'
 
 printf '\nP1_LOCAL_PROOF=PASS\nREPORT=%s\nQCOW2=%s\n' "$REPORT" "$DISK"
