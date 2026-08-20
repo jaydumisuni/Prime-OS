@@ -1,0 +1,21 @@
+diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/input.rs
+--- a/crates/prime-compositor/src/input.rs
++++ b/crates/prime-compositor/src/input.rs
+@@ -8,7 +8,7 @@ use smithay::{
+         keyboard::FilterResult,
+         pointer::{AxisFrame, ButtonEvent, MotionEvent},
+     },
+-    desktop::{layer_map_for_output, WindowSurfaceType},
++    desktop::{find_popup_root_surface, layer_map_for_output, WindowSurfaceType},
+     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
+     utils::{Logical, Point, SERIAL_COUNTER},
+     wayland::compositor::get_parent,
+@@ -221,6 +221,9 @@ fn keyboard_focus_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<WlSurface> {
+     while let Some(parent) = get_parent(&root) {
+         root = parent;
+     }
++    if let Some(popup) = runtime.protocols.popups.find_popup(&root) {
++        return find_popup_root_surface(&popup).ok();
++    }
+     Some(root)
+ }
