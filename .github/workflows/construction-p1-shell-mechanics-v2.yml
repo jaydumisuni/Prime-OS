@@ -1,4 +1,4 @@
-name: Construction P1 Shell Mechanics v2
+name: Construction P1 Shell Mechanics v3 Locked
 
 on:
   pull_request:
@@ -18,10 +18,11 @@ env:
   SHELL_CARGO_HASH: 025ab035caefc194c09936f4682688b0160187a7
   SHELL_MAIN_HASH: 36c315e0332397a2dacf7bb4b5ddabd4dfe9b1dc
   SHELL_CONTRACT_HASH: 8db6dbb48a203fecccdba8c1d5805bc59e5f0a52
+  LOCK_SHA256: d8c87bc9c7aa116ae85a407d23058dfb7fe1bc5c2955a8df677747ba201a2d47
 
 jobs:
-  shell-mechanics-v2:
-    if: ${{ github.head_ref == 'construction/p1-shell-mechanics3' }}
+  shell-mechanics-locked:
+    if: ${{ github.head_ref == 'construction/p1-shell-mechanics4' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -41,7 +42,7 @@ jobs:
           git diff --name-only "$base" HEAD | tee /tmp/shell-files.txt
           while IFS= read -r path; do
             case "$path" in
-              Cargo.toml|Cargo.lock|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
+              Cargo.toml|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
               *) echo "unexpected Shell construction path: $path" >&2; exit 1 ;;
             esac
           done < /tmp/shell-files.txt
@@ -52,7 +53,7 @@ jobs:
           grep -F 'layer.set_exclusive_zone(-1);' crates/prime-shell/src/main.rs
           grep -F 'refusing to map an ambiguous surface' crates/prime-shell/src/main.rs
           ! grep -F 'first_configure' crates/prime-shell/src/main.rs
-          echo PRIME_SHELL_V2_IDENTITY=PASS
+          echo PRIME_SHELL_LOCKED_IDENTITY=PASS
 
       - name: Authenticate Prime-owned substrate
         shell: bash
@@ -62,7 +63,7 @@ jobs:
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Generate dependency lock and prove Shell mechanics
+      - name: Recreate frozen lock and prove Shell mechanics with --locked
         shell: bash
         run: |
           set -euo pipefail
@@ -72,6 +73,7 @@ jobs:
           docker run --rm \
             -e RUSTUP_HOME=/tmp/prime-rustup \
             -e CARGO_HOME=/tmp/prime-cargo \
+            -e LOCK_SHA256="$LOCK_SHA256" \
             -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
             bash -ceu '
               set -o pipefail
@@ -84,21 +86,28 @@ jobs:
               rustc --version --verbose | tee diag/rustc.log
               cargo --version | tee diag/cargo.log
               test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
-              cargo check -p prime-shell 2>&1 | tee diag/check.log
-              cp Cargo.lock diag/Cargo.lock.generated
-              sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
+              rm -f Cargo.lock
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              actual_lock="$(sha256sum Cargo.lock | awk "{print \$1}")"
+              printf "%s  Cargo.lock\n" "$actual_lock" | tee diag/Cargo.lock.sha256
+              test "$actual_lock" = "$LOCK_SHA256"
+              cp Cargo.lock diag/Cargo.lock.frozen
+              echo PRIME_SHELL_LOCK_IDENTITY=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo check --locked -p prime-shell 2>&1 | tee diag/check.log
+              echo PRIME_SHELL_LOCKED_CHECK=PASS
               cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
-              echo PRIME_SHELL_V2_FMT=PASS
-              cargo clippy -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
-              echo PRIME_SHELL_V2_CLIPPY=PASS
-              cargo build -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
+              echo PRIME_SHELL_LOCKED_FMT=PASS
+              cargo clippy --locked -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_LOCKED_CLIPPY=PASS
+              cargo build --locked -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
               target/release/prime-shell --help | tee diag/help.log
-              echo PRIME_SHELL_V2_BUILD=PASS
+              echo PRIME_SHELL_LOCKED_BUILD=PASS
             '
 
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-mechanics-v2-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-mechanics-locked-${{ github.event.pull_request.head.sha }}
           path: diag/
           if-no-files-found: error
           retention-days: 7
