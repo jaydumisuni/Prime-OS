@@ -16,7 +16,7 @@ env:
   PRODUCT_BASE: 7e4dcbae3706055928cb25d5fd7fc629c55a27cd
   ROOT_CARGO_HASH: 0a635efefc6db30b4bad4f2ee7692a83acfab6ba
   SHELL_CARGO_HASH: 025ab035caefc194c09936f4682688b0160187a7
-  SHELL_MAIN_HASH: 22b57b6b3a05d6b87ad7dfffb0ed166af297cdb8
+  SHELL_MAIN_HASH: 36c315e0332397a2dacf7bb4b5ddabd4dfe9b1dc
   SHELL_CONTRACT_HASH: 8db6dbb48a203fecccdba8c1d5805bc59e5f0a52
 
 jobs:
@@ -74,6 +74,7 @@ jobs:
             -e CARGO_HOME=/tmp/prime-cargo \
             -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
             bash -ceu '
+              set -o pipefail
               dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config "pkgconfig(wayland-client)" >/dev/null
               rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
               mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
@@ -85,7 +86,7 @@ jobs:
               test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
               cargo check -p prime-shell 2>&1 | tee diag/check.log
               cp Cargo.lock diag/Cargo.lock.generated
-              git hash-object Cargo.lock | tee diag/Cargo.lock.hash
+              sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
               cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
               echo PRIME_SHELL_V2_FMT=PASS
               cargo clippy -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
