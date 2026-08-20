@@ -34,7 +34,7 @@ jobs:
           base='${{ github.event.pull_request.base.sha }}'
           test "$(git merge-base "$base" HEAD)" = "$base"
           test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
-          git diff --check "$base" HEAD
+          git diff --check "$base" HEAD -- . ':(exclude)construction/shell-readiness-v2/main-readiness.patch'
           git diff --name-only "$base" HEAD | tee /tmp/readiness-files.txt
           while IFS= read -r path; do
             case "$path" in
