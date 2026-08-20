@@ -1,0 +1,31 @@
+[Unit]
+Description=Prime P1 Shell
+Requires=primed.service prime-compositor.service
+After=primed.service prime-compositor.service
+Before=prime-first-light-witness.service
+
+[Service]
+Type=simple
+User=prime-shell
+Group=prime-shell
+Environment=XDG_RUNTIME_DIR=/run/prime-shell
+Environment=PRIME_CORE_SOCKET=/run/prime/core.sock
+Environment=PRIME_COMPOSITOR_READINESS=/run/prime-compositor/readiness.json
+RuntimeDirectory=prime-shell
+RuntimeDirectoryMode=0700
+ExecStart=/usr/libexec/prime/prime-shell-session
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=graphical.target
