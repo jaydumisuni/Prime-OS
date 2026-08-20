@@ -42,9 +42,9 @@ Both surfaces must:
 - use their reserved namespaces and expected WLR layers;
 - be uniquely identifiable on the retained P1 output;
 - have renderable surface content at frame queue time;
-- remain the exact same renderable surface identities when that queued frame retires on the matching selected-CRTC vblank.
+- remain the exact same unique renderable surface identities when that queued frame retires on the matching selected-CRTC vblank.
 
-A duplicate background or rail candidate makes baseline identity ambiguous and must not earn readiness.
+A duplicate background or rail candidate makes baseline identity ambiguous and must not earn readiness, even if the duplicate has not attached renderable content yet.
 
 `prime.shell.background` uses the WLR Background layer and does not reserve workspace area.
 
@@ -74,25 +74,30 @@ Every accepted configure redraws the affected static SHM surface. Process start,
 `prime-compositor` may set `shell_ready=true` only when one queued DRM frame satisfies all of the following:
 
 1. the existing FRAME lifecycle has earned `frame_loop_ready=true` on the matching selected CRTC;
-2. exactly one renderable `prime.shell.background` and exactly one renderable `prime.shell.rail` exist on the retained output;
-3. those two surfaces are owned by the same live Wayland client;
+2. exactly one mapped reserved `prime.shell.background` and exactly one mapped reserved `prime.shell.rail` exist on the retained output;
+3. both are renderable, use their expected WLR layers, and are owned by the same live Wayland client;
 4. their exact Wayland surface identities are frozen into the in-flight frame state at queue time;
-5. when the matching vblank retires that frame, those exact identities are still mapped in the expected layers and still renderable;
+5. when the matching vblank retires that frame, those exact identities are still the unique mapped reserved baseline and are still renderable in the expected layers;
 6. no graphics/output/session/protocol/frame invalidation occurred that requires revalidation.
 
 `SHELL_READY` is therefore a DRM-retirement claim, not a client-process or surface-mapping claim.
+
+After `SHELL_READY` has been earned, an ordinary background/rail content replacement that leaves the same unique baseline live, correctly layered, same-client and renderable does not by itself revoke readiness. The compositor still queues the updated frame. This allows a live system rail to update without turning normal Shell presentation into a readiness failure.
 
 ## Fail-closed revalidation
 
 Once `shell_ready=true`, it must be cleared immediately when any of the following occurs:
 
-- a persistent background/rail surface or its surface tree commits replacement/detached content;
-- a persistent background/rail surface is destroyed or unmapped;
-- baseline identity becomes duplicate, missing, wrong-layer or cross-client;
+- a reserved persistent background/rail role is created or destroyed, changing baseline identity or uniqueness;
+- a commit to the reserved persistent surface tree leaves the baseline missing, duplicate, wrong-layer, cross-client or non-renderable;
 - frame-loop authority is invalidated;
 - selected output authority is invalidated;
 - renderer/session authority requires revalidation;
 - compositor-wide Wayland protocol dispatch/flush authority is invalidated.
+
+Creating a reserved persistent role also discards any in-flight Shell readiness proof token before that role has renderable content. A failed or invalid persistent commit likewise discards the token. Valid content replacement on the already-earned unique baseline does not needlessly discard readiness.
+
+Whenever a persistent-Shell lifecycle event clears readiness, the persisted readiness artifact must be updated in the same callback so `/run/prime/compositor/readiness.json` cannot advertise stale `shell_ready=true` while in-memory authority is non-ready.
 
 After invalidation, background+rail readiness is re-earned only by a later frame that passes the complete queue + matching-vblank identity test again.
 
@@ -108,6 +113,7 @@ This draft does not claim:
 - systemd Shell service/restart policy;
 - owner visual acceptance;
 - multi-output Shell policy;
+- reserved namespace authentication beyond the current same-client mechanical readiness boundary;
 - accessibility/touch/tablet/gesture completion.
 
 ## Construction acceptance sequence
