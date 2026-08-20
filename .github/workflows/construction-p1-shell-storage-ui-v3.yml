@@ -22,7 +22,7 @@ env:
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-storage-ui-v4' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-storage-ui-v4-final' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
