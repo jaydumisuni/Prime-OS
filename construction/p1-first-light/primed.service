@@ -1,0 +1,34 @@
+[Unit]
+Description=Prime Core Host Authority
+After=local-fs.target systemd-sysusers.service
+Before=prime-compositor.service graphical.target
+ConditionPathExists=/usr/lib/prime/generation-seed.json
+ConditionPathIsExecutable=/usr/sbin/bootc
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/prime/primed
+User=root
+Group=prime-shell
+RuntimeDirectory=prime
+RuntimeDirectoryMode=0770
+StateDirectory=prime
+StateDirectoryMode=0711
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/prime /run/prime
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_BOOT
+AmbientCapabilities=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
