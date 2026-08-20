@@ -1,0 +1,18 @@
+diff --git a/crates/prime-shell/src/main.rs b/crates/prime-shell/src/main.rs
+--- a/crates/prime-shell/src/main.rs
++++ b/crates/prime-shell/src/main.rs
+@@ -311,7 +311,7 @@ impl PrimeShell {
+     fn configure_transient(
+         &mut self,
+         layer: &LayerSurface,
+-        configure: LayerSurfaceConfigure,
++        configure: &LayerSurfaceConfigure,
+     ) -> bool {
+@@ -478,7 +478,7 @@ impl LayerShellHandler for PrimeShell {
+         configure: LayerSurfaceConfigure,
+         _serial: u32,
+     ) {
+-        if self.configure_transient(layer, configure) {
++        if self.configure_transient(layer, &configure) {
+             return;
+         }
