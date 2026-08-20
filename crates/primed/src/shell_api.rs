@@ -18,6 +18,8 @@ pub enum ShellApiError {
     #[error(transparent)]
     Registry(#[from] registry::RegistryError),
     #[error(transparent)]
+    Exec(#[from] exec::ExecError),
+    #[error(transparent)]
     Launch(#[from] launcher::LaunchError),
     #[error("invalid Shell launch request: {0}")]
     InvalidRequest(&'static str),
