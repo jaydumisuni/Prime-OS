@@ -57,15 +57,15 @@ Orb/launcher and quick controls remain required P1 capabilities, but they are tr
 The current interaction construction slice uses the existing Wayland seat authority rather than adding a second input stack:
 
 - the persistent rail uses `KeyboardInteractivity::OnDemand` so the compositor may give it keyboard focus after accepted pointer interaction;
-- a left-edge rail press opens `prime.shell.orb`;
-- a right-edge rail press opens `prime.shell.quick-controls`;
-- while the rail owns keyboard focus, `o` opens Orb and `q` opens quick controls;
-- a focused Orb or quick-controls overlay closes on Escape;
+- a left-edge rail press toggles `prime.shell.orb` open/closed;
+- a right-edge rail press toggles `prime.shell.quick-controls` open/closed;
+- while the rail owns keyboard focus, `o` toggles Orb and `q` toggles quick controls;
+- a focused Orb or quick-controls overlay also closes on Escape;
 - dropping the owned transient layer surface is the close transition, so the Wayland surface lifecycle is real rather than a hidden boolean.
 
 The rail trigger widths, Orb dimensions, quick-controls dimensions, anchors and colors are provisional construction mechanics only. They are not final Prime visual authority.
 
-Global keyboard accelerator and full launcher navigation remain unearned. This slice proves a keyboard-triggered open path only while the Shell rail already owns focus and a focused-overlay Escape close path. A later input/launcher integration slice must earn any global accelerator and complete keyboard navigation semantics without weakening compositor focus authority.
+Global keyboard accelerator and full launcher navigation remain unearned. This slice proves deterministic pointer and keyboard open/close only after normal compositor focus has reached the Shell rail, plus focused-overlay Escape close. A later input/launcher integration slice must earn any global accelerator and complete keyboard navigation semantics without weakening compositor focus authority.
 
 ## Privileged action boundary
 
