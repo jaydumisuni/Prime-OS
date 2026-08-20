@@ -3,7 +3,10 @@ use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_layer_shell, delegate_output, delegate_seat, delegate_shm,
     delegate_xdg_shell,
-    desktop::{PopupKind, PopupManager, Space, Window},
+    desktop::{
+        layer_map_for_output, LayerSurface as DesktopLayerSurface, PopupKind, PopupManager, Space,
+        Window,
+    },
     input::{
         keyboard::{KeyboardHandle, XkbConfig},
         pointer::PointerHandle,
@@ -14,6 +17,7 @@ use smithay::{
         protocol::{wl_buffer, wl_output::WlOutput, wl_surface::WlSurface},
         Client,
     },
+    utils::IsAlive,
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -22,12 +26,15 @@ use smithay::{
         },
         output::{OutputHandler, OutputManagerState},
         shell::{
-            wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            wlr_layer::{
+                Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState,
+            },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
     },
 };
+use std::time::Duration;
 
 pub(crate) struct ProtocolState {
     pub(crate) compositor_state: CompositorState,
@@ -39,7 +46,7 @@ pub(crate) struct ProtocolState {
     pub(crate) pointer: PointerHandle<Runtime>,
     pub(crate) space: Space<Window>,
     pub(crate) popups: PopupManager,
-    layer_surfaces: Vec<LayerSurface>,
+    layer_surfaces: Vec<DesktopLayerSurface>,
     _output_manager_state: OutputManagerState,
     _output_global: GlobalId,
 }
@@ -61,6 +68,8 @@ impl ProtocolState {
         let mut seat = seat_state.new_wl_seat(display_handle, seat_name.to_owned());
         let keyboard = seat.add_keyboard(XkbConfig::default(), 200, 25)?;
         let pointer = seat.add_pointer();
+        let mut space = Space::default();
+        space.map_output(output, (0, 0));
 
         Ok(Self {
             compositor_state,
@@ -70,12 +79,25 @@ impl ProtocolState {
             seat_state,
             keyboard,
             pointer,
-            space: Space::default(),
+            space,
             popups: PopupManager::default(),
             layer_surfaces: Vec::new(),
             _output_manager_state: output_manager_state,
             _output_global: output_global,
         })
+    }
+
+    pub(crate) fn send_frame_callbacks(
+        &self,
+        output: &smithay::output::Output,
+        time: Duration,
+    ) {
+        for window in self.space.elements() {
+            window.send_frame(output, time, None, |_, _| Some(output.clone()));
+        }
+        for layer in self.layer_surfaces.iter().filter(|layer| layer.alive()) {
+            layer.send_frame(output, time, None, |_, _| Some(output.clone()));
+        }
     }
 }
 
@@ -120,6 +142,8 @@ impl CompositorHandler for Runtime {
         }
 
         handle_xdg_commit(&mut self.protocols.popups, &self.protocols.space, surface);
+        self.protocols.space.refresh();
+        layer_map_for_output(&self._output).arrange();
     }
 }
 
@@ -180,14 +204,35 @@ impl WlrLayerShellHandler for Runtime {
 
     fn new_layer_surface(
         &mut self,
-        surface: LayerSurface,
+        surface: WlrLayerSurface,
         _output: Option<WlOutput>,
         _layer: Layer,
-        _namespace: String,
+        namespace: String,
     ) {
-        self.protocols.layer_surfaces.retain(LayerSurface::alive);
-        surface.send_configure();
-        self.protocols.layer_surfaces.push(surface);
+        self.protocols.layer_surfaces.retain(IsAlive::alive);
+        let layer = DesktopLayerSurface::new(surface, namespace);
+        let map_result = layer_map_for_output(&self._output).map_layer(&layer);
+        if let Err(error) = map_result {
+            eprintln!("prime-compositor could not map WLR layer surface: {error}");
+            return;
+        }
+        layer.layer_surface().send_configure();
+        self.protocols.layer_surfaces.push(layer);
+    }
+
+    fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
+        let layer = self
+            .protocols
+            .layer_surfaces
+            .iter()
+            .find(|layer| layer.layer_surface() == &surface)
+            .cloned();
+        if let Some(layer) = layer {
+            layer_map_for_output(&self._output).unmap_layer(&layer);
+            self.protocols
+                .layer_surfaces
+                .retain(|candidate| candidate != &layer && candidate.alive());
+        }
     }
 }
 
