@@ -52,9 +52,34 @@ A duplicate background or rail candidate makes baseline identity ambiguous and m
 
 ## Transient Shell capabilities
 
-Orb/launcher and quick controls remain required P1 capabilities, but they are transient overlays. They must have separately proven deterministic open/close and input behavior before the P1 Shell can become product authority, but `shell_ready` must not require them to remain mapped while closed.
+Orb/launcher and quick controls remain required P1 capabilities, but they are transient WLR Overlay surfaces. They do not participate in the persistent `shell_ready` identity and may be absent while closed.
 
-A future Orb/quick-controls construction slice must not weaken the persistent background+rail readiness boundary.
+The current interaction construction slice uses the existing Wayland seat authority rather than adding a second input stack:
+
+- the persistent rail uses `KeyboardInteractivity::OnDemand` so the compositor may give it keyboard focus after accepted pointer interaction;
+- a left-edge rail press opens `prime.shell.orb`;
+- a right-edge rail press opens `prime.shell.quick-controls`;
+- while the rail owns keyboard focus, `o` opens Orb and `q` opens quick controls;
+- a focused Orb or quick-controls overlay closes on Escape;
+- dropping the owned transient layer surface is the close transition, so the Wayland surface lifecycle is real rather than a hidden boolean.
+
+The rail trigger widths, Orb dimensions, quick-controls dimensions, anchors and colors are provisional construction mechanics only. They are not final Prime visual authority.
+
+Global keyboard accelerator and full launcher navigation remain unearned. This slice proves a keyboard-triggered open path only while the Shell rail already owns focus and a focused-overlay Escape close path. A later input/launcher integration slice must earn any global accelerator and complete keyboard navigation semantics without weakening compositor focus authority.
+
+## Privileged action boundary
+
+Transient UI existence does not grant mutation authority.
+
+The current Prime Core launch seam is typed and privileged. Orb construction must therefore not use direct arbitrary process spawning and must not call the native-launch endpoint from an unprivileged UI shortcut. The Rust/Core authorization bridge is a separate milestone.
+
+Until that bridge is earned:
+
+- Orb activation is visibly/logically unavailable rather than faked;
+- no application is launched directly from `prime-shell`;
+- quick-controls mutations are unavailable;
+- settings, network, audio, power, restart and shutdown mutations are not simulated;
+- later rich UI may display only capability truth actually supplied by Prime Core.
 
 ## Configure semantics
 
@@ -65,9 +90,10 @@ A fixed construction dimension may fall back only to a dimension the client expl
 For the current baseline:
 
 - background requests compositor-owned width and height, so both must be supplied before it draws;
-- rail requests compositor-owned width and a provisional fixed height, so only the height may fall back to that requested construction value.
+- rail requests compositor-owned width and a provisional fixed height, so only the height may fall back to that requested construction value;
+- transient Orb and quick-controls overlays request both construction dimensions, so zero configure dimensions may fall back to those explicit requests.
 
-Every accepted configure redraws the affected static SHM surface. Process start, role creation, configure receipt, or a construction log marker does not earn compositor Shell readiness.
+Every accepted configure redraws the affected static SHM construction surface. Process start, role creation, configure receipt, or a construction log marker does not earn compositor Shell readiness or visual acceptance.
 
 ## `shell_ready` invariant
 
@@ -83,6 +109,8 @@ Every accepted configure redraws the affected static SHM surface. Process start,
 `SHELL_READY` is therefore a DRM-retirement claim, not a client-process or surface-mapping claim.
 
 After `SHELL_READY` has been earned, an ordinary background/rail content replacement that leaves the same unique baseline live, correctly layered, same-client and renderable does not by itself revoke readiness. The compositor still queues the updated frame. This allows a live system rail to update without turning normal Shell presentation into a readiness failure.
+
+Transient Orb/quick-controls creation or destruction does not revoke persistent Shell readiness unless it independently causes a compositor/frame/protocol failure.
 
 ## Fail-closed revalidation
 
@@ -106,8 +134,10 @@ After invalidation, background+rail readiness is re-earned only by a later frame
 This draft does not claim:
 
 - live physical `SHELL_READY` proof on the P1 host;
-- Orb/launcher input lifecycle;
-- quick-controls lifecycle;
+- global Orb keyboard accelerator;
+- full Orb application/profile inventory and keyboard navigation;
+- admitted application launch through the typed privileged Prime Core bridge;
+- truthful live quick-controls data/mutations;
 - final geometry, styling, animation or glass/depth treatment;
 - system WebKit rich-surface integration;
 - systemd Shell service/restart policy;
@@ -118,4 +148,4 @@ This draft does not claim:
 
 ## Construction acceptance sequence
 
-`FRAME authority → persistent background+rail mechanics → static/build proof → exact readiness integration proof → Orb + quick-controls mechanics → physical Shell-frame retirement on the P1 host → owner visual gate → selective product promotion`.
+`FRAME authority → persistent background+rail mechanics → static/build proof → exact readiness integration proof → Orb + quick-controls mechanics → privileged Core bridge + truthful Shell data → physical Shell-frame proof on the P1 host → owner visual gate → selective product promotion`.
