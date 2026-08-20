@@ -1,7 +1,7 @@
 diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
 --- a/crates/prime-compositor/src/frame.rs
 +++ b/crates/prime-compositor/src/frame.rs
-@@ -2,10 +2,10 @@ use crate::Runtime;
+@@ -2,9 +2,9 @@ use crate::Runtime;
  use smithay::{
      backend::{
          drm::compositor::{FrameFlags, PrimaryPlaneElement},
