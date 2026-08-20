@@ -1,0 +1,18 @@
+diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
+--- a/crates/prime-compositor/src/frame.rs
++++ b/crates/prime-compositor/src/frame.rs
+@@ -122,10 +122,11 @@
+     if !followup_frame_requested {
+         let elapsed = runtime.frame.clock_started.elapsed();
++        let output = runtime._output.clone();
+         for window in runtime.protocols.space.elements() {
+-            window.send_frame(&runtime._output, elapsed, None, |_, _| None);
++            window.send_frame(&output, elapsed, None, |_, _| Some(output.clone()));
+         }
+-        let layer_map = layer_map_for_output(&runtime._output);
++        let layer_map = layer_map_for_output(&output);
+         for layer in layer_map.layers() {
+-            layer.send_frame(&runtime._output, elapsed, None, |_, _| None);
++            layer.send_frame(&output, elapsed, None, |_, _| Some(output.clone()));
+         }
+     }
