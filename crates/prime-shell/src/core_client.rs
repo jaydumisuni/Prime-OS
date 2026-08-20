@@ -1,7 +1,4 @@
-use prime_contracts::{
-    ApplicationsProjection, ShellLaunchRequest, CAPABILITY_INTERFACE_VERSION,
-    SHELL_LAUNCH_REQUEST_SCHEMA,
-};
+use prime_contracts::{ApplicationsProjection, CAPABILITY_INTERFACE_VERSION, SHELL_LAUNCH_REQUEST_SCHEMA};
 use serde_json::Value;
 use std::{
     env,
@@ -52,14 +49,14 @@ impl CoreClient {
         serde_json::from_slice(&body).map_err(|error| CoreClientError::Json(error.to_string()))
     }
 
-    pub(crate) fn launch(&self, application_id: uuid::Uuid) -> Result<(), CoreClientError> {
-        let request = ShellLaunchRequest {
-            schema: SHELL_LAUNCH_REQUEST_SCHEMA.to_owned(),
-            application_id,
-        };
-        let body = serde_json::to_vec(&request)
-            .map_err(|error| CoreClientError::Json(error.to_string()))?;
-        self.request("POST", "/v1/shell/launch", Some(&body))?;
+    pub(crate) fn launch(
+        &self,
+        application_id: impl fmt::Display,
+    ) -> Result<(), CoreClientError> {
+        let body = format!(
+            "{{\"schema\":\"{SHELL_LAUNCH_REQUEST_SCHEMA}\",\"application_id\":\"{application_id}\"}}"
+        );
+        self.request("POST", "/v1/shell/launch", Some(body.as_bytes()))?;
         Ok(())
     }
 
