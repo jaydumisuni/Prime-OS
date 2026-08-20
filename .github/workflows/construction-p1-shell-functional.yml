@@ -1,0 +1,171 @@
+name: Construction P1 Functional Shell
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-functional-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  READINESS_RUN: 32373143300
+  READINESS_ARTIFACT: prime-shell-readiness-v5-f1850d3be264cc9a0a0544ba32713e8523cd26d1
+  INTERACTIONS_RUN: 32376522915
+  INTERACTIONS_ARTIFACT: prime-shell-interactions-v3-1ce9e7fc89d8a254c4252724fa8cf4fda915110e
+  CORE_RUN: 32381635585
+  CORE_ARTIFACT: prime-shell-core-direct3-83793aee29443863e77f4fe6f2f2a4d276e27004
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-functional' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence functional Shell candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/files.txt
+          test "$(cat /tmp/files.txt)" = $'crates/prime-shell/src/core_client.rs\ncrates/prime-shell/src/visual.rs'
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          ! grep -R -F 'std::process::Command' crates/prime-shell/src
+          ! grep -R -F '/v1/exec/native/launch' crates/prime-shell/src
+          echo PRIME_SHELL_FUNCTIONAL_SCOPE=PASS
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.READINESS_RUN }}
+          name: ${{ env.READINESS_ARTIFACT }}
+          path: /tmp/prime-readiness
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.INTERACTIONS_RUN }}
+          name: ${{ env.INTERACTIONS_ARTIFACT }}
+          path: /tmp/prime-interactions
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.CORE_RUN }}
+          name: ${{ env.CORE_ARTIFACT }}
+          path: /tmp/prime-core
+
+      - name: Reconstruct proven parent and integrate functional Shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a /tmp/prime-readiness/handoff/. .
+          cp -a /tmp/prime-interactions/handoff/. .
+          cp -a /tmp/prime-core/handoff/. .
+          cp crates/prime-shell/src/core_client.rs /tmp/core_client.rs
+          cp crates/prime-shell/src/visual.rs /tmp/visual.rs
+          python3 construction/shell-functional/integrate.py
+          cp /tmp/core_client.rs crates/prime-shell/src/core_client.rs
+          cp /tmp/visual.rs crates/prime-shell/src/visual.rs
+          git diff --check
+          grep -F 'mod core_client;' crates/prime-shell/src/main.rs
+          grep -F 'mod visual;' crates/prime-shell/src/main.rs
+          grep -F 'self.core.applications()' crates/prime-shell/src/main.rs
+          grep -F 'self.core.launch(entry.application_id)' crates/prime-shell/src/main.rs
+          grep -F 'self.core.system_status_lines()' crates/prime-shell/src/main.rs
+          grep -F 'visual::paint_orb' crates/prime-shell/src/main.rs
+          grep -F 'visual::paint_quick_controls' crates/prime-shell/src/main.rs
+          grep -F '"/v1/applications"' crates/prime-shell/src/core_client.rs
+          grep -F '"/v1/shell/launch"' crates/prime-shell/src/core_client.rs
+          grep -F '"/v1/capabilities/prime.system.status"' crates/prime-shell/src/core_client.rs
+          ! grep -R -F 'std::process::Command' crates/prime-shell/src
+          ! grep -R -F '/v1/exec/native/launch' crates/prime-shell/src
+          echo PRIME_SHELL_FUNCTIONAL_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove functional Shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-shell/src handoff/crates/prime-contracts/src handoff/crates/primed/src handoff/crates/prime-compositor/src
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_FUNCTIONAL_FMT=PASS
+              cargo clippy --locked -p prime-shell -p prime-compositor -p primed -p prime-contracts --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_FUNCTIONAL_CLIPPY=PASS
+              cargo test --locked -p primed -p prime-compositor -p prime-contracts 2>&1 | tee diag/tests.log
+              echo PRIME_SHELL_FUNCTIONAL_TEST=PASS
+              cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
+              ! ldd target/release/primed | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-shell --help | tee diag/shell-help.log
+              target/release/prime-compositor --help | tee diag/compositor-help.log
+              echo PRIME_SHELL_FUNCTIONAL_BUILD=PASS
+            '
+          cp Cargo.toml Cargo.lock handoff/
+          cp crates/prime-shell/Cargo.toml handoff/crates/prime-shell/Cargo.toml
+          cp crates/prime-shell/src/main.rs crates/prime-shell/src/core_client.rs crates/prime-shell/src/visual.rs handoff/crates/prime-shell/src/
+          cp crates/prime-contracts/src/application.rs handoff/crates/prime-contracts/src/application.rs
+          cp crates/primed/src/lib.rs crates/primed/src/server.rs crates/primed/src/shell_api.rs handoff/crates/primed/src/
+          cp crates/prime-compositor/src/main.rs crates/prime-compositor/src/frame.rs crates/prime-compositor/src/protocols.rs crates/prime-compositor/src/shell.rs handoff/crates/prime-compositor/src/
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo SHELL_MAIN_HASH=$(git hash-object crates/prime-shell/src/main.rs)
+            echo SHELL_CORE_CLIENT_HASH=$(git hash-object crates/prime-shell/src/core_client.rs)
+            echo SHELL_VISUAL_HASH=$(git hash-object crates/prime-shell/src/visual.rs)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_SHELL_FUNCTIONAL_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-functional-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
