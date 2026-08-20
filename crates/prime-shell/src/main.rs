@@ -210,7 +210,10 @@ impl PrimeShell {
             bytes.copy_from_slice(&pixel);
         }
 
-        surface.layer.wl_surface().damage_buffer(0, 0, width, height);
+        surface
+            .layer
+            .wl_surface()
+            .damage_buffer(0, 0, width, height);
         buffer.attach_to(surface.layer.wl_surface())?;
         surface.layer.commit();
         Ok(())
