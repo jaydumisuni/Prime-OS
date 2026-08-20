@@ -208,6 +208,7 @@ impl WlrLayerShellHandler for Runtime {
             return;
         }
 
+        let persistent_shell = crate::shell::is_persistent_namespace(&namespace);
         let desktop_surface = DesktopLayerSurface::new(surface, namespace);
         let map_result = {
             let mut map = layer_map_for_output(&self._output);
@@ -216,6 +217,9 @@ impl WlrLayerShellHandler for Runtime {
         if let Err(error) = map_result {
             eprintln!("prime-compositor could not map layer surface: {error}");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+        } else if persistent_shell {
+            self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+            self.request_frame();
         }
     }
 
