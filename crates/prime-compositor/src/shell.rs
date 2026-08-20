@@ -82,22 +82,23 @@ pub(crate) fn persistent_baseline_renderable(
     let mut rails = Vec::new();
 
     for layer in map.layers() {
-        let Some(candidate) = renderable_candidate(renderer, output, layer) else {
-            continue;
-        };
         match layer.namespace() {
-            BACKGROUND_NAMESPACE => backgrounds.push(candidate),
-            RAIL_NAMESPACE => rails.push(candidate),
+            BACKGROUND_NAMESPACE => backgrounds.push(layer.clone()),
+            RAIL_NAMESPACE => rails.push(layer.clone()),
             _ => {}
         }
     }
+    drop(map);
 
     if backgrounds.len() != 1 || rails.len() != 1 {
         return None;
     }
 
-    let (background_client, background) = backgrounds.pop()?;
-    let (rail_client, rail) = rails.pop()?;
+    let background_layer = backgrounds.pop()?;
+    let rail_layer = rails.pop()?;
+    let (background_client, background) =
+        renderable_candidate(renderer, output, &background_layer)?;
+    let (rail_client, rail) = renderable_candidate(renderer, output, &rail_layer)?;
     if background_client != rail_client {
         return None;
     }
@@ -110,32 +111,15 @@ pub(crate) fn persistent_baseline_identity_renderable(
     output: &Output,
     identity: &ShellBaselineIdentity,
 ) -> bool {
-    let map = layer_map_for_output(output);
-    let mut background_renderable = false;
-    let mut rail_renderable = false;
+    let Some(current) = persistent_baseline_renderable(renderer, output) else {
+        return false;
+    };
 
-    for layer in map.layers() {
-        if layer.wl_surface() == &identity.background
-            && layer.namespace() == BACKGROUND_NAMESPACE
-            && layer.layer() == Layer::Background
-        {
-            background_renderable = renderable_candidate(renderer, output, layer).is_some();
-        } else if layer.wl_surface() == &identity.rail
-            && layer.namespace() == RAIL_NAMESPACE
-            && layer.layer() == Layer::Top
-        {
-            rail_renderable = renderable_candidate(renderer, output, layer).is_some();
-        }
-    }
-
-    background_renderable && rail_renderable
+    current.background == identity.background && current.rail == identity.rail
 }
 
 pub(crate) fn persistent_layer_for_surface(output: &Output, surface: &WlSurface) -> bool {
     let map = layer_map_for_output(output);
     map.layer_for_surface(surface, WindowSurfaceType::ALL)
-        .is_some_and(|layer| {
-            is_persistent_namespace(layer.namespace())
-                && expected_layer(layer.namespace()) == Some(layer.layer())
-        })
+        .is_some_and(|layer| is_persistent_namespace(layer.namespace()))
 }
