@@ -4,13 +4,14 @@ use smithay::{
         Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
         PointerButtonEvent, PointerMotionEvent,
     },
+    desktop::{layer_map_for_output, WindowSurfaceType},
     input::{
         keyboard::FilterResult,
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
-    wayland::seat::WaylandFocus,
+    wayland::{seat::WaylandFocus, shell::wlr_layer::Layer as WlrLayer},
 };
 use std::convert::TryInto;
 
@@ -129,23 +130,80 @@ fn surface_under(
     runtime: &Runtime,
     location: Point<f64, Logical>,
 ) -> Option<(WlSurface, Point<f64, Logical>)> {
-    runtime
+    let output = runtime.protocols.space.outputs().find(|output| {
+        runtime
+            .protocols
+            .space
+            .output_geometry(output)
+            .is_some_and(|geometry| geometry.contains(location.to_i32_round()))
+    })?;
+    let output_geometry = runtime.protocols.space.output_geometry(output)?;
+    let layers = layer_map_for_output(output);
+    let output_local = location - output_geometry.loc.to_f64();
+
+    if let Some(focus) = layers
+        .layer_under(WlrLayer::Overlay, output_local)
+        .or_else(|| layers.layer_under(WlrLayer::Top, output_local))
+        .and_then(|layer| {
+            let layer_location = layers.layer_geometry(layer)?.loc;
+            layer
+                .surface_under(
+                    output_local - layer_location.to_f64(),
+                    WindowSurfaceType::ALL,
+                )
+                .map(|(surface, surface_location)| {
+                    (
+                        surface,
+                        (surface_location + layer_location + output_geometry.loc).to_f64(),
+                    )
+                })
+        })
+    {
+        return Some(focus);
+    }
+
+    if let Some(focus) = runtime
         .protocols
         .space
         .element_under(location)
         .and_then(|(window, window_location)| {
             window
-                .wl_surface()
-                .map(|surface| (surface.into_owned(), window_location.to_f64()))
+                .surface_under(location - window_location.to_f64(), WindowSurfaceType::ALL)
+                .map(|(surface, surface_location)| {
+                    (surface, (surface_location + window_location).to_f64())
+                })
+        })
+    {
+        return Some(focus);
+    }
+
+    layers
+        .layer_under(WlrLayer::Bottom, output_local)
+        .or_else(|| layers.layer_under(WlrLayer::Background, output_local))
+        .and_then(|layer| {
+            let layer_location = layers.layer_geometry(layer)?.loc;
+            layer
+                .surface_under(
+                    output_local - layer_location.to_f64(),
+                    WindowSurfaceType::ALL,
+                )
+                .map(|(surface, surface_location)| {
+                    (
+                        surface,
+                        (surface_location + layer_location + output_geometry.loc).to_f64(),
+                    )
+                })
         })
 }
 
 fn clamp_to_output(runtime: &Runtime, mut location: Point<f64, Logical>) -> Point<f64, Logical> {
-    if let Some(mode) = runtime._output.current_mode() {
-        let max_x = f64::from(mode.size.w.saturating_sub(1));
-        let max_y = f64::from(mode.size.h.saturating_sub(1));
-        location.x = location.x.clamp(0.0, max_x);
-        location.y = location.y.clamp(0.0, max_y);
+    if let Some(geometry) = runtime.protocols.space.output_geometry(&runtime._output) {
+        let min_x = f64::from(geometry.loc.x);
+        let min_y = f64::from(geometry.loc.y);
+        let max_x = f64::from(geometry.loc.x + geometry.size.w.saturating_sub(1));
+        let max_y = f64::from(geometry.loc.y + geometry.size.h.saturating_sub(1));
+        location.x = location.x.clamp(min_x, max_x);
+        location.y = location.y.clamp(min_y, max_y);
     }
     location
 }
