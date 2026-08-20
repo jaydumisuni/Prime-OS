@@ -1,0 +1,97 @@
+name: Construction P1 WLR Initial Configure Gate
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-layer-configure-proof-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRODUCT_SHA: 7e4dcbae3706055928cb25d5fd7fc629c55a27cd
+  PROTOCOLS_HASH: bf7c4f6d9b3a92d390dcb07a93ca805ef2b3410e
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-layer-configure-lifecycle' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Freeze exact one-file lifecycle correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$PRODUCT_SHA")" = "$PRODUCT_SHA"
+          test "$(git diff --name-only "$PRODUCT_SHA" HEAD)" = "crates/prime-compositor/src/protocols.rs"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('crates/prime-compositor/src/protocols.rs').read_text()
+          new_layer = source.split('fn new_layer_surface(', 1)[1].split('fn layer_destroyed(', 1)[0]
+          assert 'send_configure' not in new_layer
+          assert 'request_frame' not in new_layer
+          assert 'fn handle_layer_commit(' in source
+          assert 'LayerSurfaceData' in source
+          assert 'WindowSurfaceType::TOPLEVEL' in source
+          assert '.initial_configure_sent' in source
+          assert 'map.arrange();' in source
+          assert '.send_configure();' in source.split('fn handle_layer_commit(', 1)[1]
+          PY
+          git diff --check "$PRODUCT_SHA" HEAD
+          echo PRIME_LAYER_CONFIGURE_IDENTITY=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove lifecycle correction with pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check
+              echo PRIME_LAYER_CONFIGURE_FMT=PASS
+              cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
+              echo PRIME_LAYER_CONFIGURE_CLIPPY=PASS
+              cargo test --locked -p prime-compositor
+              echo PRIME_LAYER_CONFIGURE_TEST=PASS
+              cargo build --locked -p prime-compositor --release --bin prime-compositor
+              test -x target/release/prime-compositor
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
+              echo PRIME_LAYER_CONFIGURE_BUILD=PASS
+            '
