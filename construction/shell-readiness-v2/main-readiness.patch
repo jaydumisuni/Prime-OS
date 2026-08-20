@@ -1,10 +1,10 @@
 diff --git a/crates/prime-compositor/src/main.rs b/crates/prime-compositor/src/main.rs
 --- a/crates/prime-compositor/src/main.rs
 +++ b/crates/prime-compositor/src/main.rs
-@@ -2,3 +2,4 @@
- mod input;
+@@ -3,2 +3,3 @@
  mod output;
- mod protocols;
+-mod protocols;
++mod protocols;
 +mod shell;
 @@ -135,6 +136,7 @@ impl Runtime {
          self.readiness.phase = phase.to_owned();
