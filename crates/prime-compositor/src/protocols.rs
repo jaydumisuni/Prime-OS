@@ -206,6 +206,7 @@ impl WlrLayerShellHandler for Runtime {
         if target != self._output {
             eprintln!("prime-compositor rejected layer surface for unsupported output");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+            self.persist_best_effort();
             return;
         }
 
@@ -218,6 +219,7 @@ impl WlrLayerShellHandler for Runtime {
         if let Err(error) = map_result {
             eprintln!("prime-compositor could not map layer surface: {error}");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+            self.persist_best_effort();
         } else if persistent_shell {
             self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
             self.request_frame();
