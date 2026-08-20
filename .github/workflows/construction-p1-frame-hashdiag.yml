@@ -1,0 +1,33 @@
+name: Construction P1 Frame Hash Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-frame-proof-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: ${{ github.head_ref == 'construction/p1-frame-proof' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Print exact post-apply hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          printf 'INPUT=%s\n' "$(git hash-object crates/prime-compositor/src/input.rs)"
+          printf 'MAIN=%s\n' "$(git hash-object crates/prime-compositor/src/main.rs)"
+          printf 'PROTOCOLS=%s\n' "$(git hash-object crates/prime-compositor/src/protocols.rs)"
+          printf 'READINESS=%s\n' "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)"
+          printf 'FRAME=%s\n' "$(git hash-object crates/prime-compositor/src/frame.rs)"
+          printf 'FRAME_CONTRACT=%s\n' "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)"
+          git diff --check
