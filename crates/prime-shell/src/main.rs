@@ -254,13 +254,8 @@ impl LayerShellHandler for PrimeShell {
                 self.exit = true;
                 return;
             };
-            if let Err(error) = draw_surface(
-                &mut self.pool,
-                layer,
-                width,
-                height,
-                BACKGROUND_ARGB,
-            ) {
+            if let Err(error) = draw_surface(&mut self.pool, layer, width, height, BACKGROUND_ARGB)
+            {
                 eprintln!("prime-shell could not draw background: {error}");
                 self.exit = true;
                 return;
