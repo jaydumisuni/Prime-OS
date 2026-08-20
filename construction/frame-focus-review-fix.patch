@@ -1,15 +1,15 @@
 diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/input.rs
 --- a/crates/prime-compositor/src/input.rs
 +++ b/crates/prime-compositor/src/input.rs
-@@ -8,7 +8,7 @@ use smithay::{
-         keyboard::FilterResult,
-         pointer::{AxisFrame, ButtonEvent, MotionEvent},
+@@ -4,7 +4,7 @@ use smithay::{
+         Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+         PointerButtonEvent, PointerMotionEvent,
      },
 -    desktop::{layer_map_for_output, WindowSurfaceType},
 +    desktop::{find_popup_root_surface, layer_map_for_output, WindowSurfaceType},
-     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
-     utils::{Logical, Point, SERIAL_COUNTER},
-     wayland::compositor::get_parent,
+     input::{
+         keyboard::FilterResult,
+         pointer::{AxisFrame, ButtonEvent, MotionEvent},
 @@ -221,5 +221,8 @@ fn keyboard_focus_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<WlSurface> {
      while let Some(parent) = get_parent(&root) {
          root = parent;
