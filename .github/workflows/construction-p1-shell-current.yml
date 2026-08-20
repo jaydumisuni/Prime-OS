@@ -1,0 +1,113 @@
+name: Construction P1 Shell Current Product Gate
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-current-proof-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRODUCT_SHA: 872b46658863ba0694bd0de017e1a8491047ffa2
+  PROTOCOLS_HASH: bf7c4f6d9b3a92d390dcb07a93ca805ef2b3410e
+  ROOT_CARGO_HASH: 0a635efefc6db30b4bad4f2ee7692a83acfab6ba
+  SHELL_CARGO_HASH: 025ab035caefc194c09936f4682688b0160187a7
+  SHELL_MAIN_HASH: 36c315e0332397a2dacf7bb4b5ddabd4dfe9b1dc
+  SHELL_CONTRACT_HASH: 8db6dbb48a203fecccdba8c1d5805bc59e5f0a52
+  LOCK_SHA256: d8c87bc9c7aa116ae85a407d23058dfb7fe1bc5c2955a8df677747ba201a2d47
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-current-product' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Freeze current-product Shell candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$PRODUCT_SHA")" = "$PRODUCT_SHA"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          mapfile -t files < <(git diff --name-only "$PRODUCT_SHA" HEAD)
+          test "${#files[@]}" -eq 4
+          printf '%s\n' "${files[@]}" | grep -Fx 'Cargo.toml'
+          printf '%s\n' "${files[@]}" | grep -Fx 'crates/prime-shell/Cargo.toml'
+          printf '%s\n' "${files[@]}" | grep -Fx 'crates/prime-shell/src/main.rs'
+          printf '%s\n' "${files[@]}" | grep -Fx 'docs/contracts/PRIME_P1_SHELL_V1.md'
+          test "$(git hash-object Cargo.toml)" = "$ROOT_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/Cargo.toml)" = "$SHELL_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/src/main.rs)" = "$SHELL_MAIN_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_SHELL_V1.md)" = "$SHELL_CONTRACT_HASH"
+          grep -F 'prime.shell.background' crates/prime-shell/src/main.rs
+          grep -F 'layer.set_exclusive_zone(-1);' crates/prime-shell/src/main.rs
+          grep -F 'refusing to map an ambiguous surface' crates/prime-shell/src/main.rs
+          ! grep -F 'first_configure' crates/prime-shell/src/main.rs
+          git diff --check "$PRODUCT_SHA" HEAD
+          echo PRIME_SHELL_CURRENT_IDENTITY=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Freeze dependency lock and prove Shell mechanics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -e LOCK_SHA256="$LOCK_SHA256" \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceuo pipefail '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config "pkgconfig(wayland-client)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              rustc --version --verbose | tee diag/rustc.log
+              cargo --version | tee diag/cargo.log
+              rm -f Cargo.lock
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              actual_lock="$(sha256sum Cargo.lock | awk "{print \$1}")"
+              printf "%s  Cargo.lock\n" "$actual_lock" | tee diag/Cargo.lock.sha256
+              test "$actual_lock" = "$LOCK_SHA256"
+              cp Cargo.lock diag/Cargo.lock.frozen
+              echo PRIME_SHELL_CURRENT_LOCK=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo check --locked -p prime-shell 2>&1 | tee diag/check.log
+              echo PRIME_SHELL_CURRENT_CHECK=PASS
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_CURRENT_FMT=PASS
+              cargo clippy --locked -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_CURRENT_CLIPPY=PASS
+              cargo build --locked -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
+              test -x target/release/prime-shell
+              target/release/prime-shell --help | tee diag/help.log
+              echo PRIME_SHELL_CURRENT_BUILD=PASS
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-current-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
+          retention-days: 7
