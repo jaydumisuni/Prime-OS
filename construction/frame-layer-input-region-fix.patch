@@ -1,0 +1,36 @@
+diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/input.rs
+--- a/crates/prime-compositor/src/input.rs
++++ b/crates/prime-compositor/src/input.rs
+@@ -195,19 +195,20 @@ fn layer_hit(
+     output_local: Point<f64, Logical>,
+     output_location: Point<i32, Logical>,
+ ) -> Option<(WlSurface, Point<f64, Logical>)> {
+-    let layer = map.layer_under(layer_kind, output_local)?;
+-    let layer_location = map.layer_geometry(layer)?.loc;
+-    layer
+-        .surface_under(
+-            output_local - layer_location.to_f64(),
+-            WindowSurfaceType::ALL,
+-        )
+-        .map(|(surface, surface_location)| {
+-            (
+-                surface,
+-                (surface_location + layer_location + output_location).to_f64(),
+-            )
++    map.layers_on(layer_kind).rev().find_map(|layer| {
++        let layer_location = map.layer_geometry(layer)?.loc;
++        layer
++            .surface_under(
++                output_local - layer_location.to_f64(),
++                WindowSurfaceType::ALL,
++            )
++            .map(|(surface, surface_location)| {
++                (
++                    surface,
++                    (surface_location + layer_location + output_location).to_f64(),
++                )
++            })
+         })
+-}
++    })
++}
