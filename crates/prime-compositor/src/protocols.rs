@@ -129,8 +129,11 @@ impl CompositorHandler for Runtime {
         handle_xdg_commit(&mut self.protocols.popups, &self.protocols.space, surface);
         handle_layer_commit(&self._output, surface);
         if crate::shell::persistent_layer_for_surface(&self._output, surface) {
-            self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
-            self.persist_best_effort();
+            let output = self._output.clone();
+            if crate::shell::persistent_baseline_renderable(&mut self._renderer, &output).is_none() {
+                self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+                self.persist_best_effort();
+            }
         }
         self.request_frame();
     }
