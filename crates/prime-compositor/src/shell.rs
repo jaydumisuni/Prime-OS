@@ -32,6 +32,7 @@ impl Runtime {
             self.readiness.phase = "FRAME_LOOP_READY".to_owned();
         }
         self.readiness.shell_ready = false;
+        self.frame.in_flight_shell_baseline = None;
         self.add_limitation(limitation);
     }
 }
