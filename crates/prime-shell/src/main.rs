@@ -78,6 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         pool,
         background,
         rail,
+        background_readiness_redraw_pending: false,
+        rail_readiness_redraw_pending: false,
         exit: false,
     };
 
@@ -95,6 +97,8 @@ struct PrimeShell {
     pool: SlotPool,
     background: LayerSurface,
     rail: LayerSurface,
+    background_readiness_redraw_pending: bool,
+    rail_readiness_redraw_pending: bool,
     exit: bool,
 }
 
@@ -102,6 +106,7 @@ impl PrimeShell {
     fn draw_layer(
         pool: &mut SlotPool,
         layer: &LayerSurface,
+        queue_handle: &QueueHandle<Self>,
         width: u32,
         height: u32,
         color: u32,
@@ -120,6 +125,9 @@ impl PrimeShell {
 
         layer.wl_surface().damage_buffer(0, 0, width, height);
         buffer.attach_to(layer.wl_surface())?;
+        layer
+            .wl_surface()
+            .frame(queue_handle, layer.wl_surface());
         layer.commit();
         Ok(())
     }
@@ -148,9 +156,22 @@ impl CompositorHandler for PrimeShell {
         &mut self,
         _connection: &Connection,
         _queue_handle: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
+        let pending = if surface == self.background.wl_surface() {
+            &mut self.background_readiness_redraw_pending
+        } else if surface == self.rail.wl_surface() {
+            &mut self.rail_readiness_redraw_pending
+        } else {
+            return;
+        };
+
+        if *pending {
+            *pending = false;
+            surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
+            surface.commit();
+        }
     }
 
     fn surface_enter(
@@ -215,22 +236,25 @@ impl LayerShellHandler for PrimeShell {
     fn configure(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        let role = if layer.wl_surface() == self.background.wl_surface() {
-            "background"
+        let (role, color, redraw_pending) = if layer.wl_surface() == self.background.wl_surface() {
+            (
+                "background",
+                PRIME_BACKGROUND_ARGB,
+                &mut self.background_readiness_redraw_pending,
+            )
         } else if layer.wl_surface() == self.rail.wl_surface() {
-            "rail"
+            (
+                "rail",
+                PRIME_RAIL_ARGB,
+                &mut self.rail_readiness_redraw_pending,
+            )
         } else {
             return;
-        };
-        let color = if role == "background" {
-            PRIME_BACKGROUND_ARGB
-        } else {
-            PRIME_RAIL_ARGB
         };
 
         let Some(width) = NonZeroU32::new(configure.new_size.0) else {
@@ -244,14 +268,17 @@ impl LayerShellHandler for PrimeShell {
             return;
         };
 
+        *redraw_pending = true;
         if let Err(error) = Self::draw_layer(
             &mut self.pool,
             layer,
+            queue_handle,
             width.get(),
             height.get(),
             color,
             role,
         ) {
+            *redraw_pending = false;
             eprintln!("prime-shell could not draw the {role} surface: {error}");
             self.exit = true;
         }
