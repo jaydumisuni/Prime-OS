@@ -1,0 +1,77 @@
+name: Construction P1 Shell Lock and Build
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-mechanics-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+
+jobs:
+  shell-lock-build:
+    if: ${{ github.head_ref == 'construction/p1-shell-mechanics' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Enforce bounded construction diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/shell-files.txt
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.toml|Cargo.lock|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
+              *) echo "unexpected construction candidate path: $path" >&2; exit 1 ;;
+            esac
+          done < /tmp/shell-files.txt
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Generate lock and prove pinned Rust Shell build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(wayland-client)" >/dev/null
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              rustc --version --verbose | tee diag/rustc.log
+              cargo --version | tee diag/cargo.log
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              cargo check -p prime-shell 2>&1 | tee diag/check.log
+              cp Cargo.lock diag/Cargo.lock.generated
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              cargo clippy -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              cargo build -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
+              target/release/prime-shell --help | tee diag/help.log
+              git hash-object Cargo.lock crates/prime-shell/Cargo.toml crates/prime-shell/src/main.rs docs/contracts/PRIME_P1_SHELL_V1.md | tee diag/blob-hashes.log
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-lock-build-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
