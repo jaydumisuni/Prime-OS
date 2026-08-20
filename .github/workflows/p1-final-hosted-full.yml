@@ -10,7 +10,7 @@ permissions:
   packages: read
 
 env:
-  FINAL_HEAD: f60f7f49294a361ab14c1746d3f95c7f11e9c1a3
+  FINAL_HEAD: a83ef5bf1560ac4f8075421904534ada4e97e0ed
 
 jobs:
   proof:
