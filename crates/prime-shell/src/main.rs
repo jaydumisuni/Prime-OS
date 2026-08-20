@@ -247,8 +247,9 @@ impl PrimeShell {
         }
     }
 
-    fn open_orb(&mut self, queue_handle: &QueueHandle<Self>, source: InteractionSource) {
+    fn toggle_orb(&mut self, queue_handle: &QueueHandle<Self>, source: InteractionSource) {
         if self.orb.is_some() {
+            self.close_transient(ShellSurfaceKind::Orb, source);
             return;
         }
         self.orb = Some(self.create_overlay(
@@ -265,12 +266,13 @@ impl PrimeShell {
         }
     }
 
-    fn open_quick_controls(
+    fn toggle_quick_controls(
         &mut self,
         queue_handle: &QueueHandle<Self>,
         source: InteractionSource,
     ) {
         if self.quick_controls.is_some() {
+            self.close_transient(ShellSurfaceKind::QuickControls, source);
             return;
         }
         self.quick_controls = Some(self.create_overlay(
@@ -321,7 +323,8 @@ impl PrimeShell {
                     .unwrap_or(orb.height);
                 orb.width = width;
                 orb.height = height;
-                if let Err(error) = draw_surface(&mut self.pool, &orb.layer, width, height, orb.color)
+                if let Err(error) =
+                    draw_surface(&mut self.pool, &orb.layer, width, height, orb.color)
                 {
                     eprintln!("prime-shell could not draw Orb overlay: {error}");
                     self.exit = true;
@@ -626,14 +629,8 @@ impl KeyboardHandler for PrimeShell {
         if event.keysym == Keysym::Escape {
             if matches!(self.keyboard_focus, Some(ShellSurfaceKind::Orb)) {
                 self.close_transient(ShellSurfaceKind::Orb, InteractionSource::Keyboard);
-            } else if matches!(
-                self.keyboard_focus,
-                Some(ShellSurfaceKind::QuickControls)
-            ) {
-                self.close_transient(
-                    ShellSurfaceKind::QuickControls,
-                    InteractionSource::Keyboard,
-                );
+            } else if matches!(self.keyboard_focus, Some(ShellSurfaceKind::QuickControls)) {
+                self.close_transient(ShellSurfaceKind::QuickControls, InteractionSource::Keyboard);
             }
             return;
         }
@@ -643,8 +640,8 @@ impl KeyboardHandler for PrimeShell {
         };
         if self.keyboard_focus == Some(ShellSurfaceKind::Rail) {
             match character.to_ascii_lowercase() {
-                'o' => self.open_orb(queue_handle, InteractionSource::Keyboard),
-                'q' => self.open_quick_controls(queue_handle, InteractionSource::Keyboard),
+                'o' => self.toggle_orb(queue_handle, InteractionSource::Keyboard),
+                'q' => self.toggle_quick_controls(queue_handle, InteractionSource::Keyboard),
                 _ => {}
             }
         } else if self.keyboard_focus == Some(ShellSurfaceKind::Orb) && character == '\r' {
@@ -703,11 +700,11 @@ impl PointerHandler for PrimeShell {
 
             if &event.surface == self.rail.wl_surface() {
                 if event.position.0 <= RAIL_TRIGGER_WIDTH {
-                    self.open_orb(queue_handle, InteractionSource::Pointer);
+                    self.toggle_orb(queue_handle, InteractionSource::Pointer);
                 } else if self.rail_width > 0
                     && event.position.0 >= f64::from(self.rail_width) - RAIL_TRIGGER_WIDTH
                 {
-                    self.open_quick_controls(queue_handle, InteractionSource::Pointer);
+                    self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
                 }
             }
         }
