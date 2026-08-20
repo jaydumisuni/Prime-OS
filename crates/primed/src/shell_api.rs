@@ -36,7 +36,11 @@ pub fn applications_projection(
         left.display_name
             .to_lowercase()
             .cmp(&right.display_name.to_lowercase())
-            .then_with(|| left.application_id.as_bytes().cmp(right.application_id.as_bytes()))
+            .then_with(|| {
+                left.application_id
+                    .as_bytes()
+                    .cmp(right.application_id.as_bytes())
+            })
     });
 
     let applications = profiles
@@ -68,7 +72,8 @@ pub fn launch_selected(
         ));
     }
 
-    let profile = load_selected_profile_including_revoked(&state.state_dir, request.application_id)?;
+    let profile =
+        load_selected_profile_including_revoked(&state.state_dir, request.application_id)?;
     if profile.revoked {
         return Err(ShellApiError::InvalidRequest(
             "selected Application Profile is revoked",
@@ -102,7 +107,8 @@ fn application_entry(state: &CoreState, profile: ApplicationProfile) -> Applicat
         Ok(path) => match exec::inspect(&path, &state.host.host_arch) {
             Ok(inspection) if inspection.artifact_identity == profile.artifact.identity => {}
             Ok(_) => limitations.push(
-                "Content-addressed artifact identity does not match the selected profile".to_owned(),
+                "Content-addressed artifact identity does not match the selected profile"
+                    .to_owned(),
             ),
             Err(error) => limitations.push(format!("Stored artifact inspection failed: {error}")),
         },
@@ -144,7 +150,8 @@ fn profile_limitations(profile: &ApplicationProfile, host_arch: &str) -> Vec<Str
     }
     match profile.artifact.workload_arch.as_deref() {
         Some(arch) if arch == host_arch => {}
-        Some(_) => limitations.push("Application workload architecture does not match this Host".to_owned()),
+        Some(_) => limitations
+            .push("Application workload architecture does not match this Host".to_owned()),
         None => limitations.push("Application workload architecture is unresolved".to_owned()),
     }
     if !profile.dependencies.is_empty() {
@@ -161,7 +168,8 @@ fn profile_limitations(profile: &ApplicationProfile, host_arch: &str) -> Vec<Str
             | MechanicalCompatibilityState::RequiresVm
             | MechanicalCompatibilityState::RequiresRemoteProvider
     ) {
-        limitations.push("Mechanical compatibility state does not permit a native attempt".to_owned());
+        limitations
+            .push("Mechanical compatibility state does not permit a native attempt".to_owned());
     }
     limitations
 }
@@ -188,7 +196,10 @@ fn list_selected_profiles(root: &Path) -> Result<Vec<ApplicationProfile>, ShellA
         if !selected.is_file() {
             continue;
         }
-        profiles.push(load_selected_profile_including_revoked(root, application_id)?);
+        profiles.push(load_selected_profile_including_revoked(
+            root,
+            application_id,
+        )?);
     }
     Ok(profiles)
 }
