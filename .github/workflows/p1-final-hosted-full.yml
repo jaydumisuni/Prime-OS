@@ -35,14 +35,19 @@ jobs:
           for t in podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk partprobe; do command -v "$t"; done
           sudo -n true
           test -e /dev/fuse
-      - name: Authenticate GHCR
+      - name: Authenticate GHCR without cross-UID auth corruption
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          printf '%s' "$GHCR_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo rm -rf "${XDG_RUNTIME_DIR}/containers"
+          mkdir -p "${XDG_RUNTIME_DIR}/containers"
+          chmod 0700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/containers"
+          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          test -r "${XDG_RUNTIME_DIR}/containers/auth.json"
+          sudo test -r "${XDG_RUNTIME_DIR}/containers/auth.json"
       - name: Run canonical P1 proof unchanged
         shell: bash
         run: |
