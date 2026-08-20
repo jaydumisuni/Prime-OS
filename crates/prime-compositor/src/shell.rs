@@ -6,9 +6,7 @@ use smithay::{
     },
     desktop::{layer_map_for_output, WindowSurfaceType},
     output::Output,
-    reexports::wayland_server::{
-        backend::ClientId, protocol::wl_surface::WlSurface, Resource,
-    },
+    reexports::wayland_server::{backend::ClientId, protocol::wl_surface::WlSurface, Resource},
     utils::{IsAlive, Scale},
     wayland::shell::wlr_layer::Layer,
 };
