@@ -1,0 +1,122 @@
+name: Construction P1 Shell Orb Quick Controls Build
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-interactions-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-interactions' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence interaction scope and reconstruct readiness integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git merge-base "$base" HEAD)" = "$base"
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/interaction-files.txt
+          while IFS= read -r path; do
+            case "$path" in
+              crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
+              *) echo "unexpected Shell interaction path: $path" >&2; exit 1 ;;
+            esac
+          done < /tmp/interaction-files.txt
+          test "$(wc -l < /tmp/interaction-files.txt)" -eq 3
+
+          git apply --unidiff-zero --check construction/shell-readiness-v2/main-readiness.patch
+          git apply --unidiff-zero construction/shell-readiness-v2/main-readiness.patch
+          git diff --check
+
+          grep -F 'features = ["xkbcommon"]' crates/prime-shell/Cargo.toml
+          grep -F 'prime.shell.orb' crates/prime-shell/src/main.rs
+          grep -F 'prime.shell.quick-controls' crates/prime-shell/src/main.rs
+          grep -F 'KeyboardInteractivity::OnDemand' crates/prime-shell/src/main.rs
+          grep -F 'delegate_keyboard!(PrimeShell);' crates/prime-shell/src/main.rs
+          grep -F 'delegate_pointer!(PrimeShell);' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_ORB_OPEN=pointer' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_ORB_OPEN=keyboard' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_QUICK_CONTROLS_OPEN=pointer' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_TRANSIENT_CLOSE=keyboard' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_PRIVILEGED_ACTIONS=unavailable;typed_core_bridge_unearned' crates/prime-shell/src/main.rs
+          ! grep -F 'std::process::Command' crates/prime-shell/src/main.rs
+          ! grep -F '/v1/exec/native/launch' crates/prime-shell/src/main.rs
+          grep -F 'Global keyboard accelerator and full launcher navigation remain unearned' docs/contracts/PRIME_P1_SHELL_V1.md
+          echo PRIME_SHELL_INTERACTIONS_SCOPE=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build interaction candidate and observe dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              rm -f Cargo.lock
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_INTERACTIONS_FMT=PASS
+              cargo clippy --locked -p prime-shell -p prime-compositor --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_INTERACTIONS_CLIPPY=PASS
+              cargo test --locked -p prime-compositor 2>&1 | tee diag/compositor-tests.log
+              echo PRIME_SHELL_INTERACTIONS_TEST=PASS
+              cargo build --locked -p prime-shell --release --bin prime-shell 2>&1 | tee diag/shell-build.log
+              cargo build --locked -p prime-compositor --release --bin prime-compositor 2>&1 | tee diag/compositor-build.log
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-shell --help | tee diag/shell-help.log
+              target/release/prime-compositor --help | tee diag/compositor-help.log
+              echo PRIME_SHELL_INTERACTIONS_BUILD=PASS
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-interactions-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
+          retention-days: 7
