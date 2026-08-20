@@ -282,7 +282,7 @@ RUN --mount=type=bind,from=split,target=/target,ro \
       -- \
       --output "${provisional}"; \
     test -s "${provisional}"; \
-    ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
+    ukify --json=short inspect "${provisional}" > /tmp/prime-provisional-uki.json; \
     python3 /tmp/prepare-uki-cmdlines.py \
       --inspect-json /tmp/prime-provisional-uki.json \
       --normal-out /tmp/prime-normal-cmdline \
@@ -314,8 +314,8 @@ RUN --mount=type=bind,from=split,target=/target,ro \
       --output "${recovery}"; \
     test -s "${normal}"; \
     test -s "${recovery}"; \
-    ukify inspect --json=short "${normal}" > /tmp/prime-normal-uki.json; \
-    ukify inspect --json=short "${recovery}" > /tmp/prime-recovery-uki.json; \
+    ukify --json=short inspect "${normal}" > /tmp/prime-normal-uki.json; \
+    ukify --json=short inspect "${recovery}" > /tmp/prime-recovery-uki.json; \
     python3 /tmp/check-uki-contract.py \
       --provisional /tmp/prime-provisional-uki.json \
       --normal /tmp/prime-normal-uki.json \
