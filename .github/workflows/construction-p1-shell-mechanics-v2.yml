@@ -1,0 +1,103 @@
+name: Construction P1 Shell Mechanics v2
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-mechanics-base2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 7e4dcbae3706055928cb25d5fd7fc629c55a27cd
+  ROOT_CARGO_HASH: 0a635efefc6db30b4bad4f2ee7692a83acfab6ba
+  SHELL_CARGO_HASH: 025ab035caefc194c09936f4682688b0160187a7
+  SHELL_MAIN_HASH: 22b57b6b3a05d6b87ad7dfffb0ed166af297cdb8
+  SHELL_CONTRACT_HASH: 8db6dbb48a203fecccdba8c1d5805bc59e5f0a52
+
+jobs:
+  shell-mechanics-v2:
+    if: ${{ github.head_ref == 'construction/p1-shell-mechanics2' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Prove current-product ancestry and exact reviewed Shell blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git merge-base "$base" HEAD)" = "$base"
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/shell-files.txt
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.toml|Cargo.lock|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
+              *) echo "unexpected Shell construction path: $path" >&2; exit 1 ;;
+            esac
+          done < /tmp/shell-files.txt
+          test "$(git hash-object Cargo.toml)" = "$ROOT_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/Cargo.toml)" = "$SHELL_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/src/main.rs)" = "$SHELL_MAIN_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_SHELL_V1.md)" = "$SHELL_CONTRACT_HASH"
+          grep -F 'layer.set_exclusive_zone(-1);' crates/prime-shell/src/main.rs
+          grep -F 'refusing to map an ambiguous surface' crates/prime-shell/src/main.rs
+          ! grep -F 'first_configure' crates/prime-shell/src/main.rs
+          echo PRIME_SHELL_V2_IDENTITY=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Generate dependency lock and prove Shell mechanics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config "pkgconfig(wayland-client)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              rustc --version --verbose | tee diag/rustc.log
+              cargo --version | tee diag/cargo.log
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              cargo check -p prime-shell 2>&1 | tee diag/check.log
+              cp Cargo.lock diag/Cargo.lock.generated
+              git hash-object Cargo.lock | tee diag/Cargo.lock.hash
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_V2_FMT=PASS
+              cargo clippy -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_V2_CLIPPY=PASS
+              cargo build -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
+              target/release/prime-shell --help | tee diag/help.log
+              echo PRIME_SHELL_V2_BUILD=PASS
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-mechanics-v2-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
+          retention-days: 7
