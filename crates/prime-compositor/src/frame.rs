@@ -24,6 +24,7 @@ pub(crate) struct FrameState {
     pub(crate) requested: bool,
     pub(crate) in_flight: bool,
     pub(crate) in_flight_had_mapped_surface: bool,
+    pub(crate) in_flight_had_shell_baseline: bool,
     pub(crate) retry_at: Instant,
     pub(crate) clock_started: Instant,
 }
@@ -35,6 +36,7 @@ impl FrameState {
             requested: true,
             in_flight: false,
             in_flight_had_mapped_surface: false,
+            in_flight_had_shell_baseline: false,
             retry_at: now,
             clock_started: now,
         }
@@ -44,6 +46,7 @@ impl FrameState {
         self.requested = false;
         self.in_flight = false;
         self.in_flight_had_mapped_surface = false;
+        self.in_flight_had_shell_baseline = false;
         self.retry_at = Instant::now();
     }
 }
@@ -76,6 +79,7 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         1.0,
     )?;
     let had_mapped_surface = !elements.is_empty();
+    let had_shell_baseline = crate::shell::baseline_renderable(&runtime._output);
     let result = runtime._drm_output.render_frame(
         &mut runtime._renderer,
         &elements,
@@ -105,6 +109,7 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
     runtime._drm_output.queue_frame(())?;
     runtime.frame.in_flight = true;
     runtime.frame.in_flight_had_mapped_surface = had_mapped_surface;
+    runtime.frame.in_flight_had_shell_baseline = had_shell_baseline;
     runtime.frame.requested = false;
     runtime.readiness.frame_in_flight = true;
     runtime.readiness.frames_queued = runtime.readiness.frames_queued.saturating_add(1);
@@ -120,7 +125,10 @@ pub(crate) fn handle_vblank(
     }
 
     runtime._drm_output.frame_submitted()?;
+    let frame_loop_was_ready = runtime.readiness.frame_loop_ready;
     let followup_frame_requested = runtime.frame.requested;
+    let submitted_had_mapped_surface = runtime.frame.in_flight_had_mapped_surface;
+    let submitted_had_shell_baseline = runtime.frame.in_flight_had_shell_baseline;
     runtime.frame.in_flight = false;
     runtime.readiness.frame_in_flight = false;
     runtime.readiness.frames_submitted = runtime.readiness.frames_submitted.saturating_add(1);
@@ -137,15 +145,35 @@ pub(crate) fn handle_vblank(
         }
     }
 
-    if runtime.frame.in_flight_had_mapped_surface {
+    if submitted_had_mapped_surface {
         runtime.readiness.mapped_surface_frames_submitted = runtime
             .readiness
             .mapped_surface_frames_submitted
             .saturating_add(1);
-        runtime.readiness.frame_loop_ready = true;
-        runtime.readiness.phase = "FRAME_LOOP_READY".to_owned();
-        runtime.remove_limitation(FRAME_NOT_PROVEN_LIMITATION);
+        if !runtime.readiness.frame_loop_ready {
+            runtime.readiness.frame_loop_ready = true;
+            runtime.readiness.phase = "FRAME_LOOP_READY".to_owned();
+            runtime.remove_limitation(FRAME_NOT_PROVEN_LIMITATION);
+        }
     }
+
+    let shell_baseline_still_renderable = crate::shell::baseline_renderable(&runtime._output);
+    if frame_loop_was_ready && submitted_had_shell_baseline && shell_baseline_still_renderable {
+        runtime.readiness.shell_frames_submitted =
+            runtime.readiness.shell_frames_submitted.saturating_add(1);
+        runtime.readiness.shell_ready = true;
+        runtime.readiness.phase = "SHELL_READY".to_owned();
+        runtime.remove_limitation(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+    } else if !frame_loop_was_ready
+        && runtime.readiness.frame_loop_ready
+        && submitted_had_shell_baseline
+        && shell_baseline_still_renderable
+    {
+        runtime.frame.requested = true;
+    }
+
     runtime.frame.in_flight_had_mapped_surface = false;
+    runtime.frame.in_flight_had_shell_baseline = false;
+    runtime.revalidate_shell_presence();
     Ok(true)
 }
