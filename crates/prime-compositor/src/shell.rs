@@ -1,3 +1,4 @@
+use crate::Runtime;
 use smithay::{
     backend::renderer::{
         element::{surface::WaylandSurfaceRenderElement, AsRenderElements},
@@ -23,6 +24,16 @@ pub(crate) const SHELL_REVALIDATION_LIMITATION: &str =
 pub(crate) struct ShellBaselineIdentity {
     background: WlSurface,
     rail: WlSurface,
+}
+
+impl Runtime {
+    pub(crate) fn invalidate_shell_readiness(&mut self, limitation: &str) {
+        if self.readiness.phase == "SHELL_READY" && self.readiness.frame_loop_ready {
+            self.readiness.phase = "FRAME_LOOP_READY".to_owned();
+        }
+        self.readiness.shell_ready = false;
+        self.add_limitation(limitation);
+    }
 }
 
 pub(crate) fn is_persistent_namespace(namespace: &str) -> bool {
