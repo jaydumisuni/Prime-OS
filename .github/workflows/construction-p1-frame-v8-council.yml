@@ -13,6 +13,7 @@ permissions:
 env:
   PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
   PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 89db8570cd69b476d3ecc0364938350767b6f467
   FRAME_HASH: 93c9feb3310d5242db565890ff0134fa377e8da0
   INPUT_HASH: 73e3649b16119124483d5c310222c06ad130e5ee
   MAIN_HASH: 366a89dc5d3469065cf6bb3cdaaba3c0bd998a6e
@@ -110,3 +111,38 @@ jobs:
               target/release/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
               echo PRIME_FRAME_COUNCIL_BUILD=PASS
             '
+      - name: Stage proven FRAME product handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=prime-frame-v8-product
+          mkdir -p "$root/crates/prime-compositor/src" "$root/docs/contracts"
+          cp crates/prime-compositor/src/frame.rs "$root/crates/prime-compositor/src/frame.rs"
+          cp crates/prime-compositor/src/input.rs "$root/crates/prime-compositor/src/input.rs"
+          cp crates/prime-compositor/src/main.rs "$root/crates/prime-compositor/src/main.rs"
+          cp crates/prime-compositor/src/protocols.rs "$root/crates/prime-compositor/src/protocols.rs"
+          cp docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md "$root/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md"
+          cp docs/contracts/PRIME_P1_FRAME_LOOP_V1.md "$root/docs/contracts/PRIME_P1_FRAME_LOOP_V1.md"
+          cat > "$root/MANIFEST.env" <<EOF
+          PRODUCT_BASE=$PRODUCT_BASE
+          FRAME_HASH=$FRAME_HASH
+          INPUT_HASH=$INPUT_HASH
+          MAIN_HASH=$MAIN_HASH
+          PROTOCOLS_HASH=$PROTOCOLS_HASH
+          READINESS_HASH=$READINESS_HASH
+          FRAME_CONTRACT_HASH=$FRAME_CONTRACT_HASH
+          SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+          EOF
+          test "$(git hash-object "$root/crates/prime-compositor/src/frame.rs")" = "$FRAME_HASH"
+          test "$(git hash-object "$root/crates/prime-compositor/src/input.rs")" = "$INPUT_HASH"
+          test "$(git hash-object "$root/crates/prime-compositor/src/main.rs")" = "$MAIN_HASH"
+          test "$(git hash-object "$root/crates/prime-compositor/src/protocols.rs")" = "$PROTOCOLS_HASH"
+          test "$(git hash-object "$root/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md")" = "$READINESS_HASH"
+          test "$(git hash-object "$root/docs/contracts/PRIME_P1_FRAME_LOOP_V1.md")" = "$FRAME_CONTRACT_HASH"
+          echo PRIME_FRAME_COUNCIL_HANDOFF=PASS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-frame-v8-product-${{ github.event.pull_request.head.sha }}
+          path: prime-frame-v8-product/
+          if-no-files-found: error
+          retention-days: 7
