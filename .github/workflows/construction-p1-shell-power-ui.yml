@@ -1,0 +1,188 @@
+name: Construction P1 Shell Power UI
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-power-ui-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  SHELL_RUN: 32395364831
+  SHELL_ARTIFACT: prime-shell-functional-v4-c8f9fc13a0f6b4b3c2308f7b1d4d7aedb2bdcf25
+  POWER_RUN: 32395482187
+  POWER_ARTIFACT: prime-power-v3-eda24001e11d669a8a47c7f951fc234edf997a08
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-power-ui' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence Shell power UI candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/files.txt
+          test "$(cat /tmp/files.txt)" = $'crates/prime-shell/src/core_client.rs\ncrates/prime-shell/src/main.rs\ncrates/prime-shell/src/visual.rs'
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          ! grep -R -F 'std::process::Command' crates/prime-shell/src
+          ! grep -R -F '/v1/exec/native/launch' crates/prime-shell/src
+          ! grep -R -F '/usr/bin/systemctl' crates/prime-shell/src
+          grep -F '"/v1/system/power"' crates/prime-shell/src/core_client.rs
+          grep -F 'SYSTEM_POWER_REQUEST_SCHEMA' crates/prime-shell/src/core_client.rs
+          grep -F 'PowerConfirmation::Execute' crates/prime-shell/src/main.rs
+          grep -F 'quick_power_action_at' crates/prime-shell/src/main.rs
+          echo PRIME_SHELL_POWER_UI_SCOPE=PASS
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.SHELL_RUN }}
+          name: ${{ env.SHELL_ARTIFACT }}
+          path: /tmp/shell
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.POWER_RUN }}
+          name: ${{ env.POWER_ARTIFACT }}
+          path: /tmp/power
+
+      - name: Reconstruct frozen Shell and typed power handoffs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp crates/prime-shell/src/core_client.rs /tmp/core_client.rs
+          cp crates/prime-shell/src/main.rs /tmp/main.rs
+          cp crates/prime-shell/src/visual.rs /tmp/visual.rs
+
+          grep -Fx 'CARGO_LOCK_SHA256=b5dc0bb1c8ec9d1db9cd4dd48a8e58a576307b625eff9c969f39a83b8d1b58b9' /tmp/shell/handoff/MANIFEST.env
+          grep -Fx 'SHELL_MAIN_HASH=ee2c25753f1c112a49a526cdc62cb9ffd23fb601' /tmp/shell/handoff/MANIFEST.env
+          grep -Fx 'RESOLVED_CARGO_LOCK_SHA256=d30d82ea720f6a78d2e72e743b5ce3c2841cfe82da1367128baaa10f369ef016' /tmp/power/handoff/MANIFEST.env
+          grep -Fx 'SERVER_HASH=b959d43bc003af00fe0db185b089a49703245555' /tmp/power/handoff/MANIFEST.env
+
+          cp -a /tmp/shell/handoff/. .
+          cp /tmp/power/handoff/crates/prime-contracts/src/lib.rs crates/prime-contracts/src/lib.rs
+          cp /tmp/power/handoff/crates/prime-contracts/src/system.rs crates/prime-contracts/src/system.rs
+          cp /tmp/power/handoff/crates/primed/src/lib.rs crates/primed/src/lib.rs
+          cp /tmp/power/handoff/crates/primed/src/server.rs crates/primed/src/server.rs
+          cp /tmp/power/handoff/crates/primed/src/power.rs crates/primed/src/power.rs
+          cp /tmp/power/handoff/crates/primed/src/system_status.rs crates/primed/src/system_status.rs
+          cp /tmp/core_client.rs crates/prime-shell/src/core_client.rs
+          cp /tmp/main.rs crates/prime-shell/src/main.rs
+          cp /tmp/visual.rs crates/prime-shell/src/visual.rs
+
+          grep -F 'pub mod system;' crates/prime-contracts/src/lib.rs
+          grep -F 'pub mod power;' crates/primed/src/lib.rs
+          grep -F '"/v1/system/power"' crates/primed/src/server.rs
+          grep -F 'ready: true' crates/primed/src/system_status.rs
+          grep -F 'self.core.power(action)' crates/prime-shell/src/main.rs
+          grep -F 'self.quick_power_ready' crates/prime-shell/src/main.rs
+          grep -F 'power_readiness_fails_closed_when_missing_and_accepts_explicit_ready' crates/prime-shell/src/core_client.rs
+          grep -F 'power_confirmation_requires_same_action_twice' crates/prime-shell/src/main.rs
+          grep -F 'quick_power_hit_testing_maps_only_action_rows' crates/prime-shell/src/visual.rs
+          ! grep -R -F '/usr/bin/systemctl' crates/prime-shell/src
+          git diff --check
+          echo PRIME_SHELL_POWER_UI_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove fail-closed typed Shell power UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-shell/src handoff/crates/prime-contracts/src handoff/crates/primed/src handoff/crates/prime-compositor/src
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
+              cargo fmt --all
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_POWER_UI_FMT=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo clippy --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_POWER_UI_CLIPPY=PASS
+              cargo test --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor 2>&1 | tee diag/tests.log
+              grep -F "power_confirmation_requires_same_action_twice ... ok" diag/tests.log
+              grep -F "power_readiness_fails_closed_when_missing_and_accepts_explicit_ready ... ok" diag/tests.log
+              grep -F "power_request_serializes_typed_action ... ok" diag/tests.log
+              grep -F "quick_power_hit_testing_maps_only_action_rows ... ok" diag/tests.log
+              grep -F "invalid_schema_is_rejected_before_execution ... ok" diag/tests.log
+              echo PRIME_SHELL_POWER_UI_TEST=PASS
+              cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
+              ! ldd target/release/primed | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-shell --help | tee diag/shell-help.log
+              echo PRIME_SHELL_POWER_UI_BUILD=PASS
+            '
+
+          git diff --check
+          cp Cargo.toml Cargo.lock handoff/
+          cp crates/prime-shell/Cargo.toml handoff/crates/prime-shell/Cargo.toml
+          cp crates/prime-shell/src/main.rs crates/prime-shell/src/core_client.rs crates/prime-shell/src/visual.rs handoff/crates/prime-shell/src/
+          cp crates/prime-contracts/src/lib.rs crates/prime-contracts/src/application.rs crates/prime-contracts/src/system.rs handoff/crates/prime-contracts/src/
+          cp crates/primed/src/lib.rs crates/primed/src/server.rs crates/primed/src/shell_api.rs crates/primed/src/power.rs crates/primed/src/system_status.rs handoff/crates/primed/src/
+          cp crates/prime-compositor/src/main.rs crates/prime-compositor/src/frame.rs crates/prime-compositor/src/protocols.rs crates/prime-compositor/src/shell.rs handoff/crates/prime-compositor/src/
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo SHELL_MAIN_HASH=$(git hash-object crates/prime-shell/src/main.rs)
+            echo SHELL_CORE_CLIENT_HASH=$(git hash-object crates/prime-shell/src/core_client.rs)
+            echo SHELL_VISUAL_HASH=$(git hash-object crates/prime-shell/src/visual.rs)
+            echo POWER_CONTRACT_HASH=$(git hash-object crates/prime-contracts/src/system.rs)
+            echo CORE_SERVER_HASH=$(git hash-object crates/primed/src/server.rs)
+            echo POWER_MODULE_HASH=$(git hash-object crates/primed/src/power.rs)
+            echo SYSTEM_STATUS_HASH=$(git hash-object crates/primed/src/system_status.rs)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_SHELL_POWER_UI_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-power-ui-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
