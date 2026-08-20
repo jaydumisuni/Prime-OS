@@ -1,3 +1,4 @@
+mod frame;
 mod input;
 mod output;
 mod protocols;
@@ -38,7 +39,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -51,6 +52,8 @@ const OUTPUT_TOPOLOGY_LIMITATION: &str =
     "DRM topology changed; selected output requires revalidation";
 const WAYLAND_PROTOCOL_ERROR_LIMITATION: &str =
     "Wayland protocol dispatch requires compositor restart or explicit revalidation";
+const FRAME_ERROR_LIMITATION: &str =
+    "Client-surface frame lifecycle requires compositor restart or explicit revalidation";
 
 #[derive(Debug, Serialize)]
 struct Readiness {
@@ -74,6 +77,7 @@ struct Readiness {
     input_delivery_ready: bool,
     renderer_ready: bool,
     outputs_ready: bool,
+    frame_loop_ready: bool,
     shell_ready: bool,
     clients_accepted: u64,
     input_events_seen: u64,
@@ -89,6 +93,8 @@ pub(crate) struct Runtime {
     output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
     _session: LibSeatSession,
+    frame_in_flight: bool,
+    frame_clock: Instant,
     readiness_path: PathBuf,
     readiness: Readiness,
 }
@@ -122,12 +128,16 @@ impl Runtime {
         self.readiness.drm_access_ready = false;
         self.readiness.renderer_ready = false;
         self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.frame_in_flight = false;
         self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
     }
 
     fn invalidate_output(&mut self, phase: &str, limitation: &str) {
         self.readiness.phase = phase.to_owned();
         self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.frame_in_flight = false;
         self.add_limitation(limitation);
     }
 
@@ -135,7 +145,17 @@ impl Runtime {
         self.readiness.phase = "WAYLAND_PROTOCOL_ERROR".to_owned();
         self.readiness.wayland_protocols_ready = false;
         self.readiness.input_delivery_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.frame_in_flight = false;
         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
+    }
+
+    fn invalidate_frame(&mut self, error: String) {
+        eprintln!("prime-compositor frame lifecycle failed: {error}");
+        self.readiness.phase = "FRAME_ERROR".to_owned();
+        self.readiness.frame_loop_ready = false;
+        self.frame_in_flight = false;
+        self.add_limitation(FRAME_ERROR_LIMITATION);
     }
 }
 
@@ -275,7 +295,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
 
     loop_handle.insert_source(drm_notifier, |event, _, runtime| match event {
-        DrmEvent::VBlank(_) => {}
+        DrmEvent::VBlank(crtc) => frame::handle_vblank(runtime, crtc),
         DrmEvent::Error(error) => {
             eprintln!("prime-compositor DRM event processing failed: {error}");
             runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
@@ -317,11 +337,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_manager,
         _renderer: renderer,
         _session: session,
+        frame_in_flight: false,
+        frame_clock: Instant::now(),
         readiness_path,
         readiness: Readiness {
             schema: READINESS_SCHEMA,
             observed_at: now_rfc3339()?,
-            phase: "WAYLAND_INPUT_READY".to_owned(),
+            phase: "FRAME_READY".to_owned(),
             direct_tty_backend: true,
             seat_name,
             wayland_socket: socket_name.to_string_lossy().into_owned(),
@@ -339,15 +361,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             input_delivery_ready: true,
             renderer_ready: true,
             outputs_ready: true,
+            frame_loop_ready: true,
             shell_ready: false,
             clients_accepted: 0,
             input_events_seen: 0,
             last_udev_event: None,
             limitations: vec![
                 "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
-                "Layer-shell pointer hit-testing waits for the mapped-surface/frame responsibility".to_owned(),
                 "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
-                "Client surfaces are not rendered to the KMS output yet".to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
         },
@@ -361,6 +382,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         event_loop.dispatch(Some(Duration::from_millis(16)), &mut runtime)?;
+        frame::render_if_ready(&mut runtime);
     }
 }
 
