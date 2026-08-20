@@ -21,7 +21,7 @@ env:
 
 jobs:
   shell-mechanics-v2:
-    if: ${{ github.head_ref == 'construction/p1-shell-mechanics2' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-mechanics3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
