@@ -9,7 +9,7 @@ use smithay::{
     reexports::wayland_server::{
         backend::ClientId, protocol::wl_surface::WlSurface, Resource,
     },
-    utils::{IsAlive, Scale},
+    utils::{IsAlive, Logical, Point, Scale},
     wayland::shell::wlr_layer::Layer,
 };
 
@@ -53,15 +53,14 @@ fn renderable_candidate(
     renderer: &mut GlesRenderer,
     output: &Output,
     layer: &smithay::desktop::LayerSurface,
+    logical_location: Point<i32, Logical>,
 ) -> Option<(ClientId, WlSurface)> {
     if !layer.alive() || expected_layer(layer.namespace()) != Some(layer.layer()) {
         return None;
     }
 
-    let map = layer_map_for_output(output);
-    let geometry = map.layer_geometry(layer)?;
     let scale: Scale<f64> = output.current_scale().fractional_scale().into();
-    let location = geometry.loc.to_physical_precise_round(scale);
+    let location = logical_location.to_physical_precise_round(scale);
     let elements = AsRenderElements::<GlesRenderer>::render_elements::<
         WaylandSurfaceRenderElement<GlesRenderer>,
     >(layer, renderer, location, scale, 1.0);
@@ -83,7 +82,10 @@ pub(crate) fn persistent_baseline_renderable(
     let mut rails = Vec::new();
 
     for layer in map.layers() {
-        let Some(candidate) = renderable_candidate(renderer, output, layer) else {
+        let Some(logical_location) = map.layer_geometry(layer).map(|geometry| geometry.loc) else {
+            continue;
+        };
+        let Some(candidate) = renderable_candidate(renderer, output, layer, logical_location) else {
             continue;
         };
         match layer.namespace() {
@@ -120,12 +122,16 @@ pub(crate) fn persistent_baseline_identity_renderable(
             && layer.namespace() == BACKGROUND_NAMESPACE
             && layer.layer() == Layer::Background
         {
-            background_renderable = renderable_candidate(renderer, output, layer).is_some();
+            background_renderable = map.layer_geometry(layer).is_some_and(|geometry| {
+                renderable_candidate(renderer, output, layer, geometry.loc).is_some()
+            });
         } else if layer.wl_surface() == &identity.rail
             && layer.namespace() == RAIL_NAMESPACE
             && layer.layer() == Layer::Top
         {
-            rail_renderable = renderable_candidate(renderer, output, layer).is_some();
+            rail_renderable = map.layer_geometry(layer).is_some_and(|geometry| {
+                renderable_candidate(renderer, output, layer, geometry.loc).is_some()
+            });
         }
     }
 
