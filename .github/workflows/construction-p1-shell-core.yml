@@ -21,11 +21,11 @@ env:
   INTERACTIONS_ARTIFACT: prime-shell-interactions-v3-1ce9e7fc89d8a254c4252724fa8cf4fda915110e
   INTERACTIONS_LOCK_SHA256: 771c7f45bf335c2c421d4ccbdc8aeccc306e963cf94fd7fdfede982a4d4903a5
   APPLICATION_HASH: dcf8bf57c0ba8508e302739f081bdde2a9f0b6c3
-  SHELL_API_HASH: 918d444b2a805c056b0de2c506cbbd3cb2408c75
+  SHELL_API_HASH: 08973128d71e1433c662e0b3aff0f862319b4577
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-core-direct2' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-core-direct3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -148,7 +148,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-core-direct2-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-core-direct3-${{ github.event.pull_request.head.sha }}
           path: |
             diag/
             handoff/
