@@ -78,29 +78,26 @@ pub(crate) fn persistent_baseline_renderable(
     output: &Output,
 ) -> Option<ShellBaselineIdentity> {
     let map = layer_map_for_output(output);
-    let mut backgrounds = Vec::new();
-    let mut rails = Vec::new();
-
-    for layer in map.layers() {
-        let Some(logical_location) = map.layer_geometry(layer).map(|geometry| geometry.loc) else {
-            continue;
-        };
-        let Some(candidate) = renderable_candidate(renderer, output, layer, logical_location) else {
-            continue;
-        };
-        match layer.namespace() {
-            BACKGROUND_NAMESPACE => backgrounds.push(candidate),
-            RAIL_NAMESPACE => rails.push(candidate),
-            _ => {}
-        }
-    }
+    let backgrounds = map
+        .layers()
+        .filter(|layer| layer.namespace() == BACKGROUND_NAMESPACE)
+        .collect::<Vec<_>>();
+    let rails = map
+        .layers()
+        .filter(|layer| layer.namespace() == RAIL_NAMESPACE)
+        .collect::<Vec<_>>();
 
     if backgrounds.len() != 1 || rails.len() != 1 {
         return None;
     }
 
-    let (background_client, background) = backgrounds.pop()?;
-    let (rail_client, rail) = rails.pop()?;
+    let background = backgrounds[0];
+    let rail = rails[0];
+    let background_location = map.layer_geometry(background)?.loc;
+    let rail_location = map.layer_geometry(rail)?.loc;
+    let (background_client, background) =
+        renderable_candidate(renderer, output, background, background_location)?;
+    let (rail_client, rail) = renderable_candidate(renderer, output, rail, rail_location)?;
     if background_client != rail_client {
         return None;
     }
@@ -113,29 +110,9 @@ pub(crate) fn persistent_baseline_identity_renderable(
     output: &Output,
     identity: &ShellBaselineIdentity,
 ) -> bool {
-    let map = layer_map_for_output(output);
-    let mut background_renderable = false;
-    let mut rail_renderable = false;
-
-    for layer in map.layers() {
-        if layer.wl_surface() == &identity.background
-            && layer.namespace() == BACKGROUND_NAMESPACE
-            && layer.layer() == Layer::Background
-        {
-            background_renderable = map.layer_geometry(layer).is_some_and(|geometry| {
-                renderable_candidate(renderer, output, layer, geometry.loc).is_some()
-            });
-        } else if layer.wl_surface() == &identity.rail
-            && layer.namespace() == RAIL_NAMESPACE
-            && layer.layer() == Layer::Top
-        {
-            rail_renderable = map.layer_geometry(layer).is_some_and(|geometry| {
-                renderable_candidate(renderer, output, layer, geometry.loc).is_some()
-            });
-        }
-    }
-
-    background_renderable && rail_renderable
+    persistent_baseline_renderable(renderer, output).is_some_and(|current| {
+        current.background == identity.background && current.rail == identity.rail
+    })
 }
 
 pub(crate) fn persistent_layer_for_surface(output: &Output, surface: &WlSurface) -> bool {
