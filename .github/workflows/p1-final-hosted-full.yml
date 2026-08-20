@@ -1,0 +1,51 @@
+name: P1 Final Hosted Full Proof
+
+on:
+  pull_request:
+    branches: [construction/p1-final-hosted-full-base]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  FINAL_HEAD: 4f2ef83fc1305773afa033b57249111387cfdd88
+
+jobs:
+  proof:
+    if: ${{ github.head_ref == 'construction/p1-final-hosted-full-trigger' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.FINAL_HEAD }}
+          fetch-depth: 0
+      - name: Install proof Host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FINAL_HEAD"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            podman skopeo qemu-system-x86 qemu-utils ovmf gdisk parted kmod fuse3 >/dev/null
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default 1.97.1
+          for t in podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk partprobe; do command -v "$t"; done
+          sudo -n true
+          test -e /dev/fuse
+      - name: Authenticate GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Run canonical P1 proof unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/prove-p1-local.sh
+          tools/prove-p1-local.sh
