@@ -1,0 +1,113 @@
+name: Construction P1 Shell Persistent Surfaces Build
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-surfaces-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  LOCK_SHA256: d8c87bc9c7aa116ae85a407d23058dfb7fe1bc5c2955a8df677747ba201a2d47
+
+jobs:
+  shell-surfaces-build:
+    if: ${{ github.head_ref == 'construction/p1-shell-surfaces' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence construction scope and persistent-surface policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git merge-base "$base" HEAD)" = "$base"
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/shell-surface-files.txt
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.toml|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|docs/contracts/PRIME_P1_SHELL_V1.md) ;;
+              *) echo "unexpected persistent-Shell construction path: $path" >&2; exit 1 ;;
+            esac
+          done < /tmp/shell-surface-files.txt
+          test "$(wc -l < /tmp/shell-surface-files.txt)" -eq 4
+
+          grep -F 'prime.shell.background' crates/prime-shell/src/main.rs
+          grep -F 'prime.shell.rail' crates/prime-shell/src/main.rs
+          grep -F 'prime.shell.orb' crates/prime-shell/src/main.rs
+          grep -F 'Layer::Background' crates/prime-shell/src/main.rs
+          grep -F 'Layer::Top' crates/prime-shell/src/main.rs
+          grep -F 'Layer::Overlay' crates/prime-shell/src/main.rs
+          grep -F 'exclusive_zone: -1' crates/prime-shell/src/main.rs
+          grep -F 'exclusive_zone: CONSTRUCTION_RAIL_HEIGHT as i32' crates/prime-shell/src/main.rs
+          grep -F 'KeyboardInteractivity::OnDemand' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_PERSISTENT_SURFACES_CONFIGURED=background,rail,orb;readiness_unearned' crates/prime-shell/src/main.rs
+          grep -F 'Construction constants used to prove protocol mechanics are not final visual authority.' docs/contracts/PRIME_P1_SHELL_V1.md
+          grep -F '`prime.shell.quick-controls` is intentionally ephemeral.' docs/contracts/PRIME_P1_SHELL_V1.md
+          echo PRIME_SHELL_SURFACES_SCOPE=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove persistent Shell mechanics with frozen dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -e LOCK_SHA256="$LOCK_SHA256" \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config "pkgconfig(wayland-client)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              rm -f Cargo.lock
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              actual_lock="$(sha256sum Cargo.lock | awk "{print \$1}")"
+              printf "%s  Cargo.lock\n" "$actual_lock" | tee diag/Cargo.lock.sha256
+              test "$actual_lock" = "$LOCK_SHA256"
+              echo PRIME_SHELL_SURFACES_LOCK=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo check --locked -p prime-shell 2>&1 | tee diag/check.log
+              echo PRIME_SHELL_SURFACES_CHECK=PASS
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_SURFACES_FMT=PASS
+              cargo clippy --locked -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_SURFACES_CLIPPY=PASS
+              cargo build --locked -p prime-shell --release --bin prime-shell 2>&1 | tee diag/build.log
+              target/release/prime-shell --help | tee diag/help.log
+              echo PRIME_SHELL_SURFACES_BUILD=PASS
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-persistent-surfaces-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
+          retention-days: 7
