@@ -1,0 +1,10 @@
+diff --git a/crates/primed/src/lib.rs b/crates/primed/src/lib.rs
+--- a/crates/primed/src/lib.rs
++++ b/crates/primed/src/lib.rs
+@@ -7,6 +7,7 @@ pub mod p1_health;
+ pub mod policy;
+ pub mod registry;
+ pub mod server;
++pub mod shell_api;
+ pub mod storage;
+ pub mod system_status;
