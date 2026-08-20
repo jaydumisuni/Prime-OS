@@ -1,4 +1,4 @@
-name: Construction P1 Shell Readiness Integration v3
+name: Construction P1 Shell Readiness Integration v4
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ env:
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-readiness4' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-readiness5' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -39,9 +39,13 @@ jobs:
           grep -Fx 'construction/shell-readiness/contracts.patch' /tmp/changed.txt
           grep -Fx 'construction/shell-readiness/shell-client.patch' /tmp/changed.txt
 
+          mkdir -p /tmp/prime-shell-readiness-patches
           for patch in shell-client compositor contracts; do
-            git apply --recount --check "construction/shell-readiness/${patch}.patch"
-            git apply --recount "construction/shell-readiness/${patch}.patch"
+            source="construction/shell-readiness/${patch}.patch"
+            normalized="/tmp/prime-shell-readiness-patches/${patch}.patch"
+            perl -0pe 's/\n\ndiff --git/\ndiff --git/g' "$source" > "$normalized"
+            git apply --recount --check "$normalized"
+            git apply --recount "$normalized"
           done
           git diff --check
 
@@ -51,7 +55,7 @@ jobs:
           grep -F 'shell_frames_submitted' crates/prime-compositor/src/main.rs
           grep -F 'persistent baseline is `prime.shell.background` plus `prime.shell.rail`' docs/contracts/PRIME_P1_SHELL_V1.md
           grep -F 'shell_frames_submitted' docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
-          echo PRIME_SHELL_READINESS_V3_IDENTITY=PASS
+          echo PRIME_SHELL_READINESS_V4_IDENTITY=PASS
 
       - name: Authenticate Prime-owned substrate
         shell: bash
@@ -91,17 +95,17 @@ jobs:
               test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$SHELL_LOCK_SHA256"
               cargo metadata --locked --no-deps --format-version 1 >/dev/null
               cargo fmt --all -- --check
-              echo PRIME_SHELL_READINESS_V3_FMT=PASS
+              echo PRIME_SHELL_READINESS_V4_FMT=PASS
               cargo clippy --locked -p prime-compositor -p prime-shell --all-targets -- -D warnings
-              echo PRIME_SHELL_READINESS_V3_CLIPPY=PASS
+              echo PRIME_SHELL_READINESS_V4_CLIPPY=PASS
               cargo test --locked -p prime-compositor
-              echo PRIME_SHELL_READINESS_V3_TEST=PASS
+              echo PRIME_SHELL_READINESS_V4_TEST=PASS
               cargo build --locked -p prime-compositor -p prime-shell --release --bins
               ! ldd target/release/prime-compositor | grep -q "not found"
               ! ldd target/release/prime-shell | grep -q "not found"
               target/release/prime-compositor --help | grep -F "Usage: prime-compositor [--probe]"
               target/release/prime-shell --help | grep -F "Prime P1 native Shell host"
-              echo PRIME_SHELL_READINESS_V3_BUILD=PASS
+              echo PRIME_SHELL_READINESS_V4_BUILD=PASS
             '
 
       - name: Freeze resulting product blobs
@@ -118,7 +122,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-readiness-v3-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-readiness-v4-${{ github.event.pull_request.head.sha }}
           path: handoff/
           if-no-files-found: error
           retention-days: 7
