@@ -1,53 +1,44 @@
 diff --git a/crates/prime-compositor/src/main.rs b/crates/prime-compositor/src/main.rs
 --- a/crates/prime-compositor/src/main.rs
 +++ b/crates/prime-compositor/src/main.rs
-@@ -2,6 +2,7 @@ mod frame;
+@@ -1,4 +1,5 @@
+ mod frame;
  mod input;
  mod output;
  mod protocols;
 +mod shell;
- 
- use serde::Serialize;
- use smithay::{
-@@ -131,6 +132,7 @@ impl Runtime {
+@@ -135,6 +136,7 @@ impl Runtime {
+         self.readiness.phase = phase.to_owned();
          self.readiness.frame_loop_ready = false;
          self.readiness.frame_in_flight = false;
          self.frame.reset();
 +        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
          self.add_limitation(limitation);
      }
- 
-@@ -143,6 +145,7 @@ impl Runtime {
+@@ -147,5 +149,6 @@ impl Runtime {
          self.readiness.frame_loop_ready = false;
          self.readiness.frame_in_flight = false;
          self.frame.reset();
 +        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
          self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
          self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
-     }
-@@ -154,6 +157,7 @@ impl Runtime {
+@@ -158,5 +161,6 @@ impl Runtime {
          self.readiness.frame_loop_ready = false;
          self.readiness.frame_in_flight = false;
          self.frame.reset();
 +        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
          self.add_limitation(limitation);
          self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
-     }
- 
-@@ -165,6 +169,7 @@ impl Runtime {
+@@ -169,5 +173,6 @@ impl Runtime {
          self.readiness.frame_loop_ready = false;
          self.readiness.frame_in_flight = false;
          self.frame.reset();
 +        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
          self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
          self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
-     }
- 
-@@ -390,7 +395,7 @@ fn main() -> Result<(), Box<dyn Error>> {
+@@ -397,4 +402,4 @@ fn main() -> Result<(), Box<dyn Error>> {
                  "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
                  frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
 -                "Prime Shell is not started yet".to_owned(),
 +                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
              ],
-         },
-     };
