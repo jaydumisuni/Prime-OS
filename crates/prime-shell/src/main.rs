@@ -201,12 +201,16 @@ impl LayerShellHandler for PrimeShell {
         _serial: u32,
     ) {
         let Some(width) = NonZeroU32::new(configure.new_size.0) else {
-            eprintln!("prime-shell received zero background width; refusing to map an ambiguous surface");
+            eprintln!(
+                "prime-shell received zero background width; refusing to map an ambiguous surface"
+            );
             self.exit = true;
             return;
         };
         let Some(height) = NonZeroU32::new(configure.new_size.1) else {
-            eprintln!("prime-shell received zero background height; refusing to map an ambiguous surface");
+            eprintln!(
+                "prime-shell received zero background height; refusing to map an ambiguous surface"
+            );
             self.exit = true;
             return;
         };
