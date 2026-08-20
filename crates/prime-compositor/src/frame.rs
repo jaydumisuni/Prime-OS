@@ -76,6 +76,7 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         crate::shell::persistent_baseline_renderable(&mut runtime._renderer, &runtime._output);
     if runtime.readiness.shell_ready && shell_baseline.is_none() {
         runtime.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+        runtime.persist_best_effort();
     }
 
     let elements = space_render_elements(
