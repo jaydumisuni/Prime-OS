@@ -5,5 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-smithay-client-toolkit.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["xkbcommon"] }
 wayland-client.workspace = true
