@@ -1,0 +1,134 @@
+name: Construction P1 Typed Power Authority
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-power-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  CORE_RUN: 32381635585
+  CORE_ARTIFACT: prime-shell-core-direct3-83793aee29443863e77f4fe6f2f2a4d276e27004
+  LOCK_SHA256: 771c7f45bf335c2c421d4ccbdc8aeccc306e963cf94fd7fdfede982a4d4903a5
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-power' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence power candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/files.txt
+          test "$(cat /tmp/files.txt)" = $'crates/prime-contracts/src/system.rs\ncrates/primed/src/power.rs'
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          grep -F '"/usr/bin/systemctl"' crates/primed/src/power.rs
+          grep -F '"--no-block"' crates/primed/src/power.rs
+          ! grep -F 'sh -c' crates/primed/src/power.rs
+          echo PRIME_POWER_SCOPE=PASS
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.CORE_RUN }}
+          name: ${{ env.CORE_ARTIFACT }}
+          path: /tmp/prime-core
+
+      - name: Reconstruct Core and integrate typed power
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a /tmp/prime-core/handoff/. .
+          cp crates/prime-contracts/src/system.rs /tmp/system.rs
+          cp crates/primed/src/power.rs /tmp/power.rs
+          python3 construction/power/integrate.py
+          cp /tmp/system.rs crates/prime-contracts/src/system.rs
+          cp /tmp/power.rs crates/primed/src/power.rs
+          test "$(sha256sum Cargo.lock | awk '{print $1}')" = "$LOCK_SHA256"
+          git diff --check
+          grep -F 'pub mod system;' crates/prime-contracts/src/lib.rs
+          grep -F 'pub mod power;' crates/primed/src/lib.rs
+          grep -F '"/v1/system/power"' crates/primed/src/server.rs
+          grep -F 'shell_peer_authorized(peer_uid, peer_gid, shell_gid)' crates/primed/src/server.rs
+          grep -F 'ready: true' crates/primed/src/system_status.rs
+          echo PRIME_POWER_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove typed power authority without executing power actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-contracts/src handoff/crates/primed/src
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc make >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$LOCK_SHA256"
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_POWER_FMT=PASS
+              cargo clippy --locked -p prime-contracts -p primed --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_POWER_CLIPPY=PASS
+              cargo test --locked -p prime-contracts -p primed 2>&1 | tee diag/tests.log
+              echo PRIME_POWER_TEST=PASS
+              cargo build --locked --release -p primed 2>&1 | tee diag/build.log
+              ! ldd target/release/primed | grep -q "not found"
+              echo PRIME_POWER_BUILD=PASS
+            '
+          cp Cargo.lock handoff/Cargo.lock
+          cp crates/prime-contracts/src/lib.rs crates/prime-contracts/src/system.rs handoff/crates/prime-contracts/src/
+          cp crates/primed/src/lib.rs crates/primed/src/server.rs crates/primed/src/power.rs crates/primed/src/system_status.rs handoff/crates/primed/src/
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo POWER_CONTRACT_HASH=$(git hash-object crates/prime-contracts/src/system.rs)
+            echo POWER_MODULE_HASH=$(git hash-object crates/primed/src/power.rs)
+            echo SERVER_HASH=$(git hash-object crates/primed/src/server.rs)
+            echo SYSTEM_STATUS_HASH=$(git hash-object crates/primed/src/system_status.rs)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_POWER_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-power-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
