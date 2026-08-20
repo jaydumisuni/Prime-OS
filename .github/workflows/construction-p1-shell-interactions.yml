@@ -54,7 +54,13 @@ jobs:
           grep -F 'PRIME_SHELL_ORB_OPEN=pointer' crates/prime-shell/src/main.rs
           grep -F 'PRIME_SHELL_ORB_OPEN=keyboard' crates/prime-shell/src/main.rs
           grep -F 'PRIME_SHELL_QUICK_CONTROLS_OPEN=pointer' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_QUICK_CONTROLS_OPEN=keyboard' crates/prime-shell/src/main.rs
+          grep -F 'PRIME_SHELL_TRANSIENT_CLOSE=pointer' crates/prime-shell/src/main.rs
           grep -F 'PRIME_SHELL_TRANSIENT_CLOSE=keyboard' crates/prime-shell/src/main.rs
+          grep -F 'toggle_orb(queue_handle, InteractionSource::Pointer)' crates/prime-shell/src/main.rs
+          grep -F 'toggle_orb(queue_handle, InteractionSource::Keyboard)' crates/prime-shell/src/main.rs
+          grep -F 'toggle_quick_controls(queue_handle, InteractionSource::Pointer)' crates/prime-shell/src/main.rs
+          grep -F 'toggle_quick_controls(queue_handle, InteractionSource::Keyboard)' crates/prime-shell/src/main.rs
           grep -F 'PRIME_SHELL_PRIVILEGED_ACTIONS=unavailable;typed_core_bridge_unearned' crates/prime-shell/src/main.rs
           ! grep -F 'std::process::Command' crates/prime-shell/src/main.rs
           ! grep -F '/v1/exec/native/launch' crates/prime-shell/src/main.rs
