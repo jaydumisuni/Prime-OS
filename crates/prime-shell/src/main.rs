@@ -1,4 +1,4 @@
-use std::{error::Error, num::NonZeroU32};
+use std::{error::Error, io, num::NonZeroU32};
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -89,7 +89,7 @@ impl PrimeShell {
         let height = i32::try_from(self.height)?;
         let stride = width
             .checked_mul(4)
-            .ok_or("Prime Shell background stride overflow")?;
+            .ok_or_else(|| io::Error::other("Prime Shell background stride overflow"))?;
         let (buffer, canvas) =
             self.pool
                 .create_buffer(width, height, stride, wl_shm::Format::Argb8888)?;
