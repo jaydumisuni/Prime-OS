@@ -52,7 +52,8 @@ jobs:
           grep -F 'backgrounds.len() != 1 || rails.len() != 1' crates/prime-compositor/src/shell.rs
           grep -F 'persistent_baseline_identity_renderable' crates/prime-compositor/src/frame.rs
           grep -F 'invalidate_shell_readiness' crates/prime-compositor/src/protocols.rs
-          grep -F 'Prime Shell persistent baseline has not retired' crates/prime-compositor/src/main.rs
+          grep -F 'shell::SHELL_NOT_PROVEN_LIMITATION' crates/prime-compositor/src/main.rs
+          grep -F 'Prime Shell persistent baseline has not retired in a selected-CRTC frame' crates/prime-compositor/src/shell.rs
           grep -F 'Persistent baseline: background + rail; Orb/quick-controls remain transient' crates/prime-shell/src/main.rs
           grep -F 'The persistent baseline is `prime.shell.background` plus `prime.shell.rail`.' docs/contracts/PRIME_P1_SHELL_V1.md
           echo PRIME_SHELL_READINESS_V3_SCOPE=PASS
