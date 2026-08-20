@@ -18,7 +18,21 @@ text = replace_once(
     "",
     "obsolete quick-controls flat color",
 )
-text = replace_once(text, "    color: u32,\n", "", "transient color field")
+text = replace_once(
+    text,
+    '''struct TransientSurface {
+    layer: LayerSurface,
+    width: u32,
+    height: u32,
+    color: u32,
+}''',
+    '''struct TransientSurface {
+    layer: LayerSurface,
+    width: u32,
+    height: u32,
+}''',
+    "transient color field",
+)
 text = replace_once(
     text,
     "        color: u32,\n    ) -> TransientSurface {",
