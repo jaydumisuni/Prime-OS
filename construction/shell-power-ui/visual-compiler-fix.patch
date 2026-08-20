@@ -1,0 +1,8 @@
+--- a/crates/prime-shell/src/visual.rs
++++ b/crates/prime-shell/src/visual.rs
+@@ -199,5 +199,5 @@
+     let reboot_y = height.saturating_sub(QUICK_REBOOT_OFFSET);
+     let poweroff_y = height.saturating_sub(QUICK_POWEROFF_OFFSET);
+-    let mut y = 78;
++    let mut y: u32 = 78;
+     for line in lines {
