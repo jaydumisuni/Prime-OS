@@ -22,12 +22,10 @@ env:
   INTERACTIONS_LOCK_SHA256: 771c7f45bf335c2c421d4ccbdc8aeccc306e963cf94fd7fdfede982a4d4903a5
   APPLICATION_HASH: dcf8bf57c0ba8508e302739f081bdde2a9f0b6c3
   SHELL_API_HASH: a71da78a7541307be53f1680859e50be018e56cc
-  LIB_PATCH_HASH: 27c9a5737560c43f02317e99e9a2df7afb9ebe46
-  SERVER_PATCH_HASH: d5bb00a85d7aa8ccac2d00b249a3819e07b9f572
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-core' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-core-direct' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -36,26 +34,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Fence Shell Core candidate
+      - name: Fence direct Shell Core candidate
         shell: bash
         run: |
           set -euo pipefail
           base='${{ github.event.pull_request.base.sha }}'
-          test "$(git merge-base "$base" HEAD)" = "$base"
-          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
           git diff --check "$base" HEAD
-          git diff --name-only "$base" HEAD | tee /tmp/shell-core-files.txt
-          while IFS= read -r path; do
-            case "$path" in
-              crates/prime-contracts/src/application.rs|crates/primed/src/shell_api.rs|construction/shell-core/lib-shell-api.patch|construction/shell-core/server-shell-api.patch) ;;
-              *) echo "unexpected Shell Core construction path: $path" >&2; exit 1 ;;
-            esac
-          done < /tmp/shell-core-files.txt
-          test "$(wc -l < /tmp/shell-core-files.txt)" -eq 4
+          git diff --name-only "$base" HEAD | tee /tmp/files.txt
+          test "$(cat /tmp/files.txt)" = $'crates/prime-contracts/src/application.rs\ncrates/primed/src/shell_api.rs'
           test "$(git hash-object crates/prime-contracts/src/application.rs)" = "$APPLICATION_HASH"
           test "$(git hash-object crates/primed/src/shell_api.rs)" = "$SHELL_API_HASH"
-          test "$(git hash-object construction/shell-core/lib-shell-api.patch)" = "$LIB_PATCH_HASH"
-          test "$(git hash-object construction/shell-core/server-shell-api.patch)" = "$SERVER_PATCH_HASH"
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
           echo PRIME_SHELL_CORE_SCOPE=PASS
 
       - uses: actions/download-artifact@v4
@@ -76,18 +65,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -d /tmp/prime-readiness/handoff
-          test -d /tmp/prime-interactions/handoff
           cp -a /tmp/prime-readiness/handoff/. .
           cp -a /tmp/prime-interactions/handoff/. .
           test "$(sha256sum Cargo.lock | awk '{print $1}')" = "$INTERACTIONS_LOCK_SHA256"
-
-          git apply --check construction/shell-core/lib-shell-api.patch
-          git apply construction/shell-core/lib-shell-api.patch
-          git apply --check construction/shell-core/server-shell-api.patch
-          git apply construction/shell-core/server-shell-api.patch
+          python3 construction/shell-core/integrate-direct-v4.py
           git diff --check
-
           grep -F 'pub mod shell_api;' crates/primed/src/lib.rs
           grep -F '"/v1/applications"' crates/primed/src/server.rs
           grep -F '"/v1/shell/launch"' crates/primed/src/server.rs
@@ -148,7 +130,6 @@ jobs:
               target/release/prime-compositor --help | tee diag/compositor-help.log
               echo PRIME_SHELL_CORE_BUILD=PASS
             '
-
           cp Cargo.lock handoff/Cargo.lock
           cp crates/prime-contracts/src/application.rs handoff/crates/prime-contracts/src/application.rs
           cp crates/primed/src/lib.rs handoff/crates/primed/src/lib.rs
@@ -167,7 +148,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-core-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-core-direct-${{ github.event.pull_request.head.sha }}
           path: |
             diag/
             handoff/
