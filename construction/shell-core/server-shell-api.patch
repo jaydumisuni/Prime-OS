@@ -33,7 +33,7 @@ diff --git a/crates/primed/src/server.rs b/crates/primed/src/server.rs
 +fn shell_peer_authorized(peer_uid: u32, peer_gid: u32, socket_gid: u32) -> bool {
 +    peer_uid == 0 || (socket_gid != 0 && peer_gid == socket_gid)
 +}
- 
++
  pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
 @@ -49,6 +54,7 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
  
@@ -126,7 +126,7 @@ diff --git a/crates/primed/src/server.rs b/crates/primed/src/server.rs
 +            ),
 +        });
 +    }
- 
++
      if request.method() == Method::POST && request.uri().path() == "/v1/exec/native/launch" {
 @@ -323,6 +398,18 @@ async fn route(
                  Vec::new(),
@@ -165,5 +165,5 @@ diff --git a/crates/primed/src/server.rs b/crates/primed/src/server.rs
 +    fn shell_authorization_does_not_delegate_root_group() {
 +        assert!(!shell_peer_authorized(1000, 0, 0));
 +    }
- 
++
      #[test]
