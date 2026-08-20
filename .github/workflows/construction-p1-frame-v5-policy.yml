@@ -1,0 +1,98 @@
+name: Construction P1 Frame v5 Policy Gate
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-frame-proof-base2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  COMPILER_FIX_HASH: f10e192829f5b85c31e15054980601baa0df369f
+  REVIEW_FIX_HASH: 11db66f8937a90ead71677bf6f7d2cef655cc2da
+  SCANOUT_FIX_HASH: db413fd7f5d5ae3441c5454bfb1745f517bf7327
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-frame-proof2' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Reconcile final reviewed FRAME candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply --check construction/frame-rustfmt.patch
+          git apply construction/frame-rustfmt.patch
+          test "$(git hash-object construction/frame-compiler-fix.patch)" = "$COMPILER_FIX_HASH"
+          git apply --check construction/frame-compiler-fix.patch
+          git apply construction/frame-compiler-fix.patch
+          test "$(git hash-object construction/frame-review-fix.patch)" = "$REVIEW_FIX_HASH"
+          git apply --check construction/frame-review-fix.patch
+          git apply construction/frame-review-fix.patch
+          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = 1cb89da32055ab930c3583f68d6567d002f4e885
+          test "$(git hash-object crates/prime-compositor/src/input.rs)" = fdbd12742e1cacb3f9f93e5f9a18f47ad6d3b1f2
+          test "$(git hash-object crates/prime-compositor/src/main.rs)" = 366a89dc5d3469065cf6bb3cdaaba3c0bd998a6e
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = b847f3ecac0b72fcaa6a9c692a2e1e6784975240
+          test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = d9a0589b977bae4326c5e7220a3c84bb2a41ac14
+          test "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)" = 27f9a5a1f846ab23381fbcb3f4391e8671233ef8
+          test "$(git hash-object construction/frame-scanout-policy-fix.patch)" = "$SCANOUT_FIX_HASH"
+          git apply --check construction/frame-scanout-policy-fix.patch
+          git apply construction/frame-scanout-policy-fix.patch
+          echo FINAL_FRAME_HASH=$(git hash-object crates/prime-compositor/src/frame.rs)
+          echo FINAL_INPUT_HASH=$(git hash-object crates/prime-compositor/src/input.rs)
+          echo FINAL_MAIN_HASH=$(git hash-object crates/prime-compositor/src/main.rs)
+          echo FINAL_PROTOCOLS_HASH=$(git hash-object crates/prime-compositor/src/protocols.rs)
+          echo FINAL_READINESS_HASH=$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)
+          echo FINAL_FRAME_CONTRACT_HASH=$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)
+          git diff --check
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Prove final reviewed candidate with pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
+                -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check
+              echo PRIME_FRAME_FINAL_FMT=PASS
+              cargo clippy --locked -p prime-compositor --all-targets -- -D warnings
+              echo PRIME_FRAME_FINAL_CLIPPY=PASS
+              cargo build --locked -p prime-compositor --release --bin prime-compositor
+              echo PRIME_FRAME_FINAL_BUILD=PASS
+            '
