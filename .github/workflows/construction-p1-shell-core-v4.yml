@@ -1,0 +1,318 @@
+name: Construction P1 Shell Core Bridge v4
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-core-v4-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  READINESS_RUN: 32373143300
+  READINESS_ARTIFACT: prime-shell-readiness-v5-f1850d3be264cc9a0a0544ba32713e8523cd26d1
+  INTERACTIONS_RUN: 32376522915
+  INTERACTIONS_ARTIFACT: prime-shell-interactions-v3-1ce9e7fc89d8a254c4252724fa8cf4fda915110e
+  INTERACTIONS_LOCK_SHA256: 771c7f45bf335c2c421d4ccbdc8aeccc306e963cf94fd7fdfede982a4d4903a5
+  APPLICATION_HASH: dcf8bf57c0ba8508e302739f081bdde2a9f0b6c3
+  SHELL_API_HASH: a71da78a7541307be53f1680859e50be018e56cc
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-core-v4' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fence direct Shell Core candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git merge-base "$base" HEAD)" = "$base"
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/shell-core-files.txt
+          test "$(cat /tmp/shell-core-files.txt)" = $'crates/prime-contracts/src/application.rs\ncrates/primed/src/shell_api.rs'
+          test "$(git hash-object crates/prime-contracts/src/application.rs)" = "$APPLICATION_HASH"
+          test "$(git hash-object crates/primed/src/shell_api.rs)" = "$SHELL_API_HASH"
+          echo PRIME_SHELL_CORE_V4_SCOPE=PASS
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.READINESS_RUN }}
+          name: ${{ env.READINESS_ARTIFACT }}
+          path: /tmp/prime-readiness
+
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.INTERACTIONS_RUN }}
+          name: ${{ env.INTERACTIONS_ARTIFACT }}
+          path: /tmp/prime-interactions
+
+      - name: Reconstruct proven Shell parent and integrate Core bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d /tmp/prime-readiness/handoff
+          test -d /tmp/prime-interactions/handoff
+          cp -a /tmp/prime-readiness/handoff/. .
+          cp -a /tmp/prime-interactions/handoff/. .
+          test "$(sha256sum Cargo.lock | awk '{print $1}')" = "$INTERACTIONS_LOCK_SHA256"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exact source anchor once, found {count}")
+              return text.replace(old, new, 1)
+
+          lib = Path("crates/primed/src/lib.rs")
+          text = lib.read_text()
+          text = replace_once(
+              text,
+              "pub mod server;\npub mod storage;",
+              "pub mod server;\npub mod shell_api;\npub mod storage;",
+              "primed lib shell module",
+          )
+          lib.write_text(text)
+
+          server = Path("crates/primed/src/server.rs")
+          text = server.read_text()
+          text = replace_once(
+              text,
+              "use crate::{identity, launcher, storage, CoreState};",
+              "use crate::{identity, launcher, shell_api, storage, CoreState};",
+              "server crate imports",
+          )
+          text = replace_once(
+              text,
+              "    HostProjectionBody, InterfaceError, NativeLaunchRequest, StoragePreflightRequest,\n    StorageProjection, VersionsProjection, CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION,\n    NATIVE_LAUNCH_REQUEST_SCHEMA, STORAGE_PREFLIGHT_SCHEMA,",
+              "    HostProjectionBody, InterfaceError, NativeLaunchRequest, ShellLaunchRequest,\n    StoragePreflightRequest, StorageProjection, VersionsProjection, CAPABILITY_INTERFACE,\n    CAPABILITY_INTERFACE_VERSION, NATIVE_LAUNCH_REQUEST_SCHEMA, SHELL_LAUNCH_REQUEST_SCHEMA,\n    STORAGE_PREFLIGHT_SCHEMA,",
+              "server contract imports",
+          )
+          text = replace_once(
+              text,
+              "use std::os::unix::fs::{FileTypeExt, PermissionsExt};",
+              "use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};",
+              "server metadata import",
+          )
+          text = replace_once(
+              text,
+              "enum NegotiationError {\n    VersionRequired,\n    Incompatible(Vec<String>),\n}\n\npub async fn run",
+              "enum NegotiationError {\n    VersionRequired,\n    Incompatible(Vec<String>),\n}\n\nfn shell_peer_authorized(peer_uid: u32, peer_gid: u32, socket_gid: u32) -> bool {\n    peer_uid == 0 || (socket_gid != 0 && peer_gid == socket_gid)\n}\n\npub async fn run",
+              "server shell authorization helper",
+          )
+          text = replace_once(
+              text,
+              "    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))?;\n\n    let mut state = state;",
+              "    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))?;\n    let shell_gid = fs::metadata(socket_path)?.gid();\n\n    let mut state = state;",
+              "server socket gid",
+          )
+          text = replace_once(
+              text,
+              "        let peer_uid = credential.uid();\n        let state = state.clone();",
+              "        let peer_uid = credential.uid();\n        let peer_gid = credential.gid();\n        let state = state.clone();",
+              "server peer gid",
+          )
+          text = replace_once(
+              text,
+              "            let service = service_fn(move |request| route(request, state.clone(), peer_uid));",
+              "            let service = service_fn(move |request| {\n                route(request, state.clone(), peer_uid, peer_gid, shell_gid)\n            });",
+              "server route closure",
+          )
+          text = replace_once(
+              text,
+              "async fn route(\n    request: Request<Incoming>,\n    state: CoreState,\n    peer_uid: u32,\n) -> Result<Response<Full<Bytes>>, Infallible> {",
+              "async fn route(\n    request: Request<Incoming>,\n    state: CoreState,\n    peer_uid: u32,\n    peer_gid: u32,\n    shell_gid: u32,\n) -> Result<Response<Full<Bytes>>, Infallible> {",
+              "server route signature",
+          )
+          native_anchor = '''    if request.method() == Method::POST && request.uri().path() == "/v1/exec/native/launch" {'''
+          shell_block = '''    if request.method() == Method::POST && request.uri().path() == "/v1/shell/launch" {
+              if !shell_peer_authorized(peer_uid, peer_gid, shell_gid) {
+                  return Ok(error_response(
+                      StatusCode::FORBIDDEN,
+                      "PRIME_SHELL_AUTHORIZATION_REQUIRED",
+                      "Prime Shell launch requires root or the dedicated Core socket group",
+                      Vec::new(),
+                      Vec::new(),
+                  ));
+              }
+              let body = match collect_mutation_body(request.into_body()).await {
+                  Ok(body) => body,
+                  Err(response) => return Ok(response),
+              };
+              let shell_request: ShellLaunchRequest = match serde_json::from_slice(&body) {
+                  Ok(request) => request,
+                  Err(_) => {
+                      return Ok(error_response(
+                          StatusCode::BAD_REQUEST,
+                          "PRIME_SHELL_LAUNCH_REQUEST_INVALID",
+                          "Shell launch request is not valid prime.shell-launch-request.v1 JSON",
+                          Vec::new(),
+                          Vec::new(),
+                      ));
+                  }
+              };
+              if shell_request.schema != SHELL_LAUNCH_REQUEST_SCHEMA {
+                  return Ok(error_response(
+                      StatusCode::BAD_REQUEST,
+                      "PRIME_SHELL_LAUNCH_SCHEMA_INVALID",
+                      "Shell launch request schema is not supported",
+                      Vec::new(),
+                      Vec::new(),
+                  ));
+              }
+
+              let launch_state = state.clone();
+              let result = tokio::task::spawn_blocking(move || {
+                  shell_api::launch_selected(&launch_state, &shell_request)
+              })
+              .await;
+
+              return Ok(match result {
+                  Ok(Ok(evidence)) => json_response(StatusCode::OK, &evidence, true),
+                  Ok(Err(error)) => error_response(
+                      StatusCode::CONFLICT,
+                      "PRIME_SHELL_LAUNCH_DENIED",
+                      &error.to_string(),
+                      Vec::new(),
+                      Vec::new(),
+                  ),
+                  Err(_) => error_response(
+                      StatusCode::INTERNAL_SERVER_ERROR,
+                      "PRIME_SHELL_LAUNCH_TASK_FAILED",
+                      "Shell launch worker terminated before returning evidence",
+                      Vec::new(),
+                      Vec::new(),
+                  ),
+              });
+          }
+
+'''
+          text = replace_once(text, native_anchor, shell_block + native_anchor, "server shell launch route")
+          text = replace_once(
+              text,
+              '        "/v1/capabilities" => json_response(',
+              '''        "/v1/applications" => match shell_api::applications_projection(&state, negotiated) {
+              Ok(applications) => json_response(StatusCode::OK, &applications, true),
+              Err(error) => error_response(
+                  StatusCode::INTERNAL_SERVER_ERROR,
+                  "PRIME_APPLICATION_REGISTRY_UNAVAILABLE",
+                  &error.to_string(),
+                  Vec::new(),
+                  Vec::new(),
+              ),
+          },
+          "/v1/capabilities" => json_response(''',
+              "server applications projection route",
+          )
+          text = replace_once(
+              text,
+              "mod tests {\n    use super::*;\n\n    #[test]\n    fn negotiation_accepts_v1()",
+              "mod tests {\n    use super::*;\n\n    #[test]\n    fn shell_authorization_accepts_root() {\n        assert!(shell_peer_authorized(0, 0, 0));\n    }\n\n    #[test]\n    fn shell_authorization_accepts_dedicated_nonzero_socket_group() {\n        assert!(shell_peer_authorized(1000, 991, 991));\n    }\n\n    #[test]\n    fn shell_authorization_rejects_wrong_group() {\n        assert!(!shell_peer_authorized(1000, 992, 991));\n    }\n\n    #[test]\n    fn shell_authorization_does_not_delegate_root_group() {\n        assert!(!shell_peer_authorized(1000, 0, 0));\n    }\n\n    #[test]\n    fn negotiation_accepts_v1()",
+              "server shell authorization tests",
+          )
+          server.write_text(text)
+          PY
+
+          git diff --check
+          grep -F 'pub mod shell_api;' crates/primed/src/lib.rs
+          grep -F '"/v1/applications"' crates/primed/src/server.rs
+          grep -F '"/v1/shell/launch"' crates/primed/src/server.rs
+          grep -F 'peer_uid != 0' crates/primed/src/server.rs
+          grep -F 'shell_peer_authorized(peer_uid, peer_gid, shell_gid)' crates/primed/src/server.rs
+          grep -F 'root.join("artifacts/sha256").join(hex)' crates/primed/src/shell_api.rs
+          ! grep -F 'artifact_path' crates/prime-contracts/src/application.rs
+          echo PRIME_SHELL_CORE_V4_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove Shell Core bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-contracts/src handoff/crates/primed/src
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -e INTERACTIONS_LOCK_SHA256="$INTERACTIONS_LOCK_SHA256" \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$INTERACTIONS_LOCK_SHA256"
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_CORE_V4_FMT=PASS
+              cargo clippy --locked -p prime-contracts -p primed -p prime-shell -p prime-compositor --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_CORE_V4_CLIPPY=PASS
+              cargo test --locked -p prime-contracts -p primed -p prime-compositor 2>&1 | tee diag/tests.log
+              echo PRIME_SHELL_CORE_V4_TEST=PASS
+              cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
+              ! ldd target/release/primed | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              target/release/prime-shell --help | tee diag/shell-help.log
+              target/release/prime-compositor --help | tee diag/compositor-help.log
+              echo PRIME_SHELL_CORE_V4_BUILD=PASS
+            '
+
+          cp Cargo.lock handoff/Cargo.lock
+          cp crates/prime-contracts/src/application.rs handoff/crates/prime-contracts/src/application.rs
+          cp crates/primed/src/lib.rs handoff/crates/primed/src/lib.rs
+          cp crates/primed/src/server.rs handoff/crates/primed/src/server.rs
+          cp crates/primed/src/shell_api.rs handoff/crates/primed/src/shell_api.rs
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo APPLICATION_HASH=$(git hash-object crates/prime-contracts/src/application.rs)
+            echo PRIMED_LIB_HASH=$(git hash-object crates/primed/src/lib.rs)
+            echo PRIMED_SERVER_HASH=$(git hash-object crates/primed/src/server.rs)
+            echo SHELL_API_HASH=$(git hash-object crates/primed/src/shell_api.rs)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_SHELL_CORE_V4_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-core-v4-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
