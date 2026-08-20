@@ -1,0 +1,67 @@
+name: P1 Final Static Proof
+
+on:
+  pull_request:
+    branches: [construction/p1-final-static-base]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  FINAL_HEAD: 4f2ef83fc1305773afa033b57249111387cfdd88
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  CARGO_LOCK_SHA256: b5dc0bb1c8ec9d1db9cd4dd48a8e58a576307b625eff9c969f39a83b8d1b58b9
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-final-static-trigger' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.FINAL_HEAD }}
+          fetch-depth: 0
+      - name: Authenticate exact Fedora substrate
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FINAL_HEAD"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+      - name: Prove final Rust bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup -e CARGO_HOME=/tmp/prime-cargo \
+            -e CARGO_LOCK_SHA256="$CARGO_LOCK_SHA256" \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" mesa-libgbm-devel-26.1.7-1.fc44 \
+                mesa-dri-drivers-26.1.7-1.fc44 mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" "pkgconfig(wayland-server)" \
+                "pkgconfig(wayland-client)" "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"; mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$CARGO_LOCK_SHA256"
+              cargo fmt --all -- --check
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo clippy --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor --all-targets -- -D warnings
+              cargo test --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor
+              cargo build --locked --release -p primed -p prime-shell -p prime-compositor
+              ! ldd target/release/primed | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              echo P1_FINAL_STATIC_PROOF=PASS
+            '
