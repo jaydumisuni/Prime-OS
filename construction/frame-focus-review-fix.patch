@@ -10,7 +10,7 @@ diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/
      reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
      utils::{Logical, Point, SERIAL_COUNTER},
      wayland::compositor::get_parent,
-@@ -221,6 +221,9 @@ fn keyboard_focus_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<WlSurface> {
+@@ -221,5 +221,8 @@ fn keyboard_focus_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<WlSurface> {
      while let Some(parent) = get_parent(&root) {
          root = parent;
      }
