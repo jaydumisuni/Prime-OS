@@ -118,8 +118,5 @@ pub(crate) fn persistent_baseline_identity_renderable(
 pub(crate) fn persistent_layer_for_surface(output: &Output, surface: &WlSurface) -> bool {
     let map = layer_map_for_output(output);
     map.layer_for_surface(surface, WindowSurfaceType::ALL)
-        .is_some_and(|layer| {
-            is_persistent_namespace(layer.namespace())
-                && expected_layer(layer.namespace()) == Some(layer.layer())
-        })
+        .is_some_and(|layer| is_persistent_namespace(layer.namespace()))
 }
