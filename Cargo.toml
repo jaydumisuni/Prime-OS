@@ -5,6 +5,7 @@ members = [
     "crates/prime-storage",
     "crates/primed",
     "crates/prime-compositor",
+    "crates/prime-shell",
 ]
 resolver = "2"
 
@@ -34,7 +35,9 @@ smithay = { version = "=0.7.0", default-features = false, features = [
     "renderer_gl",
     "wayland_frontend",
 ] }
+smithay-client-toolkit = { version = "=0.20.0", default-features = false }
 thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 uuid = { version = "1", features = ["serde", "v7"] }
+wayland-client = "=0.31.15"
