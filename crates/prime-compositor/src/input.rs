@@ -4,13 +4,14 @@ use smithay::{
         Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
         PointerButtonEvent, PointerMotionEvent,
     },
+    desktop::{find_popup_root_surface, layer_map_for_output, WindowSurfaceType},
     input::{
         keyboard::FilterResult,
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
-    wayland::seat::WaylandFocus,
+    wayland::compositor::get_parent,
 };
 use std::convert::TryInto;
 
@@ -63,7 +64,7 @@ fn pointer_button<B: InputBackend>(runtime: &mut Runtime, event: B::PointerButto
     let state = wl_pointer::ButtonState::from(event.state());
 
     if state == wl_pointer::ButtonState::Pressed {
-        let focus = surface_under(runtime, pointer.current_location()).map(|(surface, _)| surface);
+        let focus = keyboard_focus_under(runtime, pointer.current_location());
         runtime
             .protocols
             .keyboard
@@ -129,15 +130,100 @@ fn surface_under(
     runtime: &Runtime,
     location: Point<f64, Logical>,
 ) -> Option<(WlSurface, Point<f64, Logical>)> {
-    runtime
-        .protocols
-        .space
-        .element_under(location)
-        .and_then(|(window, window_location)| {
-            window
-                .wl_surface()
-                .map(|surface| (surface.into_owned(), window_location.to_f64()))
+    let output_geometry = runtime.protocols.space.output_geometry(&runtime._output)?;
+    if !output_geometry.contains(location.to_i32_round()) {
+        return None;
+    }
+    let output_local = location - output_geometry.loc.to_f64();
+    let map = layer_map_for_output(&runtime._output);
+
+    if let Some(hit) = layer_hit(
+        &map,
+        smithay::wayland::shell::wlr_layer::Layer::Overlay,
+        output_local,
+        output_geometry.loc,
+    )
+    .or_else(|| {
+        layer_hit(
+            &map,
+            smithay::wayland::shell::wlr_layer::Layer::Top,
+            output_local,
+            output_geometry.loc,
+        )
+    }) {
+        return Some(hit);
+    }
+
+    if let Some(hit) =
+        runtime
+            .protocols
+            .space
+            .element_under(location)
+            .and_then(|(window, window_location)| {
+                window
+                    .surface_under(location - window_location.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, surface_location)| {
+                        (surface, (surface_location + window_location).to_f64())
+                    })
+            })
+    {
+        return Some(hit);
+    }
+
+    layer_hit(
+        &map,
+        smithay::wayland::shell::wlr_layer::Layer::Bottom,
+        output_local,
+        output_geometry.loc,
+    )
+    .or_else(|| {
+        layer_hit(
+            &map,
+            smithay::wayland::shell::wlr_layer::Layer::Background,
+            output_local,
+            output_geometry.loc,
+        )
+    })
+}
+
+fn layer_hit(
+    map: &smithay::desktop::LayerMap,
+    layer_kind: smithay::wayland::shell::wlr_layer::Layer,
+    output_local: Point<f64, Logical>,
+    output_location: Point<i32, Logical>,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let layer = map.layer_under(layer_kind, output_local)?;
+    let layer_location = map.layer_geometry(layer)?.loc;
+    layer
+        .surface_under(
+            output_local - layer_location.to_f64(),
+            WindowSurfaceType::ALL,
+        )
+        .map(|(surface, surface_location)| {
+            (
+                surface,
+                (surface_location + layer_location + output_location).to_f64(),
+            )
         })
+}
+
+fn keyboard_focus_under(runtime: &Runtime, location: Point<f64, Logical>) -> Option<WlSurface> {
+    let (surface, _) = surface_under(runtime, location)?;
+    let map = layer_map_for_output(&runtime._output);
+    if let Some(layer) = map.layer_for_surface(&surface, WindowSurfaceType::ALL) {
+        return layer
+            .can_receive_keyboard_focus()
+            .then(|| layer.wl_surface().clone());
+    }
+
+    let mut root = surface;
+    while let Some(parent) = get_parent(&root) {
+        root = parent;
+    }
+    if let Some(popup) = runtime.protocols.popups.find_popup(&root) {
+        return find_popup_root_surface(&popup).ok();
+    }
+    Some(root)
 }
 
 fn clamp_to_output(runtime: &Runtime, mut location: Point<f64, Logical>) -> Point<f64, Logical> {

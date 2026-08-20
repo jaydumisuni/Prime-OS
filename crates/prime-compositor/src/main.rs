@@ -1,3 +1,4 @@
+mod frame;
 mod input;
 mod output;
 mod protocols;
@@ -72,6 +73,11 @@ struct Readiness {
     keyboard_ready: bool,
     pointer_ready: bool,
     input_delivery_ready: bool,
+    frame_loop_ready: bool,
+    frame_in_flight: bool,
+    frames_queued: u64,
+    frames_submitted: u64,
+    mapped_surface_frames_submitted: u64,
     renderer_ready: bool,
     outputs_ready: bool,
     shell_ready: bool,
@@ -88,6 +94,7 @@ pub(crate) struct Runtime {
     _drm_output: output::PrimeDrmOutput,
     output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
+    frame: frame::FrameState,
     _session: LibSeatSession,
     readiness_path: PathBuf,
     readiness: Readiness,
@@ -117,25 +124,53 @@ impl Runtime {
         }
     }
 
+    fn remove_limitation(&mut self, limitation: &str) {
+        self.readiness.limitations.retain(|item| item != limitation);
+    }
+
+    pub(crate) fn request_frame(&mut self) {
+        frame::request(self);
+    }
+
+    fn invalidate_frame_loop(&mut self, phase: &str, limitation: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
+        self.add_limitation(limitation);
+    }
+
     fn require_graphics_revalidation(&mut self, phase: &str) {
         self.readiness.phase = phase.to_owned();
         self.readiness.drm_access_ready = false;
         self.readiness.renderer_ready = false;
         self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
         self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
 
     fn invalidate_output(&mut self, phase: &str, limitation: &str) {
         self.readiness.phase = phase.to_owned();
         self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
         self.add_limitation(limitation);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
 
     fn invalidate_wayland_protocols(&mut self) {
         self.readiness.phase = "WAYLAND_PROTOCOL_ERROR".to_owned();
         self.readiness.wayland_protocols_ready = false;
         self.readiness.input_delivery_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
 }
 
@@ -275,7 +310,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
 
     loop_handle.insert_source(drm_notifier, |event, _, runtime| match event {
-        DrmEvent::VBlank(_) => {}
+        DrmEvent::VBlank(crtc) => match frame::handle_vblank(runtime, crtc) {
+            Ok(true) => runtime.persist_best_effort(),
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("prime-compositor frame retirement failed: {error}");
+                runtime.invalidate_frame_loop("FRAME_ERROR", frame::FRAME_ERROR_LIMITATION);
+                runtime.persist_best_effort();
+            }
+        },
         DrmEvent::Error(error) => {
             eprintln!("prime-compositor DRM event processing failed: {error}");
             runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
@@ -316,6 +359,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         _drm_output: drm_output,
         output_manager,
         _renderer: renderer,
+        frame: frame::FrameState::new(),
         _session: session,
         readiness_path,
         readiness: Readiness {
@@ -337,6 +381,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             keyboard_ready: true,
             pointer_ready: true,
             input_delivery_ready: true,
+            frame_loop_ready: false,
+            frame_in_flight: false,
+            frames_queued: 0,
+            frames_submitted: 0,
+            mapped_surface_frames_submitted: 0,
             renderer_ready: true,
             outputs_ready: true,
             shell_ready: false,
@@ -345,9 +394,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             last_udev_event: None,
             limitations: vec![
                 "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
-                "Layer-shell pointer hit-testing waits for the mapped-surface/frame responsibility".to_owned(),
                 "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
-                "Client surfaces are not rendered to the KMS output yet".to_owned(),
+                frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
                 "Prime Shell is not started yet".to_owned(),
             ],
         },
@@ -361,6 +409,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         event_loop.dispatch(Some(Duration::from_millis(16)), &mut runtime)?;
+        if let Err(error) = frame::try_queue(&mut runtime) {
+            eprintln!("prime-compositor frame queue failed: {error}");
+            runtime.invalidate_frame_loop("FRAME_ERROR", frame::FRAME_ERROR_LIMITATION);
+            runtime.persist_best_effort();
+        }
     }
 }
 
