@@ -1,0 +1,542 @@
+--- a/crates/prime-shell/src/core_client.rs
++++ b/crates/prime-shell/src/core_client.rs
+@@ -1,5 +1,6 @@
+ use prime_contracts::{
+-    ApplicationsProjection, CAPABILITY_INTERFACE_VERSION, SHELL_LAUNCH_REQUEST_SCHEMA,
++    ApplicationsProjection, SystemPowerAction, SystemPowerRequest, CAPABILITY_INTERFACE_VERSION,
++    SHELL_LAUNCH_REQUEST_SCHEMA, SYSTEM_POWER_REQUEST_SCHEMA,
+ };
+ use serde_json::Value;
+ use std::{
+@@ -37,6 +38,11 @@
+     socket_path: PathBuf,
+ }
+ 
++pub(crate) struct SystemStatusView {
++    pub(crate) lines: Vec<String>,
++    pub(crate) power_ready: bool,
++}
++
+ impl CoreClient {
+     pub(crate) fn from_env() -> Self {
+         let socket_path = env::var_os("PRIME_CORE_SOCKET")
+@@ -58,7 +64,7 @@
+         Ok(())
+     }
+ 
+-    pub(crate) fn system_status_lines(&self) -> Result<Vec<String>, CoreClientError> {
++    pub(crate) fn system_status(&self) -> Result<SystemStatusView, CoreClientError> {
+         let body = self.request("GET", "/v1/capabilities/prime.system.status", None)?;
+         let value: Value = serde_json::from_slice(&body)
+             .map_err(|error| CoreClientError::Json(error.to_string()))?;
+@@ -119,11 +125,18 @@
+         append_control_truth(resources, "network_control", "NETWORK CTRL", &mut lines);
+         append_control_truth(resources, "audio_control", "AUDIO CTRL", &mut lines);
+         append_control_truth(resources, "power_mutation", "POWER CTRL", &mut lines);
++        let power_ready = control_ready(resources, "power_mutation");
+ 
+         if lines.is_empty() {
+             lines.push("NO SYSTEM STATUS EVIDENCE".to_owned());
+         }
+-        Ok(lines)
++        Ok(SystemStatusView { lines, power_ready })
++    }
++
++    pub(crate) fn power(&self, action: SystemPowerAction) -> Result<(), CoreClientError> {
++        let body = power_request_body(action)?;
++        self.request("POST", "/v1/system/power", Some(&body))?;
++        Ok(())
+     }
+ 
+     fn request(
+@@ -215,6 +228,14 @@
+         .to_owned()
+ }
+ 
++fn control_ready(resources: &Value, field: &str) -> bool {
++    resources
++        .get(field)
++        .and_then(|control| control.get("ready"))
++        .and_then(Value::as_bool)
++        .unwrap_or(false)
++}
++
+ fn append_control_truth(resources: &Value, field: &str, label: &str, lines: &mut Vec<String>) {
+     let Some(control) = resources.get(field) else {
+         return;
+@@ -229,6 +250,14 @@
+     ));
+ }
+ 
++fn power_request_body(action: SystemPowerAction) -> Result<Vec<u8>, CoreClientError> {
++    serde_json::to_vec(&SystemPowerRequest {
++        schema: SYSTEM_POWER_REQUEST_SCHEMA.to_owned(),
++        action,
++    })
++    .map_err(|error| CoreClientError::Json(error.to_string()))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -249,4 +278,26 @@
+             Err(CoreClientError::Http(403, _))
+         ));
+     }
++
++    #[test]
++    fn power_readiness_fails_closed_when_missing_and_accepts_explicit_ready() {
++        let missing: Value = serde_json::json!({});
++        assert!(!control_ready(&missing, "power_mutation"));
++        let ready: Value = serde_json::json!({"power_mutation": {"ready": true}});
++        assert!(control_ready(&ready, "power_mutation"));
++    }
++
++    #[test]
++    fn power_request_serializes_typed_action() {
++        let body = power_request_body(SystemPowerAction::PowerOff).expect("power request");
++        let value: Value = serde_json::from_slice(&body).expect("power request JSON");
++        assert_eq!(
++            value.get("schema").and_then(Value::as_str),
++            Some(SYSTEM_POWER_REQUEST_SCHEMA)
++        );
++        assert_eq!(
++            value.get("action").and_then(Value::as_str),
++            Some("POWER_OFF")
++        );
++    }
+ }
+--- a/crates/prime-shell/src/main.rs
++++ b/crates/prime-shell/src/main.rs
+@@ -3,6 +3,8 @@
+ 
+ use std::{error::Error, io, num::NonZeroU32};
+ 
++use prime_contracts::SystemPowerAction;
++
+ use smithay_client_toolkit::{
+     compositor::{CompositorHandler, CompositorState},
+     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+@@ -39,7 +41,7 @@
+ const ORB_WIDTH: u32 = 360;
+ const ORB_HEIGHT: u32 = 420;
+ const QUICK_CONTROLS_WIDTH: u32 = 320;
+-const QUICK_CONTROLS_HEIGHT: u32 = 360;
++const QUICK_CONTROLS_HEIGHT: u32 = 420;
+ const RAIL_TRIGGER_WIDTH: f64 = 96.0;
+ 
+ const BACKGROUND_ARGB: u32 = 0xff11141a;
+@@ -115,10 +117,13 @@
+         selected_application: 0,
+         orb_message: None,
+         quick_lines: Vec::new(),
++        quick_power_ready: false,
++        pending_power: None,
++        quick_message: None,
+         exit: false,
+     };
+ 
+-    eprintln!("PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_read_only");
++    eprintln!("PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm");
+ 
+     while !shell.exit {
+         event_queue.blocking_dispatch(&mut shell)?;
+@@ -140,6 +145,30 @@
+     Keyboard,
+ }
+ 
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum PowerConfirmation {
++    Arm(SystemPowerAction),
++    Execute(SystemPowerAction),
++}
++
++fn power_confirmation(
++    pending: Option<SystemPowerAction>,
++    requested: SystemPowerAction,
++) -> PowerConfirmation {
++    if pending == Some(requested) {
++        PowerConfirmation::Execute(requested)
++    } else {
++        PowerConfirmation::Arm(requested)
++    }
++}
++
++fn power_action_name(action: SystemPowerAction) -> &'static str {
++    match action {
++        SystemPowerAction::Reboot => "RESTART",
++        SystemPowerAction::PowerOff => "POWER OFF",
++    }
++}
++
+ struct TransientSurface {
+     layer: LayerSurface,
+     width: u32,
+@@ -170,6 +199,9 @@
+     selected_application: usize,
+     orb_message: Option<String>,
+     quick_lines: Vec<String>,
++    quick_power_ready: bool,
++    pending_power: Option<SystemPowerAction>,
++    quick_message: Option<String>,
+     exit: bool,
+ }
+ 
+@@ -306,10 +338,18 @@
+             self.close_transient(ShellSurfaceKind::QuickControls, source);
+             return;
+         }
+-        self.quick_lines = self
+-            .core
+-            .system_status_lines()
+-            .unwrap_or_else(|error| vec![format!("CORE STATUS UNAVAILABLE: {error}")]);
++        self.pending_power = None;
++        self.quick_message = None;
++        match self.core.system_status() {
++            Ok(status) => {
++                self.quick_lines = status.lines;
++                self.quick_power_ready = status.power_ready;
++            }
++            Err(error) => {
++                self.quick_lines = vec![format!("CORE STATUS UNAVAILABLE: {error}")];
++                self.quick_power_ready = false;
++            }
++        }
+         self.quick_controls = Some(self.create_overlay(
+             queue_handle,
+             QUICK_CONTROLS_NAMESPACE,
+@@ -386,6 +426,60 @@
+         }
+     }
+ 
++    fn redraw_quick_controls(&mut self) {
++        let Some(quick_controls) = self.quick_controls.as_ref() else {
++            return;
++        };
++        let layer = quick_controls.layer.clone();
++        let width = quick_controls.width;
++        let height = quick_controls.height;
++        if let Err(error) =
++            draw_visual_surface(&mut self.pool, &layer, width, height, |canvas, w, h| {
++                visual::paint_quick_controls(
++                    canvas,
++                    w,
++                    h,
++                    &self.quick_lines,
++                    self.quick_power_ready,
++                    self.pending_power,
++                    self.quick_message.as_deref(),
++                );
++            })
++        {
++            eprintln!("prime-shell could not redraw quick controls: {error}");
++            self.exit = true;
++        }
++    }
++
++    fn stage_power_action(&mut self, action: SystemPowerAction) {
++        if !self.quick_power_ready {
++            self.pending_power = None;
++            self.quick_message = Some("POWER CONTROL UNAVAILABLE".to_owned());
++            return;
++        }
++
++        match power_confirmation(self.pending_power, action) {
++            PowerConfirmation::Arm(action) => {
++                self.pending_power = Some(action);
++                self.quick_message = Some(format!(
++                    "PRESS {} AGAIN TO CONFIRM {}",
++                    match action {
++                        SystemPowerAction::Reboot => "R",
++                        SystemPowerAction::PowerOff => "P",
++                    },
++                    power_action_name(action)
++                ));
++            }
++            PowerConfirmation::Execute(action) => {
++                self.pending_power = None;
++                self.quick_message = Some(match self.core.power(action) {
++                    Ok(()) => format!("{} ACCEPTED BY PRIME CORE", power_action_name(action)),
++                    Err(error) => format!("{} DENIED: {error}", power_action_name(action)),
++                });
++            }
++        }
++    }
++
+     fn close_transient(&mut self, kind: ShellSurfaceKind, source: InteractionSource) {
+         let closed = match kind {
+             ShellSurfaceKind::Orb => self.orb.take().is_some(),
+@@ -393,6 +487,10 @@
+             ShellSurfaceKind::Rail => false,
+         };
+         if closed {
++            if kind == ShellSurfaceKind::QuickControls {
++                self.pending_power = None;
++                self.quick_message = None;
++            }
+             match source {
+                 InteractionSource::Pointer => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=pointer"),
+                 InteractionSource::Keyboard => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=keyboard"),
+@@ -454,7 +552,17 @@
+                     &quick_controls.layer,
+                     width,
+                     height,
+-                    |canvas, w, h| visual::paint_quick_controls(canvas, w, h, &self.quick_lines),
++                    |canvas, w, h| {
++                        visual::paint_quick_controls(
++                            canvas,
++                            w,
++                            h,
++                            &self.quick_lines,
++                            self.quick_power_ready,
++                            self.pending_power,
++                            self.quick_message.as_deref(),
++                        )
++                    },
+                 ) {
+                     eprintln!("prime-shell could not draw quick-controls overlay: {error}");
+                     self.exit = true;
+@@ -769,6 +877,18 @@
+         let Some(character) = event.keysym.key_char() else {
+             return;
+         };
++        if self.keyboard_focus == Some(ShellSurfaceKind::QuickControls) {
++            let action = match character.to_ascii_lowercase() {
++                'r' => Some(SystemPowerAction::Reboot),
++                'p' => Some(SystemPowerAction::PowerOff),
++                _ => None,
++            };
++            if let Some(action) = action {
++                self.stage_power_action(action);
++                self.redraw_quick_controls();
++            }
++            return;
++        }
+         if self.keyboard_focus == Some(ShellSurfaceKind::Rail) {
+             match character.to_ascii_lowercase() {
+                 'o' => self.toggle_orb(queue_handle, InteractionSource::Keyboard),
+@@ -845,11 +965,46 @@
+                     self.activate_selected_application();
+                     self.redraw_orb();
+                 }
++            } else {
++                let action = self
++                    .quick_controls
++                    .as_ref()
++                    .and_then(|quick_controls| {
++                        (&event.surface == quick_controls.layer.wl_surface()).then(|| {
++                            visual::quick_power_action_at(event.position.1, quick_controls.height)
++                        })
++                    })
++                    .flatten();
++                if let Some(action) = action {
++                    self.stage_power_action(action);
++                    self.redraw_quick_controls();
++                }
+             }
+         }
+     }
+ }
+ 
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn power_confirmation_requires_same_action_twice() {
++        assert_eq!(
++            power_confirmation(None, SystemPowerAction::Reboot),
++            PowerConfirmation::Arm(SystemPowerAction::Reboot)
++        );
++        assert_eq!(
++            power_confirmation(Some(SystemPowerAction::Reboot), SystemPowerAction::Reboot),
++            PowerConfirmation::Execute(SystemPowerAction::Reboot)
++        );
++        assert_eq!(
++            power_confirmation(Some(SystemPowerAction::Reboot), SystemPowerAction::PowerOff),
++            PowerConfirmation::Arm(SystemPowerAction::PowerOff)
++        );
++    }
++}
++
+ impl ShmHandler for PrimeShell {
+     fn shm_state(&mut self) -> &mut Shm {
+         &mut self.shm
+--- a/crates/prime-shell/src/visual.rs
++++ b/crates/prime-shell/src/visual.rs
+@@ -1,7 +1,10 @@
+-use prime_contracts::ApplicationEntry;
++use prime_contracts::{ApplicationEntry, SystemPowerAction};
+ 
+ pub(crate) const ORB_LIST_TOP: f64 = 82.0;
+ pub(crate) const ORB_ROW_HEIGHT: f64 = 30.0;
++const QUICK_ACTION_HEIGHT: u32 = 30;
++const QUICK_REBOOT_OFFSET: u32 = 112;
++const QUICK_POWEROFF_OFFSET: u32 = 76;
+ 
+ const PANEL: u32 = 0xee171c25;
+ const PANEL_ALT: u32 = 0xee222936;
+@@ -173,7 +176,15 @@
+     }
+ }
+ 
+-pub(crate) fn paint_quick_controls(canvas: &mut [u8], width: u32, height: u32, lines: &[String]) {
++pub(crate) fn paint_quick_controls(
++    canvas: &mut [u8],
++    width: u32,
++    height: u32,
++    lines: &[String],
++    power_ready: bool,
++    pending_power: Option<SystemPowerAction>,
++    message: Option<&str>,
++) {
+     fill_rect(canvas, width, height, 0, 0, width, height, PANEL_ALT);
+     stroke_rect(canvas, width, height, 0, 0, width, height, BORDER);
+     draw_text(canvas, width, height, 18, 18, 2, TEXT, "QUICK CONTROLS");
+@@ -188,8 +199,13 @@
+         "PRIME SYSTEM TRUTH",
+     );
+ 
++    let reboot_y = height.saturating_sub(QUICK_REBOOT_OFFSET);
++    let poweroff_y = height.saturating_sub(QUICK_POWEROFF_OFFSET);
+     let mut y = 78;
+-    for line in lines.iter().take(13) {
++    for line in lines {
++        if y.saturating_add(18) >= reboot_y {
++            break;
++        }
+         let blocked = line.contains("UNAVAILABLE");
+         draw_text(
+             canvas,
+@@ -203,6 +219,35 @@
+         );
+         y += 18;
+     }
++
++    paint_power_action(
++        canvas,
++        width,
++        height,
++        PowerActionRow {
++            y: reboot_y,
++            label: "R  RESTART",
++            ready: power_ready,
++            pending: pending_power == Some(SystemPowerAction::Reboot),
++        },
++    );
++    paint_power_action(
++        canvas,
++        width,
++        height,
++        PowerActionRow {
++            y: poweroff_y,
++            label: "P  POWER OFF",
++            ready: power_ready,
++            pending: pending_power == Some(SystemPowerAction::PowerOff),
++        },
++    );
++
++    let footer = message.unwrap_or(if power_ready {
++        "POWER ACTIONS REQUIRE DOUBLE CONFIRMATION"
++    } else {
++        "POWER MUTATION UNAVAILABLE"
++    });
+     draw_text(
+         canvas,
+         width,
+@@ -210,11 +255,74 @@
+         20,
+         height.saturating_sub(24),
+         1,
+-        MUTED,
+-        "READ-ONLY UNTIL MUTATION BACKENDS EARNED",
++        if message.is_some() { TEXT } else { MUTED },
++        &truncate(&footer.to_uppercase(), 40),
+     );
+ }
+ 
++struct PowerActionRow<'a> {
++    y: u32,
++    label: &'a str,
++    ready: bool,
++    pending: bool,
++}
++
++fn paint_power_action(canvas: &mut [u8], width: u32, height: u32, row: PowerActionRow<'_>) {
++    let PowerActionRow {
++        y,
++        label,
++        ready,
++        pending,
++    } = row;
++    let color = if !ready {
++        BLOCKED
++    } else if pending {
++        ACCENT
++    } else {
++        READY
++    };
++    if pending {
++        fill_rect(
++            canvas,
++            width,
++            height,
++            12,
++            y.saturating_sub(7),
++            width.saturating_sub(24),
++            QUICK_ACTION_HEIGHT,
++            SELECTED,
++        );
++    }
++    draw_text(canvas, width, height, 20, y, 1, color, label);
++    draw_text(
++        canvas,
++        width,
++        height,
++        width.saturating_sub(76),
++        y,
++        1,
++        color,
++        if ready { "READY" } else { "BLOCKED" },
++    );
++}
++
++pub(crate) fn quick_power_action_at(y: f64, height: u32) -> Option<SystemPowerAction> {
++    let reboot_y = f64::from(height.saturating_sub(QUICK_REBOOT_OFFSET).saturating_sub(7));
++    let poweroff_y = f64::from(
++        height
++            .saturating_sub(QUICK_POWEROFF_OFFSET)
++            .saturating_sub(7),
++    );
++    let action_height = f64::from(QUICK_ACTION_HEIGHT);
++    if (reboot_y..reboot_y + action_height).contains(&y) {
++        Some(SystemPowerAction::Reboot)
++    } else if (poweroff_y..poweroff_y + action_height).contains(&y) {
++        Some(SystemPowerAction::PowerOff)
++    } else {
++        None
++    }
++}
++
+ pub(crate) fn orb_row_at(y: f64, application_count: usize) -> Option<usize> {
+     if y < ORB_LIST_TOP {
+         return None;
+@@ -434,4 +542,18 @@
+         assert_eq!(orb_row_at(ORB_LIST_TOP - 1.0, 2), None);
+         assert_eq!(orb_row_at(ORB_LIST_TOP + ORB_ROW_HEIGHT * 2.0, 2), None);
+     }
++
++    #[test]
++    fn quick_power_hit_testing_maps_only_action_rows() {
++        let height = 420;
++        assert_eq!(
++            quick_power_action_at(301.0, height),
++            Some(SystemPowerAction::Reboot)
++        );
++        assert_eq!(
++            quick_power_action_at(337.0, height),
++            Some(SystemPowerAction::PowerOff)
++        );
++        assert_eq!(quick_power_action_at(280.0, height), None);
++    }
+ }
