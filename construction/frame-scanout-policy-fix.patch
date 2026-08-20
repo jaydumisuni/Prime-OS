@@ -1,0 +1,11 @@
+diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
+--- a/crates/prime-compositor/src/frame.rs
++++ b/crates/prime-compositor/src/frame.rs
+@@ -78,6 +78,6 @@
+     let result = runtime._drm_output.render_frame(
+         &mut runtime._renderer,
+         &elements,
+         Color32F::BLACK,
+-        FrameFlags::DEFAULT,
++        FrameFlags::empty(),
+     )?;
