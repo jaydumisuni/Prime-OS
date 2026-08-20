@@ -1,0 +1,127 @@
+diff --git a/crates/prime-compositor/src/protocols.rs b/crates/prime-compositor/src/protocols.rs
+index d21fcce..45b2e9a 100644
+--- a/crates/prime-compositor/src/protocols.rs
++++ b/crates/prime-compositor/src/protocols.rs
+@@ -3,7 +3,10 @@ use smithay::{
+     backend::renderer::utils::on_commit_buffer_handler,
+     delegate_compositor, delegate_layer_shell, delegate_output, delegate_seat, delegate_shm,
+     delegate_xdg_shell,
+-    desktop::{PopupKind, PopupManager, Space, Window},
++    desktop::{
++        layer_map_for_output, LayerSurface as DesktopLayerSurface, PopupKind, PopupManager, Space,
++        Window, WindowSurfaceType,
++    },
+     input::{
+         keyboard::{KeyboardHandle, XkbConfig},
+         pointer::PointerHandle,
+@@ -22,7 +25,9 @@ use smithay::{
+         },
+         output::{OutputHandler, OutputManagerState},
+         shell::{
+-            wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
++            wlr_layer::{
++                Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState,
++            },
+             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
+         },
+         shm::{ShmHandler, ShmState},
+@@ -39,7 +44,6 @@ pub(crate) struct ProtocolState {
+     pub(crate) pointer: PointerHandle<Runtime>,
+     pub(crate) space: Space<Window>,
+     pub(crate) popups: PopupManager,
+-    layer_surfaces: Vec<LayerSurface>,
+     _output_manager_state: OutputManagerState,
+     _output_global: GlobalId,
+ }
+@@ -62,6 +66,9 @@ impl ProtocolState {
+         let keyboard = seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+         let pointer = seat.add_pointer();
+ 
++        let mut space = Space::default();
++        space.map_output(output, (0, 0));
++
+         Ok(Self {
+             compositor_state,
+             shm_state,
+@@ -70,9 +77,8 @@ impl ProtocolState {
+             seat_state,
+             keyboard,
+             pointer,
+-            space: Space::default(),
++            space,
+             popups: PopupManager::default(),
+-            layer_surfaces: Vec::new(),
+             _output_manager_state: output_manager_state,
+             _output_global: output_global,
+         })
+@@ -120,6 +126,13 @@ impl CompositorHandler for Runtime {
+         }
+ 
+         handle_xdg_commit(&mut self.protocols.popups, &self.protocols.space, surface);
++        if layer_map_for_output(&self._output)
++            .layer_for_surface(surface, WindowSurfaceType::ALL)
++            .is_some()
++        {
++            layer_map_for_output(&self._output).arrange();
++        }
++        self.request_frame();
+     }
+ }
+ 
+@@ -143,6 +156,7 @@ impl XdgShellHandler for Runtime {
+     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+         let window = Window::new_wayland_window(surface);
+         self.protocols.space.map_element(window, (0, 0), false);
++        self.request_frame();
+     }
+ 
+     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+@@ -180,14 +194,42 @@ impl WlrLayerShellHandler for Runtime {
+ 
+     fn new_layer_surface(
+         &mut self,
+-        surface: LayerSurface,
+-        _output: Option<WlOutput>,
++        surface: WlrLayerSurface,
++        output: Option<WlOutput>,
+         _layer: Layer,
+-        _namespace: String,
++        namespace: String,
+     ) {
+-        self.protocols.layer_surfaces.retain(LayerSurface::alive);
+-        surface.send_configure();
+-        self.protocols.layer_surfaces.push(surface);
++        let target = output
++            .as_ref()
++            .and_then(smithay::output::Output::from_resource)
++            .unwrap_or_else(|| self._output.clone());
++        if target != self._output {
++            eprintln!("prime-compositor rejected layer surface for unsupported output");
++            self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
++            return;
++        }
++
++        let desktop_surface = DesktopLayerSurface::new(surface, namespace);
++        if let Err(error) = layer_map_for_output(&self._output).map_layer(&desktop_surface) {
++            eprintln!("prime-compositor could not map layer surface: {error}");
++            self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
++            return;
++        }
++        desktop_surface.layer_surface().send_configure();
++        self.request_frame();
++    }
++
++    fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
++        let mut map = layer_map_for_output(&self._output);
++        let mapped = map
++            .layers()
++            .find(|layer| layer.wl_surface() == surface.wl_surface())
++            .cloned();
++        if let Some(layer) = mapped {
++            map.unmap_layer(&layer);
++            drop(map);
++            self.request_frame();
++        }
+     }
+ }
+ 

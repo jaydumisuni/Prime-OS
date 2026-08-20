@@ -1,0 +1,75 @@
+diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
+index bf9197c..62688d8 100644
+--- a/crates/prime-compositor/src/frame.rs
++++ b/crates/prime-compositor/src/frame.rs
+@@ -7,7 +7,11 @@ use smithay::{
+     desktop::{layer_map_for_output, space_render_elements},
+     reexports::drm::control::crtc,
+ };
+-use std::{error::Error, io, time::{Duration, Instant}};
++use std::{
++    error::Error,
++    io,
++    time::{Duration, Instant},
++};
+ 
+ pub(crate) const FRAME_NOT_PROVEN_LIMITATION: &str =
+     "Mapped-surface frame lifecycle is not proven until a queued frame retires on matching DRM vblank";
+@@ -107,7 +111,10 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
+     Ok(())
+ }
+ 
+-pub(crate) fn handle_vblank(runtime: &mut Runtime, event_crtc: crtc::Handle) -> Result<bool, Box<dyn Error>> {
++pub(crate) fn handle_vblank(
++    runtime: &mut Runtime,
++    event_crtc: crtc::Handle,
++) -> Result<bool, Box<dyn Error>> {
+     if event_crtc != runtime._drm_output.crtc() || !runtime.frame.in_flight {
+         return Ok(false);
+     }
+diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/input.rs
+index 1041560..451baac 100644
+--- a/crates/prime-compositor/src/input.rs
++++ b/crates/prime-compositor/src/input.rs
+@@ -4,11 +4,11 @@ use smithay::{
+         Axis, AxisSource, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+         PointerButtonEvent, PointerMotionEvent,
+     },
++    desktop::{layer_map_for_output, WindowSurfaceType},
+     input::{
+         keyboard::FilterResult,
+         pointer::{AxisFrame, ButtonEvent, MotionEvent},
+     },
+-    desktop::{layer_map_for_output, WindowSurfaceType},
+     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
+     utils::{Logical, Point, SERIAL_COUNTER},
+     wayland::{compositor::get_parent, seat::WaylandFocus},
+@@ -154,15 +154,19 @@ fn surface_under(
+         return Some(hit);
+     }
+ 
+-    if let Some(hit) = runtime.protocols.space.element_under(location).and_then(
+-        |(window, window_location)| {
+-            window
+-                .surface_under(location - window_location.to_f64(), WindowSurfaceType::ALL)
+-                .map(|(surface, surface_location)| {
+-                    (surface, (surface_location + window_location).to_f64())
+-                })
+-        },
+-    ) {
++    if let Some(hit) =
++        runtime
++            .protocols
++            .space
++            .element_under(location)
++            .and_then(|(window, window_location)| {
++                window
++                    .surface_under(location - window_location.to_f64(), WindowSurfaceType::ALL)
++                    .map(|(surface, surface_location)| {
++                        (surface, (surface_location + window_location).to_f64())
++                    })
++            })
++    {
+         return Some(hit);
+     }
+ 

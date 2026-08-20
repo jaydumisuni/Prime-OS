@@ -1,0 +1,77 @@
+diff --git a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
+index 07f6921..d9a0589 100644
+--- a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
++++ b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
+@@ -50,7 +50,7 @@ The current P1 record contains:
+ {
+   "schema": "prime.compositor-readiness.v1",
+   "observed_at": "RFC3339",
+-  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
++  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|FRAME_LOOP_READY|FRAME_ERROR|FRAME_MAPPING_ERROR|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
+   "direct_tty_backend": true,
+   "seat_name": "seat0",
+   "wayland_socket": "wayland-0",
+@@ -66,6 +66,11 @@ The current P1 record contains:
+   "keyboard_ready": false,
+   "pointer_ready": false,
+   "input_delivery_ready": false,
++  "frame_loop_ready": false,
++  "frame_in_flight": false,
++  "frames_queued": 0,
++  "frames_submitted": 0,
++  "mapped_surface_frames_submitted": 0,
+   "renderer_ready": true,
+   "outputs_ready": true,
+   "shell_ready": false,
+@@ -383,6 +388,18 @@ May become `true` only after the public seat owns a live Smithay pointer handle.
+ 
+ May become `true` only at `WAYLAND_INPUT_READY` after the bounded keyboard/relative-pointer libinput classes are routed into the public Wayland seat. It must be false when libinput is suspended, resume fails, or Wayland display dispatch/flush fails.
+ 
++### `frame_loop_ready`
++
++May become `true` only after a non-empty render containing at least one actual mapped XDG/WLR render element is queued and retired by the matching selected-CRTC DRM vblank through `DrmOutput::frame_submitted()`.
++
++### `frame_in_flight`
++
++True only while one selected-CRTC frame queued by `DrmOutput::queue_frame(())` awaits retirement. Prime P1 permits at most one such frame.
++
++### `frames_queued`, `frames_submitted`, `mapped_surface_frames_submitted`
++
++Current-process monotonic frame evidence counters. `frames_submitted <= frames_queued`; `mapped_surface_frames_submitted <= frames_submitted`. The mapped-surface counter advances only when the retired frame's Smithay render-element list was non-empty.
++
+ A successful libinput resume may restore this field while graphics remain in `RENDERER_REVALIDATION_REQUIRED`, because input delivery and renderer/output validation are separate authorities.
+ 
+ ### `renderer_ready`
+@@ -540,3 +557,32 @@ Even at `WAYLAND_PROTOCOLS_READY`, P1 does not claim:
+ - XWayland, X11, winit, Vulkan or Pixman support;
+ - owner visual acceptance;
+ - HP/Kratos physical protocol/graphics acceptance until that proof is actually executed.
++
++
++## FRAME_LOOP_READY requirements
++
++`phase=FRAME_LOOP_READY` is governed by `PRIME_P1_FRAME_LOOP_V1.md` and extends `WAYLAND_INPUT_READY` only after Prime has successfully retired at least one queued frame containing a mapped XDG window or WLR layer-shell surface on the selected CRTC.
++
++At this phase:
++
++```text
++wayland_protocols_ready=true
++wayland_seat_ready=true
++keyboard_ready=true
++pointer_ready=true
++input_delivery_ready=true
++renderer_ready=true
++outputs_ready=true
++frame_loop_ready=true
++frame_in_flight=false|true
++shell_ready=false
++mapped_surface_frames_submitted>=1
++```
++
++`frame_in_flight=true` means one and only one selected-CRTC `queue_frame(())` is awaiting its matching DRM vblank. `frames_queued`, `frames_submitted`, and `mapped_surface_frames_submitted` are current-process monotonic evidence counters; `frames_submitted` may not exceed `frames_queued`.
++
++An empty render is never queued. A startup/fallback frame without mapped client content does not earn this phase. `--probe` exits before the live page-flip lifecycle and therefore cannot prove `FRAME_LOOP_READY`.
++
++Frame failure is fail-closed at `FRAME_ERROR`. Layer mapping failure is fail-closed at `FRAME_MAPPING_ERROR`. Session pause, output invalidation/topology change, or fatal Wayland dispatch failure also clears frame readiness and in-flight truth. None of these frame-specific failures implicitly falsifies an otherwise retained physical-output object unless the corresponding output/graphics gate separately fails.
++
++`FRAME_LOOP_READY` still leaves `shell_ready=false`; Prime Shell process ownership and first-frame acceptance remain a separate responsibility.
