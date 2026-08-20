@@ -1,0 +1,169 @@
+diff --git a/crates/primed/src/server.rs b/crates/primed/src/server.rs
+--- a/crates/primed/src/server.rs
++++ b/crates/primed/src/server.rs
+@@ -1,4 +1,4 @@
+-use crate::{identity, launcher, storage, CoreState};
++use crate::{identity, launcher, shell_api, storage, CoreState};
+ use bytes::Bytes;
+ use http_body_util::{BodyExt, Full};
+ use hyper::body::Incoming;
+@@ -9,9 +9,10 @@ use hyper_util::rt::TokioIo;
+ use prime_contracts::{
+     CapabilitiesProjection, HardwareProjection, HealthProjection, HealthStatus, HostProjection,
+-    HostProjectionBody, InterfaceError, NativeLaunchRequest, StoragePreflightRequest,
+-    StorageProjection, VersionsProjection, CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION,
+-    NATIVE_LAUNCH_REQUEST_SCHEMA, STORAGE_PREFLIGHT_SCHEMA,
++    HostProjectionBody, InterfaceError, NativeLaunchRequest, ShellLaunchRequest,
++    StoragePreflightRequest, StorageProjection, VersionsProjection, CAPABILITY_INTERFACE,
++    CAPABILITY_INTERFACE_VERSION, NATIVE_LAUNCH_REQUEST_SCHEMA, SHELL_LAUNCH_REQUEST_SCHEMA,
++    STORAGE_PREFLIGHT_SCHEMA,
+ };
+ use serde::Serialize;
+ use std::convert::Infallible;
+@@ -19,7 +20,7 @@ use std::fs;
+ use std::io;
+-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
++use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+ use std::path::Path;
+ use tokio::net::UnixListener;
+@@ -31,6 +32,10 @@ enum NegotiationError {
+     Incompatible(Vec<String>),
+ }
++
++fn shell_peer_authorized(peer_uid: u32, peer_gid: u32, socket_gid: u32) -> bool {
++    peer_uid == 0 || (socket_gid != 0 && peer_gid == socket_gid)
++}
++
+ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
+@@ -49,6 +54,7 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
+ 
+     let listener = UnixListener::bind(socket_path)?;
+     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))?;
++    let shell_gid = fs::metadata(socket_path)?.gid();
+ 
+     let mut state = state;
+@@ -70,11 +76,12 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
+             }
+         };
+         let peer_uid = credential.uid();
++        let peer_gid = credential.gid();
+         let state = state.clone();
+ 
+         tokio::spawn(async move {
+             let io = TokioIo::new(stream);
+-            let service = service_fn(move |request| route(request, state.clone(), peer_uid));
++            let service = service_fn(move |request| route(request, state.clone(), peer_uid, peer_gid, shell_gid));
+             if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
+                 eprintln!("primed connection failed: {error}");
+@@ -87,6 +94,8 @@ async fn route(
+     request: Request<Incoming>,
+     state: CoreState,
+     peer_uid: u32,
++    peer_gid: u32,
++    shell_gid: u32,
+ ) -> Result<Response<Full<Bytes>>, Infallible> {
+@@ -107,6 +116,72 @@ async fn route(
+         Err(error) => return Ok(negotiation_error_response(error)),
+     };
++
++    if request.method() == Method::POST && request.uri().path() == "/v1/shell/launch" {
++        if !shell_peer_authorized(peer_uid, peer_gid, shell_gid) {
++            return Ok(error_response(
++                StatusCode::FORBIDDEN,
++                "PRIME_SHELL_AUTHORIZATION_REQUIRED",
++                "Prime Shell launch requires root or the dedicated Core socket group",
++                Vec::new(),
++                Vec::new(),
++            ));
++        }
++        let body = match collect_mutation_body(request.into_body()).await {
++            Ok(body) => body,
++            Err(response) => return Ok(response),
++        };
++        let shell_request: ShellLaunchRequest = match serde_json::from_slice(&body) {
++            Ok(request) => request,
++            Err(_) => {
++                return Ok(error_response(
++                    StatusCode::BAD_REQUEST,
++                    "PRIME_SHELL_LAUNCH_REQUEST_INVALID",
++                    "Shell launch request is not valid prime.shell-launch-request.v1 JSON",
++                    Vec::new(),
++                    Vec::new(),
++                ));
++            }
++        };
++        if shell_request.schema != SHELL_LAUNCH_REQUEST_SCHEMA {
++            return Ok(error_response(
++                StatusCode::BAD_REQUEST,
++                "PRIME_SHELL_LAUNCH_SCHEMA_INVALID",
++                "Shell launch request schema is not supported",
++                Vec::new(),
++                Vec::new(),
++            ));
++        }
++
++        let launch_state = state.clone();
++        let result = tokio::task::spawn_blocking(move || {
++            shell_api::launch_selected(&launch_state, &shell_request)
++        })
++        .await;
++
++        return Ok(match result {
++            Ok(Ok(evidence)) => json_response(StatusCode::OK, &evidence, true),
++            Ok(Err(error)) => error_response(
++                StatusCode::CONFLICT,
++                "PRIME_SHELL_LAUNCH_DENIED",
++                &error.to_string(),
++                Vec::new(),
++                Vec::new(),
++            ),
++            Err(_) => error_response(
++                StatusCode::INTERNAL_SERVER_ERROR,
++                "PRIME_SHELL_LAUNCH_TASK_FAILED",
++                "Shell launch worker terminated before returning evidence",
++                Vec::new(),
++                Vec::new(),
++            ),
++        });
++    }
++
+     if request.method() == Method::POST && request.uri().path() == "/v1/exec/native/launch" {
+@@ -323,6 +398,18 @@ async fn route(
+                 Vec::new(),
+             ),
+         },
++        "/v1/applications" => match shell_api::applications_projection(&state, negotiated) {
++            Ok(applications) => json_response(StatusCode::OK, &applications, true),
++            Err(error) => error_response(
++                StatusCode::INTERNAL_SERVER_ERROR,
++                "PRIME_APPLICATION_REGISTRY_UNAVAILABLE",
++                &error.to_string(),
++                Vec::new(),
++                Vec::new(),
++            ),
++        },
+         "/v1/capabilities" => json_response(
+@@ -447,6 +534,25 @@ mod tests {
+     use super::*;
++
++    #[test]
++    fn shell_authorization_accepts_root() {
++        assert!(shell_peer_authorized(0, 0, 0));
++    }
++
++    #[test]
++    fn shell_authorization_accepts_dedicated_nonzero_socket_group() {
++        assert!(shell_peer_authorized(1000, 991, 991));
++    }
++
++    #[test]
++    fn shell_authorization_rejects_wrong_group() {
++        assert!(!shell_peer_authorized(1000, 992, 991));
++    }
++
++    #[test]
++    fn shell_authorization_does_not_delegate_root_group() {
++        assert!(!shell_peer_authorized(1000, 0, 0));
++    }
++
+     #[test]
