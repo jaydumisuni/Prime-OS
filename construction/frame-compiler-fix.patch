@@ -1,0 +1,43 @@
+diff --git a/crates/prime-compositor/src/frame.rs b/crates/prime-compositor/src/frame.rs
+--- a/crates/prime-compositor/src/frame.rs
++++ b/crates/prime-compositor/src/frame.rs
+@@ -2,10 +2,10 @@ use crate::Runtime;
+ use smithay::{
+     backend::{
+         drm::compositor::{FrameFlags, PrimaryPlaneElement},
+-        renderer::{utils::Color32F, Renderer},
++        renderer::{Color32F, Renderer},
+     },
+-    desktop::{layer_map_for_output, space_render_elements},
++    desktop::{layer_map_for_output, space::space_render_elements},
+     reexports::drm::control::crtc,
+ };
+ use std::{
+diff --git a/crates/prime-compositor/src/input.rs b/crates/prime-compositor/src/input.rs
+--- a/crates/prime-compositor/src/input.rs
++++ b/crates/prime-compositor/src/input.rs
+@@ -11,7 +11,7 @@ use smithay::{
+     },
+     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
+     utils::{Logical, Point, SERIAL_COUNTER},
+-    wayland::{compositor::get_parent, seat::WaylandFocus},
++    wayland::compositor::get_parent,
+ };
+ use std::convert::TryInto;
+ 
+diff --git a/crates/prime-compositor/src/protocols.rs b/crates/prime-compositor/src/protocols.rs
+--- a/crates/prime-compositor/src/protocols.rs
++++ b/crates/prime-compositor/src/protocols.rs
+@@ -210,7 +210,11 @@ impl WlrLayerShellHandler for Runtime {
+         }
+ 
+         let desktop_surface = DesktopLayerSurface::new(surface, namespace);
+-        if let Err(error) = layer_map_for_output(&self._output).map_layer(&desktop_surface) {
++        let map_result = {
++            let mut map = layer_map_for_output(&self._output);
++            map.map_layer(&desktop_surface)
++        };
++        if let Err(error) = map_result {
+             eprintln!("prime-compositor could not map layer surface: {error}");
+             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+             return;
