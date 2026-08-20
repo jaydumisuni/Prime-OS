@@ -1,8 +1,8 @@
-name: Construction P1 Shell Storage UI v3
+name: Construction P1 Shell Storage UI v4
 
 on:
   pull_request:
-    branches: [construction/p1-shell-storage-ui-v3-base]
+    branches: [construction/p1-shell-storage-ui-v4-base]
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-storage-ui-v3' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-storage-ui-v4' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -42,7 +42,7 @@ jobs:
           test "$(git hash-object "$p")" = "$PATCH_GIT_BLOB"
           ! grep -F '/v1/storage/preflight' "$p"
           ! grep -F 'std::process::Command' "$p"
-          echo PRIME_SHELL_STORAGE_UI_V3_FENCE=PASS
+          echo PRIME_SHELL_STORAGE_UI_V4_FENCE=PASS
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -62,7 +62,7 @@ jobs:
           grep -F 'QUICK CONTROLS / SETTINGS' crates/prime-shell/src/visual.rs
           grep -F 'STORAGE UNAVAILABLE:' crates/prime-shell/src/main.rs
           ! grep -R -F '/v1/storage/preflight' crates/prime-shell/src
-          echo PRIME_SHELL_STORAGE_UI_V3_RECONSTRUCTION=PASS
+          echo PRIME_SHELL_STORAGE_UI_V4_RECONSTRUCTION=PASS
       - name: Authenticate substrate
         shell: bash
         env:
@@ -93,25 +93,41 @@ jobs:
               rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
               test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
               test "$(sha256sum Cargo.lock | awk "{print \$1}")" = "$PARENT_LOCK_SHA256"
+              python3 - <<"PY"
+import hashlib, json, pathlib
+state = {}
+for path in sorted(pathlib.Path("crates").rglob("*.rs")):
+    state[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+pathlib.Path("/tmp/prime-rust-before.json").write_text(json.dumps(state, sort_keys=True))
+PY
               cargo fmt --all
-              git diff --name-only | sort > /tmp/formatted-files.txt
-              grep -Fx 'crates/prime-shell/src/core_client.rs' /tmp/formatted-files.txt
-              grep -Fx 'crates/prime-shell/src/main.rs' /tmp/formatted-files.txt
-              grep -Fx 'crates/prime-shell/src/visual.rs' /tmp/formatted-files.txt
-              test "$(grep -c '^crates/prime-shell/src/' /tmp/formatted-files.txt)" -eq 3
-              git diff --check
+              python3 - <<"PY"
+import hashlib, json, pathlib
+before = json.loads(pathlib.Path("/tmp/prime-rust-before.json").read_text())
+after = {}
+for path in sorted(pathlib.Path("crates").rglob("*.rs")):
+    after[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+changed = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+expected = sorted([
+    "crates/prime-shell/src/core_client.rs",
+    "crates/prime-shell/src/main.rs",
+    "crates/prime-shell/src/visual.rs",
+])
+assert changed == expected, (changed, expected)
+print("PRIME_SHELL_STORAGE_UI_V4_FORMATTED_FILES=" + ",".join(changed))
+PY
               cargo fmt --all -- --check
-              echo PRIME_SHELL_STORAGE_UI_V3_FMT=PASS
+              echo PRIME_SHELL_STORAGE_UI_V4_FMT=PASS
               cargo metadata --locked --no-deps --format-version 1 >/dev/null
               cargo clippy --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
-              echo PRIME_SHELL_STORAGE_UI_V3_CLIPPY=PASS
+              echo PRIME_SHELL_STORAGE_UI_V4_CLIPPY=PASS
               cargo test --locked -p prime-shell -p prime-contracts -p primed -p prime-compositor 2>&1 | tee diag/tests.log
-              echo PRIME_SHELL_STORAGE_UI_V3_TEST=PASS
+              echo PRIME_SHELL_STORAGE_UI_V4_TEST=PASS
               cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
               ! ldd target/release/primed | grep -q "not found"
               ! ldd target/release/prime-shell | grep -q "not found"
               ! ldd target/release/prime-compositor | grep -q "not found"
-              echo PRIME_SHELL_STORAGE_UI_V3_BUILD=PASS
+              echo PRIME_SHELL_STORAGE_UI_V4_BUILD=PASS
             '
           cp Cargo.toml Cargo.lock handoff/
           cp crates/prime-shell/Cargo.toml handoff/crates/prime-shell/Cargo.toml
@@ -128,10 +144,10 @@ jobs:
             echo SHELL_CORE_CLIENT_HASH=$(git hash-object crates/prime-shell/src/core_client.rs)
             echo SHELL_VISUAL_HASH=$(git hash-object crates/prime-shell/src/visual.rs)
           } | tee handoff/MANIFEST.env
-          echo PRIME_SHELL_STORAGE_UI_V3_HANDOFF=PASS
+          echo PRIME_SHELL_STORAGE_UI_V4_HANDOFF=PASS
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-storage-ui-v3-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-storage-ui-v4-${{ github.event.pull_request.head.sha }}
           path: |
             diag/
             handoff/
