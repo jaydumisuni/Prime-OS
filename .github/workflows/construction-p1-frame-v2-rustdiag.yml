@@ -1,0 +1,87 @@
+name: Construction P1 Frame v2 Rust Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-frame-proof-base2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+
+jobs:
+  diagnose:
+    if: ${{ github.head_ref == 'construction/p1-frame-proof2' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Reconcile exact Tenfold FRAME v2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply construction/frame-input.patch construction/frame-main.patch construction/frame-protocols.patch construction/frame-readiness.patch
+          git apply --check construction/frame-rustfmt.patch
+          git apply construction/frame-rustfmt.patch
+          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = 62688d8de9bd696481719018cd9fa114201e4946
+          test "$(git hash-object crates/prime-compositor/src/input.rs)" = 451baaced4f06cbf3500af9da1babab5a4beb689
+          test "$(git hash-object crates/prime-compositor/src/main.rs)" = 366a89dc5d3469065cf6bb3cdaaba3c0bd998a6e
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = 45b2e9a3d64e2114ec6d2c9f66153ae2e71da599
+          test "$(git hash-object docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md)" = d9a0589b977bae4326c5e7220a3c84bb2a41ac14
+          test "$(git hash-object docs/contracts/PRIME_P1_FRAME_LOOP_V1.md)" = 27f9a5a1f846ab23381fbcb3f4391e8671233ef8
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Capture pinned Rust diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(egl)" \
+                "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              set +e
+              cargo fmt --all -- --check >diag/fmt.log 2>&1
+              fmt=$?
+              echo "$fmt" >diag/fmt.status
+              if [ "$fmt" -eq 0 ]; then
+                cargo clippy --locked -p prime-compositor --all-targets -- -D warnings >diag/clippy.log 2>&1
+                clippy=$?
+                echo "$clippy" >diag/clippy.status
+                if [ "$clippy" -eq 0 ]; then
+                  cargo build --locked -p prime-compositor --release --bin prime-compositor >diag/build.log 2>&1
+                  echo "$?" >diag/build.status
+                fi
+              fi
+              exit 0
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-frame-v2-rust-diagnostic-${{ github.event.pull_request.head.sha }}
+          path: diag/
+          if-no-files-found: error
