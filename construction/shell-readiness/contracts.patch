@@ -141,77 +141,78 @@ new file mode 100644
 +## Construction acceptance sequence
 +
 +`FRAME accepted → Shell host/UI construction → static/build proof → compositor/Shell readiness integration proof → physical first-frame proof on the P1 host → owner visual gate → selective promotion`.
-+diff --git a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
-+--- a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
-++++ b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
-+@@ -11,7 +11,7 @@ Authority: `docs/contracts/PRIME_P1_SHELL_COMPOSITOR_V1.md`
-+ 
-+ Prime must distinguish compositor process existence from actual graphical responsibility. This contract defines the machine-readable readiness record for `prime-compositor` so Prime Core, proof tooling and later Prime Shell integration can reason about what the compositor has mechanically earned.
-+ 
-+-P1 defines four earned initialization phases:
-++P1 defines successive earned initialization/runtime phases:
-+ 
-+ ```text
-+ BACKEND_PREFLIGHT
-+@@ -22,9 +22,15 @@ RENDERER_READY
-+ OUTPUTS_READY
-+       ↓
-+ WAYLAND_PROTOCOLS_READY
-++      ↓
-++WAYLAND_INPUT_READY
-++      ↓
-++FRAME_LOOP_READY
-++      ↓
-++SHELL_READY
-+ ```
-+ 
-+-`BACKEND_PREFLIGHT` and `RENDERER_READY` do not claim a configured display output. `OUTPUTS_READY` claims only the P1 minimum physical KMS responsibility: one selected connected output has a real Smithay DRM surface/compositor initialized through the retained single-GPU renderer path.
-++`BACKEND_PREFLIGHT` and `RENDERER_READY` do not claim a configured display output. `OUTPUTS_READY` claims only the P1 minimum physical KMS responsibility: one selected connected output has a real Smithay DRM surface/compositor initialized through the retained single-GPU renderer path. Later runtime phases are independently earned and may fail closed without rewriting earlier protocol objects into stronger truth.
-+@@ -49,7 +55,7 @@ The current P1 record contains:
-+ {
-+   "schema": "prime.compositor-readiness.v1",
-+   "observed_at": "RFC3339",
-+-  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|FRAME_LOOP_READY|FRAME_ERROR|FRAME_MAPPING_ERROR|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
-++  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|FRAME_LOOP_READY|SHELL_READY|FRAME_ERROR|FRAME_MAPPING_ERROR|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
-+@@ -72,6 +78,8 @@ The current P1 record contains:
-+   "frames_queued": 0,
-+   "frames_submitted": 0,
-+   "mapped_surface_frames_submitted": 0,
-++  "shell_frame_in_flight": false,
-++  "shell_frames_submitted": 0,
-+   "renderer_ready": true,
-+   "outputs_ready": true,
-+   "shell_ready": false,
-+@@ -349,6 +357,18 @@ Current-process monotonic frame evidence counters. `frames_submitted <= frames_q
-+ 
-+ A successful libinput resume may restore this field while graphics remain in `RENDERER_REVALIDATION_REQUIRED`, because input delivery and renderer/output validation are separate authorities.
-+ 
-++### `shell_frame_in_flight`
-++
-++True only while the selected CRTC has one queued frame whose renderable layer-surface set contains the complete P1 persistent Shell baseline: `prime.shell.background` on `Background` plus `prime.shell.rail` on `Top`, both owned by the same live Wayland client. The exact two `wl_surface` identities are frozen with that in-flight frame and must still be alive and mapped at retirement.
-++
-++This flag does not claim that Orb/quick-controls are open and does not by itself earn `shell_ready`.
-++
-++### `shell_frames_submitted`
-++
-++Current-process monotonic count of selected-CRTC frames that retired after carrying the complete persistent Shell baseline and revalidating the exact background/rail surface identities at matching vblank.
-++
-++`shell_frames_submitted <= mapped_surface_frames_submitted <= frames_submitted`.
-++
-+ ### `renderer_ready`
-+ 
-+ May be `true` only in a phase that has earned the selected P1 single-GPU GBM/EGL/GLES renderer on the exact current session/device path.
-+@@ -373,7 +393,13 @@ It is invalidated by session pause, a DRM notifier error, or a post-startup DRM
-+ 
-+ ### `shell_ready`
-+ 
-+-Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process, renderer, KMS output or protocol-global health.
-++Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process, renderer, KMS output, accepted client count, namespace string or protocol-global health.
-++
-++It may become `true` only after `frame_loop_ready=true` has already been earned or is earned by the same retiring frame, the persistent background and rail are both mapped on their expected layers, both are renderable and owned by the same live Wayland client when the frame is queued, and the exact two surface identities remain alive/mapped when that frame retires through the matching selected-CRTC vblank.
-++
-++Loss/destruction of either persistent surface, a commit that makes the persistent baseline non-renderable, Wayland protocol failure, frame/output invalidation, DRM topology invalidation or session graphics invalidation clears `shell_ready` until the complete baseline earns another retirement.
-++
-++`SHELL_READY` does not imply Orb/quick-controls are currently open, system controls have earned mutation authority, secure executable identity has been proven from a namespace, or owner visual acceptance has occurred.
-+ 
-+ ### `clients_accepted`
+
+diff --git a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
+--- a/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
++++ b/docs/contracts/PRIME_COMPOSITOR_READINESS_V1.md
+@@ -11,7 +11,7 @@ Authority: `docs/contracts/PRIME_P1_SHELL_COMPOSITOR_V1.md`
+ 
+ Prime must distinguish compositor process existence from actual graphical responsibility. This contract defines the machine-readable readiness record for `prime-compositor` so Prime Core, proof tooling and later Prime Shell integration can reason about what the compositor has mechanically earned.
+ 
+-P1 defines four earned initialization phases:
++P1 defines successive earned initialization/runtime phases:
+ 
+ ```text
+ BACKEND_PREFLIGHT
+@@ -22,9 +22,15 @@ RENDERER_READY
+ OUTPUTS_READY
+       ↓
+ WAYLAND_PROTOCOLS_READY
++      ↓
++WAYLAND_INPUT_READY
++      ↓
++FRAME_LOOP_READY
++      ↓
++SHELL_READY
+ ```
+ 
+-`BACKEND_PREFLIGHT` and `RENDERER_READY` do not claim a configured display output. `OUTPUTS_READY` claims only the P1 minimum physical KMS responsibility: one selected connected output has a real Smithay DRM surface/compositor initialized through the retained single-GPU renderer path.
++`BACKEND_PREFLIGHT` and `RENDERER_READY` do not claim a configured display output. `OUTPUTS_READY` claims only the P1 minimum physical KMS responsibility: one selected connected output has a real Smithay DRM surface/compositor initialized through the retained single-GPU renderer path. Later runtime phases are independently earned and may fail closed without rewriting earlier protocol objects into stronger truth.
+@@ -49,7 +55,7 @@ The current P1 record contains:
+ {
+   "schema": "prime.compositor-readiness.v1",
+   "observed_at": "RFC3339",
+-  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|FRAME_LOOP_READY|FRAME_ERROR|FRAME_MAPPING_ERROR|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
++  "phase": "BACKEND_PREFLIGHT|RENDERER_READY|OUTPUTS_READY|WAYLAND_PROTOCOLS_READY|WAYLAND_INPUT_READY|FRAME_LOOP_READY|SHELL_READY|FRAME_ERROR|FRAME_MAPPING_ERROR|WAYLAND_PROTOCOL_ERROR|OUTPUT_ERROR|OUTPUT_REVALIDATION_REQUIRED|SESSION_PAUSED|RENDERER_REVALIDATION_REQUIRED|SESSION_RESUME_FAILED",
+@@ -72,6 +78,8 @@ The current P1 record contains:
+   "frames_queued": 0,
+   "frames_submitted": 0,
+   "mapped_surface_frames_submitted": 0,
++  "shell_frame_in_flight": false,
++  "shell_frames_submitted": 0,
+   "renderer_ready": true,
+   "outputs_ready": true,
+   "shell_ready": false,
+@@ -349,6 +357,18 @@ Current-process monotonic frame evidence counters. `frames_submitted <= frames_q
+ 
+ A successful libinput resume may restore this field while graphics remain in `RENDERER_REVALIDATION_REQUIRED`, because input delivery and renderer/output validation are separate authorities.
+ 
++### `shell_frame_in_flight`
++
++True only while the selected CRTC has one queued frame whose renderable layer-surface set contains the complete P1 persistent Shell baseline: `prime.shell.background` on `Background` plus `prime.shell.rail` on `Top`, both owned by the same live Wayland client. The exact two `wl_surface` identities are frozen with that in-flight frame and must still be alive and mapped at retirement.
++
++This flag does not claim that Orb/quick-controls are open and does not by itself earn `shell_ready`.
++
++### `shell_frames_submitted`
++
++Current-process monotonic count of selected-CRTC frames that retired after carrying the complete persistent Shell baseline and revalidating the exact background/rail surface identities at matching vblank.
++
++`shell_frames_submitted <= mapped_surface_frames_submitted <= frames_submitted`.
++
+ ### `renderer_ready`
+ 
+ May be `true` only in a phase that has earned the selected P1 single-GPU GBM/EGL/GLES renderer on the exact current session/device path.
+@@ -373,7 +393,13 @@ It is invalidated by session pause, a DRM notifier error, or a post-startup DRM
+ 
+ ### `shell_ready`
+ 
+-Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process, renderer, KMS output or protocol-global health.
++Owned by the Prime Shell integration gate. The compositor must never infer this merely from its own process, renderer, KMS output, accepted client count, namespace string or protocol-global health.
++
++It may become `true` only after `frame_loop_ready=true` has already been earned or is earned by the same retiring frame, the persistent background and rail are both mapped on their expected layers, both are renderable and owned by the same live Wayland client when the frame is queued, and the exact two surface identities remain alive/mapped when that frame retires through the matching selected-CRTC vblank.
++
++Loss/destruction of either persistent surface, a commit that makes the persistent baseline non-renderable, Wayland protocol failure, frame/output invalidation, DRM topology invalidation or session graphics invalidation clears `shell_ready` until the complete baseline earns another retirement.
++
++`SHELL_READY` does not imply Orb/quick-controls are currently open, system controls have earned mutation authority, secure executable identity has been proven from a namespace, or owner visual acceptance has occurred.
+ 
+ ### `clients_accepted`
