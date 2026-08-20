@@ -1,9 +1,9 @@
-name: Construction P1 Functional Shell v3
+name: Construction P1 Functional Shell v4
 
 on:
   pull_request:
     branches:
-      - construction/p1-shell-functional-v3-base
+      - construction/p1-shell-functional-v4-base
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -24,7 +24,7 @@ env:
 
 jobs:
   prove:
-    if: ${{ github.head_ref == 'construction/p1-shell-functional-v3' }}
+    if: ${{ github.head_ref == 'construction/p1-shell-functional-v4' }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
@@ -44,7 +44,7 @@ jobs:
           test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
           ! grep -R -F 'std::process::Command' crates/prime-shell/src
           ! grep -R -F '/v1/exec/native/launch' crates/prime-shell/src
-          echo PRIME_SHELL_FUNCTIONAL_V3_SCOPE=PASS
+          echo PRIME_SHELL_FUNCTIONAL_V4_SCOPE=PASS
 
       - uses: actions/download-artifact@v4
         with:
@@ -93,10 +93,10 @@ jobs:
           grep -F 'value.chars().take(max_chars - 3)' crates/prime-shell/src/visual.rs
           ! grep -F 'fn draw_surface(' crates/prime-shell/src/main.rs
           ! grep -F 'color: u32,' crates/prime-shell/src/main.rs
-          grep -F '#[expect(clippy::too_many_arguments' crates/prime-shell/src/visual.rs
+          test "$(grep -F -c '#[expect(clippy::too_many_arguments' crates/prime-shell/src/visual.rs)" = 3
           ! grep -R -F 'std::process::Command' crates/prime-shell/src
           ! grep -R -F '/v1/exec/native/launch' crates/prime-shell/src
-          echo PRIME_SHELL_FUNCTIONAL_V3_RECONSTRUCTION=PASS
+          echo PRIME_SHELL_FUNCTIONAL_V4_RECONSTRUCTION=PASS
 
       - name: Authenticate Prime-owned substrate
         shell: bash
@@ -136,19 +136,19 @@ jobs:
               sha256sum Cargo.lock | tee diag/Cargo.lock.sha256
               cargo fmt --all
               cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
-              echo PRIME_SHELL_FUNCTIONAL_V3_FMT=PASS
+              echo PRIME_SHELL_FUNCTIONAL_V4_FMT=PASS
               cargo metadata --locked --no-deps --format-version 1 >/dev/null
               cargo clippy --locked -p prime-shell -p prime-compositor -p primed -p prime-contracts --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
-              echo PRIME_SHELL_FUNCTIONAL_V3_CLIPPY=PASS
+              echo PRIME_SHELL_FUNCTIONAL_V4_CLIPPY=PASS
               cargo test --locked -p prime-shell -p primed -p prime-compositor -p prime-contracts 2>&1 | tee diag/tests.log
-              echo PRIME_SHELL_FUNCTIONAL_V3_TEST=PASS
+              echo PRIME_SHELL_FUNCTIONAL_V4_TEST=PASS
               cargo build --locked --release -p primed -p prime-shell -p prime-compositor 2>&1 | tee diag/build.log
               ! ldd target/release/primed | grep -q "not found"
               ! ldd target/release/prime-shell | grep -q "not found"
               ! ldd target/release/prime-compositor | grep -q "not found"
               target/release/prime-shell --help | tee diag/shell-help.log
               target/release/prime-compositor --help | tee diag/compositor-help.log
-              echo PRIME_SHELL_FUNCTIONAL_V3_BUILD=PASS
+              echo PRIME_SHELL_FUNCTIONAL_V4_BUILD=PASS
             '
           git diff --check
           cp Cargo.toml Cargo.lock handoff/
@@ -166,11 +166,11 @@ jobs:
             echo SHELL_CORE_CLIENT_HASH=$(git hash-object crates/prime-shell/src/core_client.rs)
             echo SHELL_VISUAL_HASH=$(git hash-object crates/prime-shell/src/visual.rs)
           } | tee handoff/MANIFEST.env
-          echo PRIME_SHELL_FUNCTIONAL_V3_HANDOFF=PASS
+          echo PRIME_SHELL_FUNCTIONAL_V4_HANDOFF=PASS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: prime-shell-functional-v3-${{ github.event.pull_request.head.sha }}
+          name: prime-shell-functional-v4-${{ github.event.pull_request.head.sha }}
           path: |
             diag/
             handoff/
