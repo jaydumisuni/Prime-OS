@@ -20,13 +20,14 @@ use smithay::{
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            get_parent, is_sync_subsurface, CompositorClientState, CompositorHandler,
+            get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler,
             CompositorState,
         },
         output::{OutputHandler, OutputManagerState},
         shell::{
             wlr_layer::{
-                Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState,
+                Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
+                WlrLayerShellState,
             },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
@@ -126,12 +127,7 @@ impl CompositorHandler for Runtime {
         }
 
         handle_xdg_commit(&mut self.protocols.popups, &self.protocols.space, surface);
-        if layer_map_for_output(&self._output)
-            .layer_for_surface(surface, WindowSurfaceType::ALL)
-            .is_some()
-        {
-            layer_map_for_output(&self._output).arrange();
-        }
+        handle_layer_commit(&self._output, surface);
         self.request_frame();
     }
 }
@@ -217,10 +213,7 @@ impl WlrLayerShellHandler for Runtime {
         if let Err(error) = map_result {
             eprintln!("prime-compositor could not map layer surface: {error}");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
-            return;
         }
-        desktop_surface.layer_surface().send_configure();
-        self.request_frame();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
@@ -256,6 +249,40 @@ fn handle_xdg_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
                 eprintln!("prime-compositor could not send initial XDG popup configure: {error}");
             }
         }
+    }
+}
+
+fn handle_layer_commit(output: &smithay::output::Output, surface: &WlSurface) {
+    let mut map = layer_map_for_output(output);
+    if map
+        .layer_for_surface(surface, WindowSurfaceType::ALL)
+        .is_none()
+    {
+        return;
+    }
+
+    let is_layer_root = map
+        .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+        .is_some();
+    let initial_configure_sent = is_layer_root.then(|| {
+        with_states(surface, |states| {
+            states
+                .data_map
+                .get::<LayerSurfaceData>()
+                .expect("mapped WLR layer root is missing LayerSurfaceData")
+                .lock()
+                .unwrap()
+                .initial_configure_sent
+        })
+    });
+
+    map.arrange();
+
+    if initial_configure_sent == Some(false) {
+        map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+            .expect("mapped WLR layer root disappeared during arrangement")
+            .layer_surface()
+            .send_configure();
     }
 }
 
