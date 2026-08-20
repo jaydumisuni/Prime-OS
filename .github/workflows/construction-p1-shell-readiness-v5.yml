@@ -1,0 +1,165 @@
+name: Construction P1 Shell Readiness v5 Freeze Candidate
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-readiness-v5-base
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  PRIME_BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
+  PRIME_BASE_IMAGE_ID: sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  SHELL_LOCK_SHA256: d8c87bc9c7aa116ae85a407d23058dfb7fe1bc5c2955a8df677747ba201a2d47
+  ROOT_CARGO_HASH: 0a635efefc6db30b4bad4f2ee7692a83acfab6ba
+  SHELL_CARGO_HASH: 025ab035caefc194c09936f4682688b0160187a7
+  SHELL_MAIN_HASH: 85fc1475435ff86fd55bdc720e3ecfe2b58f48e9
+  COMPOSITOR_SHELL_HASH: 72899604ccb5b521a59eaa89cd6b7967c3087023
+  FRAME_HASH: 77d20b55669c38c6b7c8b15bb4ab50a26ca8034b
+  PROTOCOLS_HASH: 435447b2e04910751f9f01f0d5c3599ca18e7012
+  SHELL_CONTRACT_HASH: 8c96220c475e96f1a9111d88f11d43768d5b84c5
+  MAIN_PATCH_HASH: 38c2a391f00a1be784fdb3687a1fe58b0e0938be
+
+jobs:
+  prove:
+    if: ${{ github.head_ref == 'construction/p1-shell-readiness-v5' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Reconstruct exact reviewed readiness candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='${{ github.event.pull_request.base.sha }}'
+          test "$(git merge-base "$base" HEAD)" = "$base"
+          test "$(git rev-parse "$PRODUCT_BASE^{commit}")" = "$PRODUCT_BASE"
+          git diff --check "$base" HEAD
+          git diff --name-only "$base" HEAD | tee /tmp/readiness-files.txt
+          while IFS= read -r path; do
+            case "$path" in
+              Cargo.toml|crates/prime-shell/Cargo.toml|crates/prime-shell/src/main.rs|crates/prime-compositor/src/shell.rs|crates/prime-compositor/src/frame.rs|crates/prime-compositor/src/protocols.rs|docs/contracts/PRIME_P1_SHELL_V1.md|construction/shell-readiness-v2/main-readiness.patch) ;;
+              *) echo "unexpected Shell readiness v5 path: $path" >&2; exit 1 ;;
+            esac
+          done < /tmp/readiness-files.txt
+          test "$(wc -l < /tmp/readiness-files.txt)" -eq 8
+
+          test "$(git hash-object Cargo.toml)" = "$ROOT_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/Cargo.toml)" = "$SHELL_CARGO_HASH"
+          test "$(git hash-object crates/prime-shell/src/main.rs)" = "$SHELL_MAIN_HASH"
+          test "$(git hash-object crates/prime-compositor/src/shell.rs)" = "$COMPOSITOR_SHELL_HASH"
+          test "$(git hash-object crates/prime-compositor/src/frame.rs)" = "$FRAME_HASH"
+          test "$(git hash-object crates/prime-compositor/src/protocols.rs)" = "$PROTOCOLS_HASH"
+          test "$(git hash-object docs/contracts/PRIME_P1_SHELL_V1.md)" = "$SHELL_CONTRACT_HASH"
+          test "$(git hash-object construction/shell-readiness-v2/main-readiness.patch)" = "$MAIN_PATCH_HASH"
+
+          git apply --unidiff-zero --check construction/shell-readiness-v2/main-readiness.patch
+          git apply --unidiff-zero construction/shell-readiness-v2/main-readiness.patch
+          git diff --check
+
+          grep -F 'mod shell;' crates/prime-compositor/src/main.rs
+          grep -F 'backgrounds.len() != 1 || rails.len() != 1' crates/prime-compositor/src/shell.rs
+          grep -F 'persistent_baseline_identity_renderable' crates/prime-compositor/src/frame.rs
+          grep -F 'persistent_baseline_renderable(&mut self._renderer' crates/prime-compositor/src/protocols.rs
+          grep -F 'shell::SHELL_NOT_PROVEN_LIMITATION' crates/prime-compositor/src/main.rs
+          grep -F 'Persistent baseline: background + rail; Orb/quick-controls remain transient' crates/prime-shell/src/main.rs
+          echo PRIME_SHELL_READINESS_V5_MAIN_HASH=$(git hash-object crates/prime-compositor/src/main.rs)
+          echo PRIME_SHELL_READINESS_V5_RECONSTRUCTION=PASS
+
+      - name: Authenticate Prime-owned substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove exact candidate with frozen dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diag handoff/crates/prime-shell/src handoff/crates/prime-compositor/src handoff/docs/contracts
+          docker pull "$PRIME_BASE_IMAGE" >/dev/null
+          test "$(docker image inspect "$PRIME_BASE_IMAGE" --format '{{.Id}}')" = "$PRIME_BASE_IMAGE_ID"
+          docker run --rm \
+            -e RUSTUP_HOME=/tmp/prime-rustup \
+            -e CARGO_HOME=/tmp/prime-cargo \
+            -e SHELL_LOCK_SHA256="$SHELL_LOCK_SHA256" \
+            -v "$PWD:/work" -w /work "$PRIME_BASE_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              dnf -y install ca-certificates curl gcc gcc-c++ make pkgconf-pkg-config \
+                "pkgconfig(libinput)" "pkgconfig(libudev)" \
+                mesa-libgbm-devel-26.1.7-1.fc44 mesa-dri-drivers-26.1.7-1.fc44 \
+                mesa-libEGL-26.1.7-1.fc44 mesa-libgbm-26.1.7-1.fc44 \
+                "pkgconfig(libseat)" "pkgconfig(xkbcommon)" \
+                "pkgconfig(wayland-server)" "pkgconfig(wayland-client)" \
+                "pkgconfig(egl)" "pkgconfig(glesv2)" "pkgconfig(libdrm)" >/dev/null
+              rm -rf "$RUSTUP_HOME" "$CARGO_HOME"
+              mkdir -p "$RUSTUP_HOME" "$CARGO_HOME"
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1 --no-modify-path >/dev/null
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup component add rustfmt clippy --toolchain 1.97.1 >/dev/null
+              test "$(rustc --version | awk "{print \$2}")" = "1.97.1"
+              rm -f Cargo.lock
+              cargo generate-lockfile 2>&1 | tee diag/generate-lock.log
+              actual_lock="$(sha256sum Cargo.lock | awk "{print \$1}")"
+              printf "%s  Cargo.lock\n" "$actual_lock" | tee diag/Cargo.lock.sha256
+              test "$actual_lock" = "$SHELL_LOCK_SHA256"
+              echo PRIME_SHELL_READINESS_V5_LOCK=PASS
+              cargo metadata --locked --no-deps --format-version 1 >/dev/null
+              cargo fmt --all -- --check 2>&1 | tee diag/fmt.log
+              echo PRIME_SHELL_READINESS_V5_FMT=PASS
+              cargo clippy --locked -p prime-compositor -p prime-shell --all-targets -- -D warnings 2>&1 | tee diag/clippy.log
+              echo PRIME_SHELL_READINESS_V5_CLIPPY=PASS
+              cargo test --locked -p prime-compositor 2>&1 | tee diag/compositor-tests.log
+              echo PRIME_SHELL_READINESS_V5_TEST=PASS
+              cargo build --locked -p prime-compositor --release --bin prime-compositor 2>&1 | tee diag/compositor-build.log
+              cargo build --locked -p prime-shell --release --bin prime-shell 2>&1 | tee diag/shell-build.log
+              ! ldd target/release/prime-compositor | grep -q "not found"
+              ! ldd target/release/prime-shell | grep -q "not found"
+              target/release/prime-compositor --help | tee diag/compositor-help.log
+              target/release/prime-shell --help | tee diag/shell-help.log
+              echo PRIME_SHELL_READINESS_V5_BUILD=PASS
+            '
+
+          cp Cargo.toml handoff/Cargo.toml
+          cp Cargo.lock handoff/Cargo.lock
+          cp crates/prime-shell/Cargo.toml handoff/crates/prime-shell/Cargo.toml
+          cp crates/prime-shell/src/main.rs handoff/crates/prime-shell/src/main.rs
+          cp crates/prime-compositor/src/main.rs handoff/crates/prime-compositor/src/main.rs
+          cp crates/prime-compositor/src/shell.rs handoff/crates/prime-compositor/src/shell.rs
+          cp crates/prime-compositor/src/frame.rs handoff/crates/prime-compositor/src/frame.rs
+          cp crates/prime-compositor/src/protocols.rs handoff/crates/prime-compositor/src/protocols.rs
+          cp docs/contracts/PRIME_P1_SHELL_V1.md handoff/docs/contracts/PRIME_P1_SHELL_V1.md
+          {
+            echo PRODUCT_BASE=$PRODUCT_BASE
+            echo SOURCE_HEAD=${{ github.event.pull_request.head.sha }}
+            echo CARGO_LOCK_SHA256=$(sha256sum Cargo.lock | awk '{print $1}')
+            echo CARGO_TOML_HASH=$(git hash-object Cargo.toml)
+            echo SHELL_CARGO_HASH=$(git hash-object crates/prime-shell/Cargo.toml)
+            echo SHELL_MAIN_HASH=$(git hash-object crates/prime-shell/src/main.rs)
+            echo COMPOSITOR_MAIN_HASH=$(git hash-object crates/prime-compositor/src/main.rs)
+            echo COMPOSITOR_SHELL_HASH=$(git hash-object crates/prime-compositor/src/shell.rs)
+            echo FRAME_HASH=$(git hash-object crates/prime-compositor/src/frame.rs)
+            echo PROTOCOLS_HASH=$(git hash-object crates/prime-compositor/src/protocols.rs)
+            echo SHELL_CONTRACT_HASH=$(git hash-object docs/contracts/PRIME_P1_SHELL_V1.md)
+          } | tee handoff/MANIFEST.env
+          echo PRIME_SHELL_READINESS_V5_HANDOFF=PASS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-shell-readiness-v5-${{ github.event.pull_request.head.sha }}
+          path: |
+            diag/
+            handoff/
+          if-no-files-found: error
+          retention-days: 7
