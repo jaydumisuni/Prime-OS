@@ -1,12 +1,11 @@
 diff --git a/crates/prime-compositor/src/main.rs b/crates/prime-compositor/src/main.rs
 --- a/crates/prime-compositor/src/main.rs
 +++ b/crates/prime-compositor/src/main.rs
-@@ -1,4 +1,5 @@
- mod frame;
+@@ -2,3 +2,4 @@
  mod input;
  mod output;
- mod protocols;
 +mod shell;
+ mod protocols;
 @@ -135,6 +136,7 @@ impl Runtime {
          self.readiness.phase = phase.to_owned();
          self.readiness.frame_loop_ready = false;
@@ -15,7 +14,7 @@ diff --git a/crates/prime-compositor/src/main.rs b/crates/prime-compositor/src/m
 +        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
          self.add_limitation(limitation);
      }
-@@ -147,5 +149,6 @@ impl Runtime {
+@@ -148,5 +150,6 @@ impl Runtime {
          self.readiness.frame_loop_ready = false;
          self.readiness.frame_in_flight = false;
          self.frame.reset();
