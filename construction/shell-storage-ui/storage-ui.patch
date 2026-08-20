@@ -1,0 +1,138 @@
+diff --git a/crates/prime-shell/src/core_client.rs b/crates/prime-shell/src/core_client.rs
+index a43da30..63efd16 100644
+--- a/crates/prime-shell/src/core_client.rs
++++ b/crates/prime-shell/src/core_client.rs
+@@ -1,6 +1,7 @@
+ use prime_contracts::{
+-    ApplicationsProjection, SystemPowerAction, SystemPowerRequest, CAPABILITY_INTERFACE_VERSION,
+-    SHELL_LAUNCH_REQUEST_SCHEMA, SYSTEM_POWER_REQUEST_SCHEMA,
++    ApplicationsProjection, StoragePressureState, StorageProjection, SystemPowerAction,
++    SystemPowerRequest, CAPABILITY_INTERFACE_VERSION, SHELL_LAUNCH_REQUEST_SCHEMA,
++    SYSTEM_POWER_REQUEST_SCHEMA,
+ };
+ use serde_json::Value;
+ use std::{
+@@ -133,6 +134,50 @@ impl CoreClient {
+         Ok(SystemStatusView { lines, power_ready })
+     }
+ 
++    pub(crate) fn storage_status(&self) -> Result<Vec<String>, CoreClientError> {
++        let body = self.request("GET", "/v1/storage", None)?;
++        let projection: StorageProjection = serde_json::from_slice(&body)
++            .map_err(|error| CoreClientError::Json(error.to_string()))?;
++        let inventory = projection.inventory;
++        let totals = inventory.local_physical_totals;
++        let mut lines = vec![
++            "STORAGE".to_owned(),
++            format!(
++                "USED {} / TOTAL {}",
++                format_bytes(totals.used_bytes),
++                format_bytes(totals.total_bytes)
++            ),
++            format!("AVAILABLE {}", format_bytes(totals.available_bytes)),
++            format!("PRESSURE {}", pressure_name(inventory.pressure.state)),
++        ];
++        if inventory.reserve.policy_configured {
++            lines.push(match inventory.reserve.protected_rollback_recovery_bytes {
++                Some(bytes) => format!("RECOVERY RESERVE {}", format_bytes(bytes)),
++                None => "RECOVERY RESERVE UNKNOWN".to_owned(),
++            });
++        } else {
++            lines.push("RECOVERY RESERVE UNCONFIGURED".to_owned());
++        }
++        lines.push(format!(
++            "GENERATION {}",
++            truncate_text(&projection.generation_id, 24)
++        ));
++        for mount in inventory.mounts.iter().filter(|mount| {
++            matches!(
++                mount.filesystem_type.to_ascii_lowercase().as_str(),
++                "apfs" | "hfs" | "hfsplus" | "hfs+"
++            )
++        }).take(2) {
++            lines.push(format!(
++                "{} {} {}",
++                mount.filesystem_type.to_ascii_uppercase(),
++                truncate_text(&mount.mount_point, 18),
++                if mount.read_only { "READ-ONLY" } else { "MOUNTED" }
++            ));
++        }
++        Ok(lines)
++    }
++
+     pub(crate) fn power(&self, action: SystemPowerAction) -> Result<(), CoreClientError> {
+         let body = power_request_body(action)?;
+         self.request("POST", "/v1/system/power", Some(&body))?;
+@@ -185,6 +230,33 @@ impl CoreClient {
+     }
+ }
+ 
++fn format_bytes(bytes: u64) -> String {
++    const GIB: u64 = 1024 * 1024 * 1024;
++    if bytes >= GIB {
++        format!("{}.{} GiB", bytes / GIB, ((bytes % GIB) * 10) / GIB)
++    } else {
++        const MIB: u64 = 1024 * 1024;
++        format!("{} MiB", bytes / MIB)
++    }
++}
++
++fn pressure_name(state: StoragePressureState) -> &'static str {
++    match state {
++        StoragePressureState::Unknown => "UNKNOWN",
++        StoragePressureState::Normal => "NORMAL",
++        StoragePressureState::Low => "LOW",
++        StoragePressureState::Critical => "CRITICAL",
++    }
++}
++
++fn truncate_text(value: &str, max_chars: usize) -> String {
++    if value.chars().count() <= max_chars {
++        value.to_owned()
++    } else {
++        value.chars().take(max_chars).collect()
++    }
++}
++
+ fn parse_http_response(response: &[u8]) -> Result<Vec<u8>, CoreClientError> {
+     let header_end = response
+         .windows(4)
+diff --git a/crates/prime-shell/src/main.rs b/crates/prime-shell/src/main.rs
+index a782f88..3fed85e 100644
+--- a/crates/prime-shell/src/main.rs
++++ b/crates/prime-shell/src/main.rs
+@@ -41,7 +41,7 @@ const RAIL_HEIGHT: u32 = 48;
+ const ORB_WIDTH: u32 = 360;
+ const ORB_HEIGHT: u32 = 420;
+ const QUICK_CONTROLS_WIDTH: u32 = 320;
+-const QUICK_CONTROLS_HEIGHT: u32 = 420;
++const QUICK_CONTROLS_HEIGHT: u32 = 560;
+ const RAIL_TRIGGER_WIDTH: f64 = 96.0;
+ 
+ const BACKGROUND_ARGB: u32 = 0xff11141a;
+@@ -350,6 +350,12 @@ impl PrimeShell {
+                 self.quick_power_ready = false;
+             }
+         }
++        match self.core.storage_status() {
++            Ok(storage_lines) => self.quick_lines.extend(storage_lines),
++            Err(error) => self
++                .quick_lines
++                .push(format!("STORAGE UNAVAILABLE: {error}")),
++        }
+         self.quick_controls = Some(self.create_overlay(
+             queue_handle,
+             QUICK_CONTROLS_NAMESPACE,
+diff --git a/crates/prime-shell/src/visual.rs b/crates/prime-shell/src/visual.rs
+index eac1173..67e03b0 100644
+--- a/crates/prime-shell/src/visual.rs
++++ b/crates/prime-shell/src/visual.rs
+@@ -187,7 +187,7 @@ pub(crate) fn paint_quick_controls(
+ ) {
+     fill_rect(canvas, width, height, 0, 0, width, height, PANEL_ALT);
+     stroke_rect(canvas, width, height, 0, 0, width, height, BORDER);
+-    draw_text(canvas, width, height, 18, 18, 2, TEXT, "QUICK CONTROLS");
++    draw_text(canvas, width, height, 18, 18, 2, TEXT, "QUICK CONTROLS / SETTINGS");
+     draw_text(
+         canvas,
+         width,
