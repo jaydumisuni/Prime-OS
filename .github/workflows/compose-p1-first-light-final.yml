@@ -1,0 +1,304 @@
+name: Compose P1 First-Light Final
+
+on:
+  push:
+    branches: [construction/p1-first-light-integration]
+    paths:
+      - 'construction/p1-first-light/**'
+      - '.github/workflows/compose-p1-first-light-final.yml'
+
+permissions:
+  contents: write
+  actions: read
+  packages: read
+
+env:
+  PRODUCT_BASE: 872b46658863ba0694bd0de017e1a8491047ffa2
+  PARENT_RUN: '32404840933'
+  PARENT_ARTIFACT: prime-shell-power-ui-v4-c40aafc924cd1cf752794f77a4cc27ab20722462
+  PARENT_LOCK_SHA256: b5dc0bb1c8ec9d1db9cd4dd48a8e58a576307b625eff9c969f39a83b8d1b58b9
+  STORAGE_PATCH_SHA256: 3e08098a219aaac44714620f81f6dd442878d7e33c23a97656abd225e100e74e
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout integration authority
+        uses: actions/checkout@v6
+        with:
+          ref: construction/p1-first-light-integration
+          path: source
+          fetch-depth: 0
+
+      - name: Checkout exact product base
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PRODUCT_BASE }}
+          path: product
+          fetch-depth: 0
+
+      - name: Recover frozen Shell/Core handoff
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.PARENT_RUN }}
+          name: ${{ env.PARENT_ARTIFACT }}
+          path: /tmp/frozen
+
+      - name: Compose exact final product candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd product
+          test "$(git rev-parse HEAD)" = "$PRODUCT_BASE"
+          grep -Fx "CARGO_LOCK_SHA256=$PARENT_LOCK_SHA256" /tmp/frozen/handoff/MANIFEST.env
+          test "$(sha256sum ../source/construction/p1-first-light/storage-ui.patch | awk '{print $1}')" = "$STORAGE_PATCH_SHA256"
+
+          cp -a /tmp/frozen/handoff/. .
+          rm -f MANIFEST.env
+          git apply --check ../source/construction/p1-first-light/storage-ui.patch
+          git apply ../source/construction/p1-first-light/storage-ui.patch
+
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          state={}
+          for p in sorted(pathlib.Path('crates').rglob('*.rs')):
+              state[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()
+          pathlib.Path('/tmp/rust-before.json').write_text(json.dumps(state, sort_keys=True))
+          PY
+
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --no-self-update
+          cargo +1.97.1 fmt --all
+
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          before=json.loads(pathlib.Path('/tmp/rust-before.json').read_text())
+          after={}
+          for p in sorted(pathlib.Path('crates').rglob('*.rs')):
+              after[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()
+          changed=sorted(p for p in set(before)|set(after) if before.get(p)!=after.get(p))
+          expected=sorted([
+              'crates/prime-shell/src/core_client.rs',
+              'crates/prime-shell/src/main.rs',
+              'crates/prime-shell/src/visual.rs',
+          ])
+          assert changed == expected, (changed, expected)
+          PY
+          cargo +1.97.1 fmt --all -- --check
+          test "$(sha256sum Cargo.lock | awk '{print $1}')" = "$PARENT_LOCK_SHA256"
+
+          install -D -m 0644 ../source/construction/p1-first-light/prime-shell.conf image/sysusers/prime-shell.conf
+          install -D -m 0644 ../source/construction/p1-first-light/primed.service image/systemd/primed.service
+          install -D -m 0644 ../source/construction/p1-first-light/prime-compositor.service image/systemd/prime-compositor.service
+          install -D -m 0644 ../source/construction/p1-first-light/prime-shell.service image/systemd/prime-shell.service
+          install -D -m 0644 ../source/construction/p1-first-light/prime-first-light-witness.service image/systemd/prime-first-light-witness.service
+          install -D -m 0644 ../source/construction/p1-first-light/prime-shell-session image/scripts/prime-shell-session
+          install -D -m 0644 ../source/construction/p1-first-light/prime-first-light-witness image/scripts/prime-first-light-witness
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('image/Containerfile')
+          s=p.read_text()
+          def once(old,new):
+              global s
+              n=s.count(old)
+              assert n==1, (n, old[:120])
+              s=s.replace(old,new,1)
+
+          once("""    cargo clippy --locked -p prime-compositor --all-targets -- -D warnings; \\
+    cargo build --locked --release -p prime-compositor; \\
+    test -x target/release/prime-compositor; \\
+    ! ldd target/release/prime-compositor | grep -q 'not found'; \\
+    sha256sum target/release/prime-compositor > /prime-compositor.sha256
+""","""    cargo clippy --locked -p prime-compositor -p prime-shell --all-targets -- -D warnings; \\
+    cargo build --locked --release -p prime-compositor -p prime-shell; \\
+    test -x target/release/prime-compositor; \\
+    test -x target/release/prime-shell; \\
+    ! ldd target/release/prime-compositor | grep -q 'not found'; \\
+    ! ldd target/release/prime-shell | grep -q 'not found'; \\
+    sha256sum target/release/prime-compositor > /prime-compositor.sha256; \\
+    sha256sum target/release/prime-shell > /prime-shell.sha256
+""")
+
+          once("""        libseat-0.9.3-1.fc44 \\
+        mesa-dri-drivers-26.1.7-1.fc44 \\
+""","""        libseat-0.9.3-1.fc44 \\
+        libwayland-client-1.25.0-1.fc44 \\
+        libxkbcommon-1.13.1-2.fc44 \\
+        mesa-dri-drivers-26.1.7-1.fc44 \\
+""")
+          once("""        libseat-0.9.3-1.fc44 \\
+        mesa-dri-drivers-26.1.7-1.fc44 \\
+""","""        libseat-0.9.3-1.fc44 \\
+        libwayland-client-1.25.0-1.fc44 \\
+        libxkbcommon-1.13.1-2.fc44 \\
+        mesa-dri-drivers-26.1.7-1.fc44 \\
+""")
+
+          once("""RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install
+COPY target/release/primed /usr/libexec/prime/primed
+COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
+COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
+COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
+COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
+COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
+""","""RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install /usr/lib/sysusers.d
+COPY target/release/primed /usr/libexec/prime/primed
+COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
+COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
+COPY --from=compositor-builder /source/target/release/prime-shell /usr/libexec/prime/prime-shell
+COPY image/scripts/prime-shell-session /usr/libexec/prime/prime-shell-session
+COPY image/scripts/prime-first-light-witness /usr/libexec/prime/prime-first-light-witness
+COPY image/sysusers/prime-shell.conf /usr/lib/sysusers.d/prime-shell.conf
+COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/systemd/prime-compositor.service /usr/lib/systemd/system/prime-compositor.service
+COPY image/systemd/prime-shell.service /usr/lib/systemd/system/prime-shell.service
+COPY image/systemd/prime-first-light-witness.service /usr/lib/systemd/system/prime-first-light-witness.service
+COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
+COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
+COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
+""")
+
+          once("""        /usr/libexec/prime/primed \\
+        /usr/libexec/prime/prime-recovery \\
+        /usr/libexec/prime/prime-compositor; \\
+""","""        /usr/libexec/prime/primed \\
+        /usr/libexec/prime/prime-recovery \\
+        /usr/libexec/prime/prime-compositor \\
+        /usr/libexec/prime/prime-shell \\
+        /usr/libexec/prime/prime-shell-session \\
+        /usr/libexec/prime/prime-first-light-witness; \\
+""")
+
+          once("""    ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \\
+""","""    ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \\
+    ! ldd /usr/libexec/prime/prime-shell | grep -q 'not found'; \\
+""")
+
+          once("""    systemctl enable primed.service; \\
+    systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \\
+    test -f /usr/lib/systemd/system/prime-recovery.service; \\
+    test -f /usr/lib/systemd/system/prime-recovery.target; \\
+    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \\
+""","""    systemctl enable primed.service prime-compositor.service prime-shell.service prime-first-light-witness.service; \\
+    systemctl set-default graphical.target; \\
+    systemctl mask getty@tty1.service; \\
+    systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \\
+    test -f /usr/lib/systemd/system/prime-recovery.service; \\
+    test -f /usr/lib/systemd/system/prime-recovery.target; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \\
+""")
+
+          once("""    test -x /usr/libexec/prime/prime-compositor; \\
+    test -L /etc/systemd/system/multi-user.target.wants/primed.service; \\
+""","""    test -x /usr/libexec/prime/prime-compositor; \\
+    test -x /usr/libexec/prime/prime-shell; \\
+    test -x /usr/libexec/prime/prime-shell-session; \\
+    test -x /usr/libexec/prime/prime-first-light-witness; \\
+    test -f /usr/lib/sysusers.d/prime-shell.conf; \\
+    test -L /etc/systemd/system/multi-user.target.wants/primed.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \\
+""")
+
+          once("""    test -x /usr/libexec/prime/prime-compositor; \\
+    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \\
+    test -f /usr/lib/systemd/system/prime-recovery.target; \\
+""","""    test -x /usr/libexec/prime/prime-compositor; \\
+    test -x /usr/libexec/prime/prime-shell; \\
+    test -x /usr/libexec/prime/prime-shell-session; \\
+    test -x /usr/libexec/prime/prime-first-light-witness; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \\
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \\
+    test -f /usr/lib/systemd/system/prime-recovery.target; \\
+""")
+          p.write_text(s)
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/prove-p1-local.sh')
+          s=p.read_text()
+          def once(old,new):
+              global s
+              n=s.count(old)
+              assert n==1, (n, old[:120])
+              s=s.replace(old,new,1)
+
+          once("cargo clippy --locked --workspace --exclude prime-compositor --all-targets -- -D warnings\ncargo test --locked --workspace --exclude prime-compositor\n",
+               "cargo clippy --locked --workspace --exclude prime-compositor --exclude prime-shell --all-targets -- -D warnings\ncargo test --locked --workspace --exclude prime-compositor --exclude prime-shell\n")
+
+          once("""    test -x /usr/libexec/prime/prime-compositor
+    test -x /usr/sbin/bootc
+""","""    test -x /usr/libexec/prime/prime-compositor
+    test -x /usr/libexec/prime/prime-shell
+    test -x /usr/libexec/prime/prime-shell-session
+    test -x /usr/libexec/prime/prime-first-light-witness
+    test -f /usr/lib/sysusers.d/prime-shell.conf
+    test -x /usr/sbin/bootc
+""")
+
+          once("""    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service
+""","""    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service
+""")
+
+          once("""      libseat-0.9.3-1.fc44 \\
+      mesa-dri-drivers-26.1.7-1.fc44 \\
+""","""      libseat-0.9.3-1.fc44 \\
+      libwayland-client-1.25.0-1.fc44 \\
+      libxkbcommon-1.13.1-2.fc44 \\
+      mesa-dri-drivers-26.1.7-1.fc44 \\
+""")
+
+          once("""    ! ldd /usr/libexec/prime/prime-compositor | grep -q \"not found\"
+""","""    ! ldd /usr/libexec/prime/prime-compositor | grep -q \"not found\"
+    ! ldd /usr/libexec/prime/prime-shell | grep -q \"not found\"
+""")
+
+          once("timeout --signal=TERM 90s qemu-system-x86_64 \\", "timeout --signal=TERM 120s qemu-system-x86_64 \\")
+
+          marker="""sudo -n env EXPECTED_GENERATION_ID=\"$GENERATION_ID\" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g[\"generation_id\"]==os.environ[\"EXPECTED_GENERATION_ID\"],g; assert g[\"state\"]==\"HEALTH_PROVING\",g; assert \"prime.core.socket.bound.v1\" in g.get(\"evidence_refs\",[]),g; assert g.get(\"boot_attempts_remaining\")==3,g' \"$GENERATION_FILE\"
+HOST_ID=\"$(sudo -n python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"host_id\"])' \"$IDENTITY_FILE\")\"
+cleanup_nbd
+"""
+          replacement="""sudo -n env EXPECTED_GENERATION_ID=\"$GENERATION_ID\" python3 -c 'import json,os,sys; g=json.load(open(sys.argv[1])); assert g[\"generation_id\"]==os.environ[\"EXPECTED_GENERATION_ID\"],g; assert g[\"state\"]==\"HEALTH_PROVING\",g; assert \"prime.core.socket.bound.v1\" in g.get(\"evidence_refs\",[]),g; assert g.get(\"boot_attempts_remaining\")==3,g' \"$GENERATION_FILE\"
+WITNESS_FILE=\"$PRIME_DIR/first-light/mechanical.json\"
+sudo -n test -f \"$WITNESS_FILE\"
+sudo -n python3 -c 'import json,sys; w=json.load(open(sys.argv[1])); assert w[\"schema\"]==\"prime.first-light-mechanical.v1\",w; assert w[\"status\"]==\"SHELL_READY\",w; assert w[\"compositor_phase\"]==\"SHELL_READY\",w; assert w[\"shell_ready\"] is True,w; assert w[\"frame_loop_ready\"] is True,w; assert w[\"wayland_listener_ready\"] is True,w; assert w[\"clients_accepted\"]>=1,w; assert w[\"mapped_surface_frames_submitted\"]>=1,w; assert w[\"core_socket_group_nonzero\"] is True,w; assert w[\"owner_visual_acceptance\"] is False,w' \"$WITNESS_FILE\"
+HOST_ID=\"$(sudo -n python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"host_id\"])' \"$IDENTITY_FILE\")\"
+cleanup_nbd
+"""
+          once(marker,replacement)
+
+          once('"physical_kratos_boot_proven":False', '"mechanical_shell_ready":True,"owner_visual_acceptance":False,"physical_kratos_boot_proven":False')
+          p.write_text(s)
+          PY
+
+          git diff --check
+          cargo +1.97.1 fmt --all -- --check
+          grep -F 'self.request("GET", "/v1/storage", None)' crates/prime-shell/src/core_client.rs
+          grep -F 'QUICK CONTROLS / SETTINGS' crates/prime-shell/src/visual.rs
+          grep -F 'User=prime-shell' image/systemd/prime-shell.service
+          grep -F "'status': 'SHELL_READY'" image/scripts/prime-first-light-witness
+          grep -F 'mechanical_shell_ready' tools/prove-p1-local.sh
+
+          git config user.name 'Prime Construction Bot'
+          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock crates image tools/prove-p1-local.sh
+          git status --short
+          git commit -m 'feat(p1): integrate frozen Shell Core storage and First-Light image session'
+          echo "PROOF_HEAD=$(git rev-parse HEAD)" | tee /tmp/proof-head.env
+          git push origin HEAD:refs/heads/proof/p1-first-light-final --force
+
+      - name: Publish composed head
+        shell: bash
+        run: cat /tmp/proof-head.env
