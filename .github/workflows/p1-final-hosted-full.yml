@@ -10,7 +10,7 @@ permissions:
   packages: read
 
 env:
-  FINAL_HEAD: 4f2ef83fc1305773afa033b57249111387cfdd88
+  FINAL_HEAD: f60f7f49294a361ab14c1746d3f95c7f11e9c1a3
 
 jobs:
   proof:
@@ -41,13 +41,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          auth="${RUNNER_TEMP}/containers-auth.json"
+          printf '%s' "$GHCR_TOKEN" | podman login --authfile "$auth" ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo install -D -m 0600 "$auth" /root/.config/containers/auth.json
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          sudo rm -rf "${XDG_RUNTIME_DIR}/containers"
-          mkdir -p "${XDG_RUNTIME_DIR}/containers"
-          chmod 0700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/containers"
-          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          test -r "${XDG_RUNTIME_DIR}/containers/auth.json"
-          sudo test -r "${XDG_RUNTIME_DIR}/containers/auth.json"
+          test -r "$auth"
+          sudo test -r /root/.config/containers/auth.json
       - name: Run canonical P1 proof unchanged
         shell: bash
         run: |
