@@ -38,6 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let compositor = CompositorState::bind(&globals, &queue_handle)?;
     let layer_shell = LayerShell::bind(&globals, &queue_handle)?;
     let shm = Shm::bind(&globals, &queue_handle)?;
+    let pool = SlotPool::new(4, &shm)?;
 
     let surface = compositor.create_surface(&queue_handle);
     let layer = layer_shell.create_layer_surface(
@@ -56,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &queue_handle),
         shm,
-        pool: SlotPool::new(4, &shm)?,
+        pool,
         layer,
         width: 1,
         height: 1,
@@ -87,9 +88,12 @@ impl PrimeShell {
     fn draw_background(&mut self) -> Result<(), Box<dyn Error>> {
         let width = i32::try_from(self.width)?;
         let height = i32::try_from(self.height)?;
-        let stride = width.checked_mul(4).ok_or("Prime Shell background stride overflow")?;
+        let stride = width
+            .checked_mul(4)
+            .ok_or("Prime Shell background stride overflow")?;
         let (buffer, canvas) =
-            self.pool.create_buffer(width, height, stride, wl_shm::Format::Argb8888)?;
+            self.pool
+                .create_buffer(width, height, stride, wl_shm::Format::Argb8888)?;
         let pixel = PRIME_BACKGROUND_ARGB.to_le_bytes();
         for bytes in canvas.chunks_exact_mut(4) {
             bytes.copy_from_slice(&pixel);
