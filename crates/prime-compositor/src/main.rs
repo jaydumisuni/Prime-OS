@@ -2,6 +2,7 @@ mod frame;
 mod input;
 mod output;
 mod protocols;
+mod shell;
 
 use serde::Serialize;
 use smithay::{
@@ -78,6 +79,7 @@ struct Readiness {
     frames_queued: u64,
     frames_submitted: u64,
     mapped_surface_frames_submitted: u64,
+    shell_frames_submitted: u64,
     renderer_ready: bool,
     outputs_ready: bool,
     shell_ready: bool,
@@ -132,11 +134,30 @@ impl Runtime {
         frame::request(self);
     }
 
+    fn clear_shell_readiness(&mut self) {
+        self.readiness.shell_ready = false;
+        self.add_limitation(shell::SHELL_NOT_PROVEN_LIMITATION);
+    }
+
+    pub(crate) fn revalidate_shell_presence(&mut self) -> bool {
+        if !self.readiness.shell_ready || shell::baseline_renderable(&self._output) {
+            return false;
+        }
+
+        self.readiness.shell_ready = false;
+        if self.readiness.frame_loop_ready {
+            self.readiness.phase = "FRAME_LOOP_READY".to_owned();
+        }
+        self.add_limitation(shell::SHELL_NOT_PROVEN_LIMITATION);
+        true
+    }
+
     fn invalidate_frame_loop(&mut self, phase: &str, limitation: &str) {
         self.readiness.phase = phase.to_owned();
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.clear_shell_readiness();
         self.add_limitation(limitation);
     }
 
@@ -148,6 +169,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.clear_shell_readiness();
         self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -158,6 +180,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.clear_shell_readiness();
         self.add_limitation(limitation);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -169,6 +192,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.clear_shell_readiness();
         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -386,6 +410,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             frames_queued: 0,
             frames_submitted: 0,
             mapped_surface_frames_submitted: 0,
+            shell_frames_submitted: 0,
             renderer_ready: true,
             outputs_ready: true,
             shell_ready: false,
@@ -396,7 +421,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
                 "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
                 frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
-                "Prime Shell is not started yet".to_owned(),
+                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
             ],
         },
     };
@@ -409,6 +434,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         event_loop.dispatch(Some(Duration::from_millis(16)), &mut runtime)?;
+        if runtime.revalidate_shell_presence() {
+            runtime.persist_best_effort();
+        }
         if let Err(error) = frame::try_queue(&mut runtime) {
             eprintln!("prime-compositor frame queue failed: {error}");
             runtime.invalidate_frame_loop("FRAME_ERROR", frame::FRAME_ERROR_LIMITATION);
