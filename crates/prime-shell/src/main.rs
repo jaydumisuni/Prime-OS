@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    layer.set_exclusive_zone(-1);
     layer.set_size(0, 0);
     layer.commit();
 
@@ -61,7 +62,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         layer,
         width: 1,
         height: 1,
-        first_configure: true,
         exit: false,
     };
 
@@ -80,7 +80,6 @@ struct PrimeShell {
     layer: LayerSurface,
     width: u32,
     height: u32,
-    first_configure: bool,
     exit: bool,
 }
 
@@ -201,14 +200,22 @@ impl LayerShellHandler for PrimeShell {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        self.width = NonZeroU32::new(configure.new_size.0).map_or(1, NonZeroU32::get);
-        self.height = NonZeroU32::new(configure.new_size.1).map_or(1, NonZeroU32::get);
-        if self.first_configure {
-            self.first_configure = false;
-            if let Err(error) = self.draw_background() {
-                eprintln!("prime-shell could not draw the background surface: {error}");
-                self.exit = true;
-            }
+        let Some(width) = NonZeroU32::new(configure.new_size.0) else {
+            eprintln!("prime-shell received zero background width; refusing to map an ambiguous surface");
+            self.exit = true;
+            return;
+        };
+        let Some(height) = NonZeroU32::new(configure.new_size.1) else {
+            eprintln!("prime-shell received zero background height; refusing to map an ambiguous surface");
+            self.exit = true;
+            return;
+        };
+
+        self.width = width.get();
+        self.height = height.get();
+        if let Err(error) = self.draw_background() {
+            eprintln!("prime-shell could not draw the background surface: {error}");
+            self.exit = true;
         }
     }
 }
