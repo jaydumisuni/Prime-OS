@@ -1,5 +1,6 @@
 name: P1 Shell Control Seam Build
 
+# synchronize adapter-base PR
 on:
   push:
     branches:
