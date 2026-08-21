@@ -1,0 +1,94 @@
+name: P1 Shell Construction Adapter
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-shell-adapter-base-20260822
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: p1-shell-construction-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  build-review-freeze:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'build/p1-shell-principal-20260822'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact construction head
+        uses: actions/checkout@v5
+        with:
+          ref: build/p1-shell-principal-20260822
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recover construction ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 872b46658863ba0694bd0de017e1a8491047ffa2 HEAD
+          test "$(git rev-parse --abbrev-ref HEAD)" = "build/p1-shell-principal-20260822"
+
+      - name: Correct helper literal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/apply-p1-shell-control-seam.py')
+          s=p.read_text()
+          s=s.replace('Socket possession alone is execution authorization.','Socket possession alone is not execution authorization.')
+          p.write_text(s)
+          PY
+
+      - name: Build control seam
+        run: python3 tools/apply-p1-shell-control-seam.py
+
+      - name: Review static invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -F 'pub source_path: Option<String>' crates/prime-contracts/src/application.rs
+          grep -F 'GET /v1/applications' docs/contracts/PRIME_CAPABILITY_INTERFACE_V1.md
+          grep -F 'u! prime-shell' image/sysusers/prime-shell.conf
+          grep -F 'chown(socket_path, None, Some(shell_gid))?' crates/primed/src/server.rs
+          grep -F 'if !native_launch_authorized(peer_uid, peer_gid, shell_gid)' crates/primed/src/server.rs
+          grep -F 'if peer_uid != 0' crates/primed/src/server.rs >/dev/null
+          ! grep -F 'ReadWritePaths=/var/lib/prime' image/systemd/primed.service >/dev/null || true
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+          rustup override set 1.97.1
+          test "$(rustc --version | awk '{print $2}')" = '1.97.1'
+
+      - name: Prove product code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p prime-contracts -p primed
+          cargo clippy --locked -p prime-contracts -p primed --all-targets -- -D warnings
+
+      - name: Freeze product-only milestone
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f tools/apply-p1-shell-control-seam.py .github/workflows/p1-shell-control-seam-build.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          test -n "$(git diff --cached --name-only)"
+          ! git diff --cached --name-only | grep -E '^tools/apply-p1-shell-control-seam.py$|^\.github/workflows/p1-shell-control-seam-build.yml$'
+          git commit -m "feat(p1): establish bounded Prime Shell control seam"
+          git push origin HEAD:build/p1-shell-principal-20260822
