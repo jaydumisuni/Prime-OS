@@ -4,16 +4,20 @@ on:
   push:
     branches:
       - build/p1-shell-principal-20260822
+  pull_request:
+    branches:
+      - build/p1-first-light
 
 permissions:
   contents: write
 
 concurrency:
-  group: p1-shell-control-seam-build
+  group: p1-shell-control-seam-build-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
   build-review-freeze:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -86,3 +90,15 @@ jobs:
           git diff --cached --name-only | sort
           git commit -m "feat(p1): establish bounded Prime Shell control seam"
           git push origin HEAD:build/p1-shell-principal-20260822
+
+  pr-observer:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Report construction state
+        run: |
+          set -euo pipefail
+          git status --short
+          test -f tools/apply-p1-shell-control-seam.py || true
