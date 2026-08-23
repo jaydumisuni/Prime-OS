@@ -1,0 +1,61 @@
+name: Prime P1 Builder Invocation Repair
+
+on:
+  pull_request:
+    branches:
+      - build/p1-first-light
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.number == 77
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: proof/p1-first-light-final
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - name: Normalize image-builder privilege boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/prove-p1-local.sh')
+          s = p.read_text()
+          old = '''BUILDER_RUN_ARGS=(
+            --privileged
+            --user 0:0
+            --userns=host
+            --cap-add=SYS_ADMIN
+            --cap-add=MKNOD
+            --security-opt label=disable
+          )'''
+          new = '''BUILDER_RUN_ARGS=(
+            --privileged
+            --security-opt label=type:unconfined_t
+          )'''
+          if old in s:
+              if s.count(old) != 1:
+                  raise SystemExit(f'expected one builder arg block, found {s.count(old)}')
+              p.write_text(s.replace(old, new, 1))
+          elif new not in s:
+              raise SystemExit('neither expected old nor normalized builder args are present')
+          PY
+          bash -n tools/prove-p1-local.sh
+          git diff --check
+          if git diff --quiet; then
+            echo 'Builder invocation already normalized.'
+            exit 0
+          fi
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = 'tools/prove-p1-local.sh'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/prove-p1-local.sh
+          git commit -m 'fix(p1): normalize image-builder privilege boundary'
+          git push origin HEAD:proof/p1-first-light-final
