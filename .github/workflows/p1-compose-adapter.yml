@@ -29,9 +29,9 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           src = Path('.github/workflows/p1-rootfs-compose.yml').read_text(encoding='utf-8')
-          marker = '        run: |\n'
+          marker = "      - name: Compose exact rootfs privilege correction\n        shell: bash\n        run: |\n"
           if src.count(marker) != 1:
-              raise SystemExit(f'composer run-block count={src.count(marker)}')
+              raise SystemExit(f'composer step anchor count={src.count(marker)}')
           body = src.split(marker, 1)[1]
           out = []
           for line in body.splitlines():
