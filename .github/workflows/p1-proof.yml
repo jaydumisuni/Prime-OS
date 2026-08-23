@@ -35,16 +35,23 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PRIME_P1_CANDIDATE_SHA"
           printf 'P1_PROOF_CANDIDATE=%s\n' "$PRIME_P1_CANDIDATE_SHA"
-      - name: Authenticate Prime-owned substrate
+      - name: Authenticate locked Prime substrate
         shell: bash
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run canonical Prime P1 proof
         shell: bash
         run: |
           set -euo pipefail
           chmod +x tools/prove-p1-local.sh
           tools/prove-p1-local.sh
+      - name: Remove ephemeral registry credentials
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          skopeo logout ghcr.io >/dev/null 2>&1 || true
+          sudo -n podman logout ghcr.io >/dev/null 2>&1 || true
