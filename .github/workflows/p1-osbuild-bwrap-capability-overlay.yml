@@ -1,4 +1,4 @@
-name: Prime P1 bounded bwrap capability overlay proof
+name: Prime P1 AppArmor-safe image-builder transport proof
 
 on:
   pull_request:
@@ -10,46 +10,59 @@ permissions:
   contents: read
 
 jobs:
-  prove-overlay:
+  prove-transport:
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 8
     env:
       IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
-      POLICY: /etc/apparmor.d/bwrap-userns-restrict
     steps:
-      - name: Load bounded temporary unpriv_bwrap capability policy
+      - name: Extract exact pinned builder bwrap without changing host policy
         shell: bash
         run: |
           set -euo pipefail
-          ORIGINAL_SHA="$(sha256sum "$POLICY" | awk '{print $1}')"
-          echo "ORIGINAL_POLICY_SHA256=$ORIGINAL_SHA"
-          python3 - <<'PY'
-          from pathlib import Path
-          src = Path('/etc/apparmor.d/bwrap-userns-restrict').read_text()
-          needle = '  audit deny capability,\n'
-          if src.count(needle) != 1:
-              raise SystemExit(f'expected one blanket capability deny, found {src.count(needle)}')
-          replacement = '''  # Prime P1 proof-only bounded osbuild capability overlay.
-            allow capability chown,
-            allow capability setuid,
-            allow capability sys_admin,
-            allow capability audit_write,
-          '''
-          Path('/tmp/prime-bwrap-userns-restrict').write_text(src.replace(needle, replacement, 1))
-          PY
-          sudo -n apparmor_parser -r /tmp/prime-bwrap-userns-restrict
+          ALT_BWRAP=/var/tmp/prime-p1-image-builder-bwrap
+          sudo -n rm -f "$ALT_BWRAP"
+          cid="$(sudo -n podman create "$IMAGE_BUILDER")"
+          cleanup() { sudo -n podman rm -f "$cid" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          sudo -n podman cp "$cid:/usr/bin/bwrap" "$ALT_BWRAP"
+          cleanup
+          trap - EXIT
+          sudo -n chmod 0755 "$ALT_BWRAP"
+          image_sha="$(sudo -n podman run --rm --entrypoint sha256sum "$IMAGE_BUILDER" /usr/bin/bwrap | awk '{print $1}')"
+          host_sha="$(sha256sum "$ALT_BWRAP" | awk '{print $1}')"
+          test "$host_sha" = "$image_sha"
+          echo "PINNED_BWRAP_SHA256=$host_sha"
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
 
-      - name: Run exact image-builder through former failure boundary
+      - name: Prove alternate path and fuse are visible inside builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALT_BWRAP=/var/tmp/prime-p1-image-builder-bwrap
+          test -c /dev/fuse
+          sudo -n podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --device /dev/fuse \
+            -v "$ALT_BWRAP:/usr/sbin/bwrap:ro" \
+            --entrypoint /bin/bash \
+            "$IMAGE_BUILDER" -ceu '
+              test -x /usr/sbin/bwrap
+              test -c /dev/fuse
+              test "$(command -v bwrap)" = /usr/sbin/bwrap
+              echo "BWRAP_RESOLVED=$(command -v bwrap)"
+              echo -n "OUTER_SECURITY_ATTR="
+              cat /proc/self/attr/current 2>/dev/null || true
+              /usr/sbin/bwrap --version
+            '
+
+      - name: Run exact image-builder through container-deploy with host AppArmor enforced
         shell: bash
         run: |
           set -u
-          restore_policy() {
-            sudo -n apparmor_parser -r "$POLICY" || true
-          }
-          trap restore_policy EXIT INT TERM
-
-          out=/var/tmp/prime-bwrap-capability-overlay-proof
+          ALT_BWRAP=/var/tmp/prime-p1-image-builder-bwrap
+          out=/var/tmp/prime-p1-alt-bwrap-builder-proof
           sudo -n rm -rf "$out"
           sudo -n mkdir -p "$out"
           sudo -n chown "$(id -u):$(id -g)" "$out"
@@ -58,7 +71,9 @@ jobs:
           timeout --signal=TERM 75s sudo -n podman run --rm \
             --privileged \
             --security-opt label=disable \
+            --device /dev/fuse \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
+            -v "$ALT_BWRAP:/usr/sbin/bwrap:ro" \
             -v "$out:/output" \
             "$IMAGE_BUILDER" \
             --output-dir /output \
@@ -70,19 +85,17 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           echo "IMAGE_BUILDER_RC=$rc"
-          echo '=== stage evidence ==='
-          grep -E 'org.osbuild.container-deploy|mount: /run/osbuild/containers/storage|permission denied|Operation not permitted|starting -Pipeline|Pipeline build|⏱|Duration:|Failed|Success|org.osbuild\.' "$out/probe.log" | tail -n 160 || true
-          echo '=== AppArmor denials during bounded overlay ==='
+          echo '=== relevant stage evidence ==='
+          grep -E 'org.osbuild.container-deploy|mount: /run/osbuild/containers/storage|overlay.*not supported over tmpfs|fuse: device /dev/fuse not found|starting -Pipeline|Pipeline build|org.osbuild\.|Duration:|Failed|Success' "$out/probe.log" | tail -n 220 || true
+          echo '=== AppArmor bwrap denials during proof ==='
           sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor="DENIED".*(unpriv_bwrap|bwrap)' || true
 
-          if grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log"; then
-            echo BOUNDED_OVERLAY_CLEARED_CONTAINER_DEPLOY=NO
-          else
-            echo BOUNDED_OVERLAY_CLEARED_CONTAINER_DEPLOY=YES
-          fi
-
-          restore_policy
-          trap - EXIT INT TERM
-          echo '=== restored policy ==='
+          old_mount=0
+          old_overlay=0
+          grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
+          grep -Fq "'overlay' is not supported over tmpfs" "$out/probe.log" && old_overlay=1
+          echo "OLD_APPARMOR_MOUNT_FAILURE=$old_mount"
+          echo "OLD_FUSE_OVERLAY_FAILURE=$old_overlay"
+          test "$old_mount" -eq 0
+          test "$old_overlay" -eq 0
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
-          sha256sum "$POLICY"
