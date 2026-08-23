@@ -1,4 +1,4 @@
-name: Execute P1 privileged rootfs composer
+name: Execute P1 locked bootc rootfs correction
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ jobs:
         with:
           ref: proof/p1-first-light-final
           fetch-depth: 0
-      - name: Compose product-side privileged-rootfs correction
+      - name: Consume locked Fedora bootc filesystem directly
         shell: bash
         run: |
           set -euo pipefail
@@ -26,24 +26,37 @@ jobs:
 
           cf = Path('image/Containerfile')
           s = cf.read_text()
-          anchor = 'ARG PRIME_BASE_IMAGE\n'
-          if s.count(anchor) != 1:
-              raise SystemExit(f'Containerfile base arg count={s.count(anchor)}')
-          s = s.replace(anchor, anchor + 'ARG PRIME_ROOTFS_BUILDER_IMAGE\n', 1)
-          start_marker = 'FROM ${PRIME_BASE_IMAGE} AS rootfs-builder\n'
+          builder_arg = 'ARG PRIME_ROOTFS_BUILDER_IMAGE\n'
+          if s.count(builder_arg) != 1:
+              raise SystemExit(f'Containerfile rootfs builder arg count={s.count(builder_arg)}')
+          s = s.replace(builder_arg, '', 1)
+
+          start_marker = 'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder\n'
           end_marker = '\n# Reconstruct the Fedora root filesystem into a fresh image layer before sealing.\n'
           start = s.find(start_marker)
           end = s.find(end_marker, start)
           if start < 0 or end < 0:
               raise SystemExit('Containerfile rootfs-builder boundary missing')
           replacement = '\n'.join([
-              'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder', '', 'ARG TARGETARCH',
-              'RUN set -eux; \\', '    test "${TARGETARCH}" = "amd64"; \\',
-              '    test -x /target-rootfs/usr/sbin/bootc; \\',
-              '    test -x /target-rootfs/usr/bin/systemctl; \\',
-              '    test -f /target-rootfs/usr/lib/os-release', ''
+              'FROM ${PRIME_BASE_IMAGE} AS rootfs-builder',
+              '',
+              'ARG TARGETARCH',
+              'RUN set -eux; \\',
+              '    test "${TARGETARCH}" = "amd64"; \\',
+              "    grep -q '^ID=fedora$' /usr/lib/os-release; \\",
+              "    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \\",
+              '    test -x /usr/sbin/bootc; \\',
+              '    test -x /usr/bin/systemctl; \\',
+              '    test -f /usr/lib/os-release',
+              '',
           ])
-          cf.write_text(s[:start] + replacement + s[end:])
+          s = s[:start] + replacement + s[end:]
+          old_copy = 'COPY --from=rootfs-builder /target-rootfs/ /\n'
+          new_copy = 'COPY --from=rootfs-builder / /\n'
+          if s.count(old_copy) != 1:
+              raise SystemExit(f'Containerfile target-rootfs copy count={s.count(old_copy)}')
+          s = s.replace(old_copy, new_copy, 1)
+          cf.write_text(s)
 
           proof = Path('tools/prove-p1-local.sh')
           s = proof.read_text()
@@ -57,59 +70,43 @@ jobs:
               '  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true',
               '  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true',
               '  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true',
-              '}', '', 'ROOTFS_CONTAINER=""', 'ROOTFS_BUILDER_IMAGE=""',
-              'cleanup_rootfs_builder() {',
-              '  if [[ -n "$ROOTFS_CONTAINER" ]]; then',
-              '    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
-              '  fi',
-              '  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then',
-              '    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
-              '  fi', '}',
-              'cleanup_all() {', '  cleanup_nbd', '  cleanup_rootfs_builder', '}',
-              'trap cleanup_all EXIT', ''
+              '}',
+              'trap cleanup_nbd EXIT',
+              '',
           ])
           s = s[:cleanup_start] + cleanup + s[cleanup_end:]
 
-          build_anchor = 'log "Build provisional Prime bootc image"\n"${PODMAN[@]}" pull "$BASE_IMAGE"\n'
-          if s.count(build_anchor) != 1:
-              raise SystemExit(f'proof provisional anchor count={s.count(build_anchor)}')
-          privileged = '\n'.join([
-              'log "Build privileged Fedora rootfs substrate"',
+          build_start = s.find('log "Build privileged Fedora rootfs substrate"\n')
+          build_end_marker = '\nlog "Build provisional Prime bootc image"\n'
+          build_end = s.find(build_end_marker, build_start)
+          if build_start < 0 or build_end < 0:
+              raise SystemExit('proof privileged rootfs block boundary missing')
+          verify = '\n'.join([
+              'log "Verify locked Fedora bootc filesystem"',
               '"${PODMAN[@]}" pull "$BASE_IMAGE"',
-              'ROOTFS_CONTAINER="prime-p1-rootfs-${SOURCE_REVISION:0:12}"',
-              'ROOTFS_BUILDER_IMAGE="localhost/prime-p1-rootfs:${SOURCE_REVISION}"',
-              '"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
-              '"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
-              '"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \\',
-              '  --privileged \\', '  --security-opt label=disable \\',
-              '  --tmpfs /run \\', '  --tmpfs /tmp \\',
-              '  --entrypoint /bin/bash \\', '  "$BASE_IMAGE" \\', "  -ceu '",
-              '    rm -rf /target-rootfs',
-              '    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs',
-              '    test -x /target-rootfs/usr/sbin/bootc',
-              '    test -x /target-rootfs/usr/bin/systemctl',
-              '    test -f /target-rootfs/usr/lib/os-release', "  '",
-              '"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null',
-              '"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null', 'ROOTFS_CONTAINER=""',
-              '"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$ROOTFS_BUILDER_IMAGE" -ceu \\',
-              "  'test -x /target-rootfs/usr/sbin/bootc && test -x /target-rootfs/usr/bin/systemctl && test -f /target-rootfs/usr/lib/os-release'",
-              '', 'log "Build provisional Prime bootc image"', ''
+              '"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$BASE_IMAGE" -ceu \\',
+              "  'grep -q \"^ID=fedora$\" /usr/lib/os-release && grep -q \"^VERSION_ID=44$\" /usr/lib/os-release && test -x /usr/sbin/bootc && test -x /usr/bin/systemctl'",
+              '',
           ])
-          s = s.replace(build_anchor, privileged, 1)
-          build_arg = '  --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \\\n'
+          s = s[:build_start] + verify + s[build_end:]
+
+          build_arg = '  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \\\n'
           if s.count(build_arg) != 2:
-              raise SystemExit(f'proof base build-arg count={s.count(build_arg)}')
-          proof.write_text(s.replace(build_arg, build_arg + '  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \\\n'))
+              raise SystemExit(f'proof rootfs builder build-arg count={s.count(build_arg)}')
+          s = s.replace(build_arg, '')
+          proof.write_text(s)
           PY
 
           git diff --check
-          grep -F 'ARG PRIME_ROOTFS_BUILDER_IMAGE' image/Containerfile
-          grep -F 'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder' image/Containerfile
-          grep -F 'Build privileged Fedora rootfs substrate' tools/prove-p1-local.sh
-          test "$(grep -Fc -- '--build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE"' tools/prove-p1-local.sh)" -eq 2
+          grep -F 'FROM ${PRIME_BASE_IMAGE} AS rootfs-builder' image/Containerfile
+          grep -F 'COPY --from=rootfs-builder / /' image/Containerfile
+          ! grep -q 'PRIME_ROOTFS_BUILDER_IMAGE' image/Containerfile
+          ! grep -q 'bootc-base-imagectl build-rootfs' tools/prove-p1-local.sh
+          ! grep -q 'ROOTFS_BUILDER_IMAGE' tools/prove-p1-local.sh
+          grep -F 'Verify locked Fedora bootc filesystem' tools/prove-p1-local.sh
 
           git config user.name 'Prime P1 Composer'
           git config user.email 'prime-p1-composer@users.noreply.github.com'
           git add image/Containerfile tools/prove-p1-local.sh
-          git commit -m 'fix(p1): externalize privileged Fedora rootfs compose'
+          git commit -m 'fix(p1): consume locked Fedora bootc rootfs directly'
           git push origin HEAD:proof/p1-first-light-final
