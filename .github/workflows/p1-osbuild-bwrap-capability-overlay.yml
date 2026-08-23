@@ -1,0 +1,88 @@
+name: Prime P1 bounded bwrap capability overlay proof
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+    types: [reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  prove-overlay:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 8
+    env:
+      IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
+      POLICY: /etc/apparmor.d/bwrap-userns-restrict
+    steps:
+      - name: Load bounded temporary unpriv_bwrap capability policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGINAL_SHA="$(sha256sum "$POLICY" | awk '{print $1}')"
+          echo "ORIGINAL_POLICY_SHA256=$ORIGINAL_SHA"
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('/etc/apparmor.d/bwrap-userns-restrict').read_text()
+          needle = '  audit deny capability,\n'
+          if src.count(needle) != 1:
+              raise SystemExit(f'expected one blanket capability deny, found {src.count(needle)}')
+          replacement = '''  # Prime P1 proof-only bounded osbuild capability overlay.
+            allow capability chown,
+            allow capability setuid,
+            allow capability sys_admin,
+            allow capability audit_write,
+          '''
+          Path('/tmp/prime-bwrap-userns-restrict').write_text(src.replace(needle, replacement, 1))
+          PY
+          sudo -n apparmor_parser -r /tmp/prime-bwrap-userns-restrict
+          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
+
+      - name: Run exact image-builder through former failure boundary
+        shell: bash
+        run: |
+          set -u
+          restore_policy() {
+            sudo -n apparmor_parser -r "$POLICY" || true
+          }
+          trap restore_policy EXIT INT TERM
+
+          out=/var/tmp/prime-bwrap-capability-overlay-proof
+          sudo -n rm -rf "$out"
+          sudo -n mkdir -p "$out"
+          sudo -n chown "$(id -u):$(id -g)" "$out"
+          START="$(date '+%Y-%m-%d %H:%M:%S')"
+          set +e
+          timeout --signal=TERM 75s sudo -n podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            -v "$out:/output" \
+            "$IMAGE_BUILDER" \
+            --output-dir /output \
+            build \
+            --bootc-ref localhost/prime-os:p1 \
+            --bootc-default-fs ext4 \
+            --progress verbose \
+            qcow2 2>&1 | tee "$out/probe.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "IMAGE_BUILDER_RC=$rc"
+          echo '=== stage evidence ==='
+          grep -E 'org.osbuild.container-deploy|mount: /run/osbuild/containers/storage|permission denied|Operation not permitted|starting -Pipeline|Pipeline build|⏱|Duration:|Failed|Success|org.osbuild\.' "$out/probe.log" | tail -n 160 || true
+          echo '=== AppArmor denials during bounded overlay ==='
+          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor="DENIED".*(unpriv_bwrap|bwrap)' || true
+
+          if grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log"; then
+            echo BOUNDED_OVERLAY_CLEARED_CONTAINER_DEPLOY=NO
+          else
+            echo BOUNDED_OVERLAY_CLEARED_CONTAINER_DEPLOY=YES
+          fi
+
+          restore_policy
+          trap - EXIT INT TERM
+          echo '=== restored policy ==='
+          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
+          sha256sum "$POLICY"
