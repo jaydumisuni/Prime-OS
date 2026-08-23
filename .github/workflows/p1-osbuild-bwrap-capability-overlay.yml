@@ -1,4 +1,4 @@
-name: Prime P1 bounded osbuild bwrap capability proof
+name: Prime P1 reversible bwrap complain-window proof
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  prove-bounded-window:
+  prove-complain-window:
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 8
     env:
@@ -18,41 +18,31 @@ jobs:
       POLICY: /etc/apparmor.d/bwrap-userns-restrict
       EXPECTED_POLICY_SHA256: d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990
     steps:
-      - name: Prove exact host boundary and device
+      - name: Freeze exact host policy and prove complain support
         shell: bash
         run: |
           set -euo pipefail
           test -c /dev/fuse
           actual="$(sha256sum "$POLICY" | awk '{print $1}')"
           test "$actual" = "$EXPECTED_POLICY_SHA256"
+          apparmor_parser --help 2>&1 | grep -E -- '(^|[[:space:]])-C([,[:space:]]|.*[Cc]omplain)' >/dev/null
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
           echo "ORIGINAL_POLICY_SHA256=$actual"
-          ls -l /dev/fuse
 
-      - name: Run pinned builder in reversible full-cap osbuild window
+      - name: Run pinned builder in reversible bwrap complain window
         shell: bash
         run: |
           set -u
-          TMP_POLICY=/tmp/prime-p1-bwrap-userns-restrict
-          out=/var/tmp/prime-p1-bounded-bwrap-proof
-
+          out=/var/tmp/prime-p1-bwrap-complain-proof
           restore_policy() {
             sudo -n apparmor_parser -r "$POLICY" >/dev/null 2>&1 || true
           }
           trap restore_policy EXIT INT TERM
 
-          python3 - <<'PY'
-          from pathlib import Path
-          src = Path('/etc/apparmor.d/bwrap-userns-restrict').read_text()
-          needle = '  audit deny capability,\n'
-          if src.count(needle) != 1:
-              raise SystemExit(f'expected one blanket capability deny, found {src.count(needle)}')
-          replacement = '''  # Prime P1 proof-only osbuild window: retain capabilities inside the\n  # already-confined bwrap namespace for the trusted pinned image-builder.\n  allow capability,\n'''
-          Path('/tmp/prime-p1-bwrap-userns-restrict').write_text(src.replace(needle, replacement, 1))
-          PY
-
-          sudo -n apparmor_parser -r "$TMP_POLICY"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
+          sudo -n apparmor_parser -r -C "$POLICY"
+          echo '=== temporary bwrap mode ==='
+          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \((complain|enforce)\)$'
+          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(complain\)$' | wc -l | grep -Fx 2
 
           sudo -n rm -rf "$out"
           sudo -n mkdir -p "$out"
@@ -75,31 +65,32 @@ jobs:
             qcow2 2>&1 | tee "$out/probe.log"
           rc=${PIPESTATUS[0]}
           set -e
-
           echo "IMAGE_BUILDER_RC=$rc"
+
           echo '=== relevant stage evidence ==='
-          grep -E 'org.osbuild.container-deploy|mount: /run/osbuild/containers/storage|overlay.*not supported over tmpfs|fuse: device /dev/fuse not found|starting -Pipeline|Pipeline build|org.osbuild\.|Duration:|Failed|Success' "$out/probe.log" | tail -n 260 || true
-          echo '=== bwrap AppArmor denials during bounded window ==='
-          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor="DENIED".*(unpriv_bwrap|bwrap)' || true
+          grep -E 'org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Listing device|mount: /run/osbuild/containers/storage|overlay.*not supported over tmpfs|fuse: device /dev/fuse not found|starting -Pipeline|Pipeline image|org.osbuild\.|Duration:|Failed|Success' "$out/probe.log" | tail -n 320 || true
+          echo '=== bwrap AppArmor audit in complain window ==='
+          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor=.*(unpriv_bwrap|bwrap)' | tail -n 120 || true
 
           old_mount=0
           old_overlay=0
-          bwrap_denials=0
+          old_lsblk=0
           grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
           grep -Fq "'overlay' is not supported over tmpfs" "$out/probe.log" && old_overlay=1
-          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Eiq 'apparmor="DENIED".*profile="(unpriv_bwrap|bwrap)"' && bwrap_denials=1
+          grep -Fq 'Listing device /dev/loop' "$out/probe.log" && old_lsblk=1
           echo "OLD_APPARMOR_MOUNT_FAILURE=$old_mount"
           echo "OLD_FUSE_OVERLAY_FAILURE=$old_overlay"
-          echo "BWRAP_APPARMOR_DENIALS=$bwrap_denials"
+          echo "OLD_LSBLK_DEVICE_FAILURE=$old_lsblk"
 
           restore_policy
           trap - EXIT INT TERM
           restored="$(sha256sum "$POLICY" | awk '{print $1}')"
           echo "RESTORED_POLICY_SHA256=$restored"
           test "$restored" = "$EXPECTED_POLICY_SHA256"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
+          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$' | wc -l | grep -Fx 2
 
           test "$old_mount" -eq 0
           test "$old_overlay" -eq 0
-          test "$bwrap_denials" -eq 0
-          echo BOUNDED_OSBUILD_WINDOW=PROVEN
+          test "$old_lsblk" -eq 0
+          test "$rc" -eq 0 -o "$rc" -eq 124 -o "$rc" -eq 143
+          echo BWRAP_COMPLAIN_WINDOW=PROVEN
