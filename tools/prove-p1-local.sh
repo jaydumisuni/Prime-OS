@@ -244,7 +244,7 @@ log "Prove pinned image-builder nested mount authority"
   "$BUILDER_REF" -ceu '
     test "$(id -u)" -eq 0
     mkdir -p /run/osbuild/containers/storage
-    trap '''umount --lazy /run/osbuild/containers/storage >/dev/null 2>&1 || true''' EXIT
+    trap "umount --lazy /run/osbuild/containers/storage >/dev/null 2>&1 || true" EXIT
     mount --make-private -o rbind,rw,0755 /var/lib/containers/storage /run/osbuild/containers/storage
     findmnt -n /run/osbuild/containers/storage >/dev/null
   '
