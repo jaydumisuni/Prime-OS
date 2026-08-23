@@ -355,4 +355,7 @@ RUN set -eux; \
     test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
     test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
-    test -f /usr/lib/systemd/system/prime-recovery.service
+    test -f /usr/lib/systemd/system/prime-recovery.service; \
+    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-wal
