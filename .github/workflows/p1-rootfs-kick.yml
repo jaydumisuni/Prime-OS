@@ -17,7 +17,7 @@ jobs:
         with:
           ref: proof/p1-first-light-final
           fetch-depth: 0
-      - name: Compose exact privileged-rootfs correction
+      - name: Compose product-side privileged-rootfs correction
         shell: bash
         run: |
           set -euo pipefail
@@ -37,18 +37,13 @@ jobs:
           if start < 0 or end < 0:
               raise SystemExit('Containerfile rootfs-builder boundary missing')
           replacement = '\n'.join([
-              'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder',
-              '',
-              'ARG TARGETARCH',
-              'RUN set -eux; \\',
-              '    test "${TARGETARCH}" = "amd64"; \\',
+              'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder', '', 'ARG TARGETARCH',
+              'RUN set -eux; \\', '    test "${TARGETARCH}" = "amd64"; \\',
               '    test -x /target-rootfs/usr/sbin/bootc; \\',
               '    test -x /target-rootfs/usr/bin/systemctl; \\',
-              '    test -f /target-rootfs/usr/lib/os-release',
-              '',
+              '    test -f /target-rootfs/usr/lib/os-release', ''
           ])
-          s = s[:start] + replacement + s[end:]
-          cf.write_text(s)
+          cf.write_text(s[:start] + replacement + s[end:])
 
           proof = Path('tools/prove-p1-local.sh')
           s = proof.read_text()
@@ -62,24 +57,16 @@ jobs:
               '  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true',
               '  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true',
               '  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true',
-              '}',
-              '',
-              'ROOTFS_CONTAINER=""',
-              'ROOTFS_BUILDER_IMAGE=""',
+              '}', '', 'ROOTFS_CONTAINER=""', 'ROOTFS_BUILDER_IMAGE=""',
               'cleanup_rootfs_builder() {',
               '  if [[ -n "$ROOTFS_CONTAINER" ]]; then',
               '    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
               '  fi',
               '  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then',
               '    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
-              '  fi',
-              '}',
-              'cleanup_all() {',
-              '  cleanup_nbd',
-              '  cleanup_rootfs_builder',
-              '}',
-              'trap cleanup_all EXIT',
-              '',
+              '  fi', '}',
+              'cleanup_all() {', '  cleanup_nbd', '  cleanup_rootfs_builder', '}',
+              'trap cleanup_all EXIT', ''
           ])
           s = s[:cleanup_start] + cleanup + s[cleanup_end:]
 
@@ -94,47 +81,25 @@ jobs:
               '"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
               '"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
               '"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \\',
-              '  --privileged \\',
-              '  --security-opt label=disable \\',
-              '  --tmpfs /run \\',
-              '  --tmpfs /tmp \\',
-              '  --entrypoint /bin/bash \\',
-              '  "$BASE_IMAGE" \\',
-              "  -ceu '",
+              '  --privileged \\', '  --security-opt label=disable \\',
+              '  --tmpfs /run \\', '  --tmpfs /tmp \\',
+              '  --entrypoint /bin/bash \\', '  "$BASE_IMAGE" \\', "  -ceu '",
               '    rm -rf /target-rootfs',
               '    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs',
               '    test -x /target-rootfs/usr/sbin/bootc',
               '    test -x /target-rootfs/usr/bin/systemctl',
-              '    test -f /target-rootfs/usr/lib/os-release',
-              "  '",
+              '    test -f /target-rootfs/usr/lib/os-release', "  '",
               '"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null',
-              '"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null',
-              'ROOTFS_CONTAINER=""',
-              '"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$ROOTFS_BUILDER_IMAGE" -ceu \'',
+              '"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null', 'ROOTFS_CONTAINER=""',
+              '"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$ROOTFS_BUILDER_IMAGE" -ceu \\',
               "  'test -x /target-rootfs/usr/sbin/bootc && test -x /target-rootfs/usr/bin/systemctl && test -f /target-rootfs/usr/lib/os-release'",
-              '',
-              'log "Build provisional Prime bootc image"',
-              '',
+              '', 'log "Build provisional Prime bootc image"', ''
           ])
           s = s.replace(build_anchor, privileged, 1)
           build_arg = '  --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \\\n'
           if s.count(build_arg) != 2:
               raise SystemExit(f'proof base build-arg count={s.count(build_arg)}')
-          s = s.replace(build_arg, build_arg + '  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \\\n')
-          proof.write_text(s)
-
-          wf = Path('.github/workflows/p1-proof.yml')
-          s = wf.read_text()
-          old = '      - name: Run canonical Prime P1 proof\n        shell: bash\n        env:\n          BUILDAH_ISOLATION: chroot\n        run: |\n'
-          new = '      - name: Run canonical Prime P1 proof\n        shell: bash\n        run: |\n'
-          if s.count(old) != 1:
-              raise SystemExit(f'workflow chroot block count={s.count(old)}')
-          wf.write_text(s.replace(old, new, 1))
-
-          composer = Path('.github/workflows/p1-rootfs-compose.yml')
-          if not composer.exists():
-              raise SystemExit('proof composer artifact missing')
-          composer.unlink()
+          proof.write_text(s.replace(build_arg, build_arg + '  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \\\n'))
           PY
 
           git diff --check
@@ -142,11 +107,9 @@ jobs:
           grep -F 'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder' image/Containerfile
           grep -F 'Build privileged Fedora rootfs substrate' tools/prove-p1-local.sh
           test "$(grep -Fc -- '--build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE"' tools/prove-p1-local.sh)" -eq 2
-          ! grep -q 'BUILDAH_ISOLATION' .github/workflows/p1-proof.yml
-          test ! -e .github/workflows/p1-rootfs-compose.yml
 
           git config user.name 'Prime P1 Composer'
           git config user.email 'prime-p1-composer@users.noreply.github.com'
-          git add image/Containerfile tools/prove-p1-local.sh .github/workflows/p1-proof.yml .github/workflows/p1-rootfs-compose.yml
+          git add image/Containerfile tools/prove-p1-local.sh
           git commit -m 'fix(p1): externalize privileged Fedora rootfs compose'
           git push origin HEAD:proof/p1-first-light-final
