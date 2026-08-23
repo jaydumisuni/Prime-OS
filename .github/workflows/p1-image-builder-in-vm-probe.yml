@@ -1,0 +1,76 @@
+name: Prime P1 pinned image-builder in-vm probe
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  prove-in-vm:
+    if: github.event.pull_request.number == 85
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 10
+    env:
+      IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
+      EXPECTED_PRIME_REVISION: b64fc4c1080e45b0ff3a4d31056e67f24332e964
+    steps:
+      - name: Freeze exact local image and VM capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          test -c /dev/fuse
+          sudo -n podman image exists localhost/prime-os:p1
+          revision="$(sudo -n podman image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' localhost/prime-os:p1)"
+          echo "LOCAL_PRIME_REVISION=$revision"
+          test "$revision" = "$EXPECTED_PRIME_REVISION"
+          sudo -n podman run --rm "$IMAGE_BUILDER" build --help | grep -F -- '--in-vm'
+
+      - name: Run exact pinned builder through in-vm boundary
+        shell: bash
+        run: |
+          set -u
+          out=/var/tmp/prime-p1-image-builder-in-vm-probe
+          sudo -n rm -rf "$out"
+          sudo -n mkdir -p "$out"
+          sudo -n chown "$(id -u):$(id -g)" "$out"
+
+          set +e
+          timeout --signal=TERM 300s sudo -n podman run --rm \
+            --privileged \
+            --security-opt label=disable \
+            --device /dev/kvm:/dev/kvm \
+            --device /dev/fuse:/dev/fuse \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            -v "$out:/output" \
+            "$IMAGE_BUILDER" \
+            --output-dir /output \
+            build \
+            --in-vm \
+            --bootc-ref localhost/prime-os:p1 \
+            --bootc-default-fs ext4 \
+            --with-manifest \
+            --with-buildlog \
+            --progress verbose \
+            qcow2 2>&1 | tee "$out/probe.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "IMAGE_BUILDER_RC=$rc"
+
+          old_mount=0
+          old_lsblk=0
+          grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
+          grep -Fq 'Listing device /dev/loop' "$out/probe.log" && old_lsblk=1
+          echo "OLD_INNER_MOUNT_FAILURE=$old_mount"
+          echo "OLD_LSBLK_FAILURE=$old_lsblk"
+          grep -E 'Running osbuild in VM|org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Pipeline image|Success|Failed|error:' "$out/probe.log" | tail -n 180 || true
+
+          test "$old_mount" -eq 0
+          test "$old_lsblk" -eq 0
+          test "$rc" -eq 0
+          find "$out" -type f -name '*.qcow2' -print -quit | grep -q .
+          echo PINNED_IMAGE_BUILDER_IN_VM=PROVEN
