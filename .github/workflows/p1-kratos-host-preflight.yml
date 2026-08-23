@@ -1,0 +1,58 @@
+name: Prime P1 KRATOS Host Preflight
+
+on:
+  pull_request:
+    branches:
+      - construction/p1-kratos-host-preflight-base-20260823
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: a83ef5bf1560ac4f8075421904534ada4e97e0ed
+          fetch-depth: 0
+      - name: Recover canonical P1 proof-host prerequisites
+        shell: bash
+        run: |
+          set -u
+          echo "HOST=$(hostname)"
+          echo "ARCH=$(uname -m)"
+          cat /etc/os-release || true
+          failed=0
+          check_cmd() {
+            name="$1"; shift
+            if command -v "$name" >/dev/null 2>&1; then
+              printf 'PRESENT %-24s %s\n' "$name" "$(command -v "$name")"
+              "$@" 2>&1 | head -n 4 || true
+            else
+              printf 'MISSING %-24s\n' "$name"
+              failed=1
+            fi
+          }
+          check_cmd podman podman --version
+          check_cmd skopeo skopeo --version
+          check_cmd qemu-img qemu-img --version
+          check_cmd qemu-system-x86_64 qemu-system-x86_64 --version
+          check_cmd qemu-nbd qemu-nbd --version
+          check_cmd sgdisk sgdisk --version
+          check_cmd rustc rustc --version
+          check_cmd cargo cargo --version
+          if [ -e /dev/fuse ]; then ls -l /dev/fuse; echo FUSE_DEVICE=PASS; else echo FUSE_DEVICE=MISSING; failed=1; fi
+          if sudo -n true 2>/dev/null; then echo SUDO_NONINTERACTIVE=PASS; else echo SUDO_NONINTERACTIVE=FAIL; failed=1; fi
+          rust_version="$(rustc --version 2>/dev/null | awk '{print $2}' || true)"
+          if [ "$rust_version" = 1.97.1 ]; then echo RUST_1_97_1=PASS; else echo "RUST_1_97_1=FAIL actual=${rust_version:-missing}"; failed=1; fi
+          echo 'PACKAGE_MANAGER_START'
+          command -v apt-get || true
+          command -v dnf || true
+          command -v rpm || true
+          command -v dpkg-query || true
+          echo 'PACKAGE_MANAGER_END'
+          echo "PRIME_P1_KRATOS_HOST_PREFLIGHT_FAILED=$failed"
+          exit "$failed"
