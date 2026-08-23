@@ -76,12 +76,13 @@ log "Verify locked Fedora bootc filesystem"
 "${PODMAN[@]}" run --rm --entrypoint /bin/bash "$BASE_IMAGE" -ceu \
   'grep -q "^ID=fedora$" /usr/lib/os-release && grep -q "^VERSION_ID=44$" /usr/lib/os-release && test -x /usr/sbin/bootc && test -x /usr/bin/systemctl'
 
-log "Build provisional Prime bootc image"
+log "Build canonical sealed Prime rootfs"
 "${PODMAN[@]}" build \
   --cap-add=all \
   --device /dev/fuse \
   --security-opt label=disable \
   --platform linux/amd64 \
+  --target sealed-rootfs \
   --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \
   --build-arg PRIME_BASE_DIGEST="$BASE_DIGEST" \
   --build-arg TARGETARCH=amd64 \
@@ -90,20 +91,20 @@ log "Build provisional Prime bootc image"
   --build-arg PRIME_CREATED_AT="$CREATED_AT" \
   --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
   -f image/Containerfile \
-  -t localhost/prime-os:p1-provisional .
+  -t localhost/prime-os:p1-rootfs .
 
-log "Compute canonical OCI-storage Composefs digest"
+log "Compute canonical OCI-storage Composefs digest from sealed rootfs"
 CANONICAL_DIGEST="$("${PODMAN[@]}" run --rm \
   --privileged \
   --security-opt label=disable \
   --tmpfs /var/tmp:size=8g \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
-  localhost/prime-os:p1-provisional \
-  bootc container compute-composefs-digest-from-storage localhost/prime-os:p1-provisional | tail -n1)"
+  localhost/prime-os:p1-rootfs \
+  bootc container compute-composefs-digest-from-storage localhost/prime-os:p1-rootfs | tail -n1)"
 case "$CANONICAL_DIGEST" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) fail "invalid canonical Composefs digest: $CANONICAL_DIGEST" ;; esac
-printf 'canonical digest: %s\n' "$CANONICAL_DIGEST"
+printf 'sealed rootfs digest: %s\n' "$CANONICAL_DIGEST"
 
-log "Rebuild Prime with canonical normal and recovery UKI seals"
+log "Build Prime once with canonical normal and recovery UKI seals"
 "${PODMAN[@]}" build \
   --cap-add=all \
   --device /dev/fuse \
@@ -120,7 +121,7 @@ log "Rebuild Prime with canonical normal and recovery UKI seals"
   -f image/Containerfile \
   -t localhost/prime-os:p1 .
 
-log "Prove final OCI-storage digest equals both embedded UKI digests"
+log "Prove sealed-rootfs digest equals both embedded UKI digests"
 FINAL_DIGEST="$("${PODMAN[@]}" run --rm \
   --privileged \
   --security-opt label=disable \
@@ -128,6 +129,7 @@ FINAL_DIGEST="$("${PODMAN[@]}" run --rm \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   localhost/prime-os:p1 \
   bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
+case "$FINAL_DIGEST" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) fail "invalid final image storage digest: $FINAL_DIGEST" ;; esac
 UKI_DIGESTS="$("${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
   normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
   recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
@@ -142,10 +144,9 @@ NORMAL_EMBEDDED_DIGEST="$(printf '%s\n' "$UKI_DIGESTS" | sed -n '1p')"
 RECOVERY_EMBEDDED_DIGEST="$(printf '%s\n' "$UKI_DIGESTS" | sed -n '2p')"
 [[ -n "$NORMAL_EMBEDDED_DIGEST" ]] || fail "normal UKI Composefs digest missing"
 [[ -n "$RECOVERY_EMBEDDED_DIGEST" ]] || fail "recovery UKI Composefs digest missing"
-[[ "$FINAL_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "final storage digest changed after reseal"
-[[ "$NORMAL_EMBEDDED_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "normal UKI Composefs digest does not match canonical storage digest"
-[[ "$RECOVERY_EMBEDDED_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "recovery UKI Composefs digest does not match canonical storage digest"
-printf 'final digest:       %s\nnormal UKI digest:  %s\nrecovery UKI digest:%s\n' "$FINAL_DIGEST" "$NORMAL_EMBEDDED_DIGEST" "$RECOVERY_EMBEDDED_DIGEST"
+[[ "$NORMAL_EMBEDDED_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "normal UKI Composefs digest does not match sealed rootfs digest"
+[[ "$RECOVERY_EMBEDDED_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "recovery UKI Composefs digest does not match sealed rootfs digest"
+printf 'sealed rootfs digest: %s\nfinal image digest:   %s\nnormal UKI digest:    %s\nrecovery UKI digest:  %s\n' "$CANONICAL_DIGEST" "$FINAL_DIGEST" "$NORMAL_EMBEDDED_DIGEST" "$RECOVERY_EMBEDDED_DIGEST"
 
 log "Inspect final Prime image and recovery contract"
 "${PODMAN[@]}" run --rm \
@@ -171,6 +172,7 @@ log "Inspect final Prime image and recovery contract"
     test -f /usr/lib/bootc/install/10-prime.toml
     test -f /usr/lib/systemd/system/prime-recovery.service
     test -f /usr/lib/systemd/system/prime-recovery.target
+    test ! -e /kernel
     test -L /etc/systemd/system/multi-user.target.wants/primed.service
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer
     ! rpm -q bootupd >/dev/null 2>&1

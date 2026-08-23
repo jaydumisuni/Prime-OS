@@ -258,11 +258,20 @@ RUN set -eux; \
     bootc container split-kernel-and-rootfs --rootfs / --output /kernel; \
     test "$(find /kernel -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
 
+# This stage is the exact filesystem sealed by the UKIs. Kernel build
+# artifacts are kept only in `split` and are intentionally excluded from
+# the Composefs rootfs digest, matching bootc's documented sealing model.
+FROM split AS sealed-rootfs
+RUN set -eux; \
+    rm -rf /kernel; \
+    test ! -e /kernel; \
+    ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
+
 FROM rootfs AS uki-tools
 ARG PRIME_COMPOSEFS_DIGEST
 COPY image/scripts/prepare-uki-cmdlines.py /tmp/prepare-uki-cmdlines.py
 COPY image/scripts/check-uki-contract.py /tmp/check-uki-contract.py
-RUN --mount=type=bind,from=split,target=/target,ro \
+RUN --mount=type=bind,from=sealed-rootfs,target=/target,ro \
     --mount=type=bind,from=split,source=/kernel,target=/kernel,ro \
     set -eux; \
     mkdir -p /out; \
@@ -330,12 +339,13 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     test "$(find /out -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
     test "$(find /out -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1
 
-FROM split AS final
+FROM sealed-rootfs AS final
 COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
 
 RUN set -eux; \
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \
+    test ! -e /kernel; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
     ! rpm -q bootupd >/dev/null 2>&1; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
