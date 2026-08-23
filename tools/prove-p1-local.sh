@@ -227,9 +227,30 @@ log "Inspect final Prime image and recovery contract"
 log "Prove pinned image-builder sees unified Prime image"
 "${PODMAN[@]}" pull "$BUILDER_REF"
 "${PODMAN[@]}" run --rm "$BUILDER_REF" version
+BUILDER_RUN_ARGS=(
+  --privileged
+  --user 0:0
+  --userns=host
+  --cap-add=SYS_ADMIN
+  --cap-add=MKNOD
+  --security-opt label=disable
+)
+
+log "Prove pinned image-builder nested mount authority"
 "${PODMAN[@]}" run --rm \
-  --privileged \
-  --security-opt label=disable \
+  "${BUILDER_RUN_ARGS[@]}" \
+  -v /var/lib/containers/storage:/var/lib/containers/storage \
+  --entrypoint /bin/bash \
+  "$BUILDER_REF" -ceu '
+    test "$(id -u)" -eq 0
+    mkdir -p /run/osbuild/containers/storage
+    trap '''umount --lazy /run/osbuild/containers/storage >/dev/null 2>&1 || true''' EXIT
+    mount --make-private -o rbind,rw,0755 /var/lib/containers/storage /run/osbuild/containers/storage
+    findmnt -n /run/osbuild/containers/storage >/dev/null
+  '
+
+"${PODMAN[@]}" run --rm \
+  "${BUILDER_RUN_ARGS[@]}" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   "$BUILDER_REF" \
   bootc inspect --ref localhost/prime-os:p1 --format json > "$RUN_DIR/prime-image-builder-inspect.json"
@@ -239,8 +260,7 @@ log "Build Prime QCOW2"
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 "${PODMAN[@]}" run --rm \
-  --privileged \
-  --security-opt label=disable \
+  "${BUILDER_RUN_ARGS[@]}" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   -v "$OUTPUT_DIR:/output" \
   "$BUILDER_REF" \
