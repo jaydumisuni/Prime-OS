@@ -45,6 +45,8 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run canonical Prime P1 proof
         shell: bash
+        env:
+          BUILDAH_ISOLATION: chroot
         run: |
           set -euo pipefail
           chmod +x tools/prove-p1-local.sh
