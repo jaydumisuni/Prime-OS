@@ -1,4 +1,4 @@
-name: Kick P1 privileged rootfs composer
+name: Execute P1 privileged rootfs composer
 
 on:
   pull_request:
@@ -10,18 +10,33 @@ permissions:
   contents: write
 
 jobs:
-  kick:
+  compose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           ref: proof/p1-first-light-final
           fetch-depth: 0
-      - name: Trigger composer with no-tree-change commit
+      - name: Execute repository-backed composer
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'Prime P1 Composer Trigger'
-          git config user.email 'prime-p1-trigger@users.noreply.github.com'
-          git commit --allow-empty -m 'chore(p1): trigger privileged rootfs composer'
-          git push origin HEAD:proof/p1-first-light-final
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/p1-rootfs-compose.yml')
+          lines = workflow.read_text().splitlines()
+          anchors = [i for i, line in enumerate(lines) if line == '        run: |']
+          if len(anchors) != 1:
+              raise SystemExit(f'composer run block count={len(anchors)}')
+          body = []
+          for line in lines[anchors[0] + 1:]:
+              if line and not line.startswith('          '):
+                  break
+              body.append(line[10:] if line.startswith('          ') else '')
+          script = Path('/tmp/prime-p1-rootfs-compose.sh')
+          script.write_text('\n'.join(body) + '\n')
+          if 'Compose exact rootfs privilege correction' not in workflow.read_text():
+              raise SystemExit('composer identity missing')
+          PY
+          bash /tmp/prime-p1-rootfs-compose.sh
