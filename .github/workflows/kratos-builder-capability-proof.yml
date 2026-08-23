@@ -1,0 +1,62 @@
+name: Kratos Builder Capability Proof
+
+on:
+  push:
+    branches:
+      - build/p1-first-light
+    paths:
+      - .github/workflows/kratos-builder-capability-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 15
+    steps:
+      - name: Prove outer Podman and nested mount boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILDER='ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b'
+
+          echo '== host rootful Podman authority =='
+          sudo -n podman info --format '{{.Host.Security.Rootless}} {{.Host.Security.SeccompEnabled}} {{.Host.Security.SelinuxEnabled}} {{.Host.Security.ApparmorEnabled}}'
+
+          probe() {
+            name="$1"
+            shift
+            echo "== ${name} =="
+            set +e
+            sudo -n podman run --rm \
+              --privileged \
+              --security-opt label=disable \
+              "$@" \
+              -v /var/lib/containers/storage:/var/lib/containers/storage \
+              --entrypoint /bin/bash \
+              "$BUILDER" -ceu '
+                id
+                grep -E "^(CapInh|CapPrm|CapEff|CapBnd|NoNewPrivs):" /proc/self/status
+                mkdir -p /run/osbuild/containers/storage
+                mount --make-private -o rbind,rw,0755 /var/lib/containers/storage /run/osbuild/containers/storage
+                findmnt /run/osbuild/containers/storage
+                umount --lazy /run/osbuild/containers/storage
+              '
+            rc=$?
+            set -e
+            printf '%s_RC=%s\n' "$name" "$rc"
+            return "$rc"
+          }
+
+          current_rc=0
+          probe CURRENT || current_rc=$?
+          explicit_rc=0
+          probe EXPLICIT --user 0:0 --userns=host --cap-add=SYS_ADMIN --cap-add=MKNOD || explicit_rc=$?
+
+          echo "CURRENT_RC=$current_rc"
+          echo "EXPLICIT_RC=$explicit_rc"
+
+          # This workflow is evidence, not a workaround: at least one invocation
+          # must prove the nested bind mount before the product proof is changed.
+          test "$current_rc" -eq 0 || test "$explicit_rc" -eq 0
