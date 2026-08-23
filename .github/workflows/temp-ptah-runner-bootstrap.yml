@@ -1,0 +1,93 @@
+name: TEMP Ptah Runner Bootstrap from KRATOS
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/temp-ptah-runner-bootstrap.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: [self-hosted, kratos]
+    timeout-minutes: 10
+    steps:
+      - name: Install KRATOS Ptah runner and temporary Oracle bootstrap runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,shutil,subprocess,tarfile,tempfile,time,urllib.request
+
+          def run(a,cwd=None,t=120,check=True):
+              r=subprocess.run(a,cwd=cwd,text=True,capture_output=True,timeout=t)
+              if check and r.returncode != 0:
+                  raise RuntimeError(json.dumps({'cmd':a[0],'rc':r.returncode,'stdout':r.stdout[-6000:],'stderr':r.stderr[-6000:]}))
+              return r
+
+          def gh_json(args,t=45):
+              return json.loads(run(['gh']+args,t=t).stdout)
+
+          run(['gh','auth','status','--hostname','github.com'],t=30)
+
+          def install(repo, root_s, name, labels, unit_name):
+              root=pathlib.Path(root_s)
+              unit=pathlib.Path('/home/kratos/.config/systemd/user')/unit_name
+              root.mkdir(parents=True,exist_ok=True)
+              run(['systemctl','--user','stop',unit_name],t=30,check=False)
+              if (root/'.runner').exists():
+                  try:
+                      tok=gh_json(['api','-X','POST',f'repos/{repo}/actions/runners/remove-token'])['token']
+                      run([str(root/'config.sh'),'remove','--unattended','--token',tok],cwd=root,t=90,check=False)
+                  except Exception:
+                      pass
+              downloads=gh_json(['api',f'repos/{repo}/actions/runners/downloads'])
+              pkg=next((x for x in downloads if str(x.get('os','')).lower()=='linux' and str(x.get('architecture','')).lower()=='x64'),None)
+              assert pkg, downloads
+              marker=root/'.runner-package.json'
+              current={}
+              if marker.exists():
+                  try: current=json.loads(marker.read_text())
+                  except Exception: current={}
+              if not (root/'config.sh').is_file() or current.get('filename')!=pkg.get('filename') or current.get('sha256_checksum')!=pkg.get('sha256_checksum'):
+                  for p in list(root.iterdir()):
+                      if p.name=='_work': continue
+                      if p.is_dir(): shutil.rmtree(p)
+                      else: p.unlink()
+                  with tempfile.TemporaryDirectory() as td:
+                      archive=pathlib.Path(td)/pkg['filename']
+                      urllib.request.urlretrieve(pkg['download_url'],archive)
+                      actual=hashlib.sha256(archive.read_bytes()).hexdigest().lower()
+                      expected=str(pkg.get('sha256_checksum','')).lower().removeprefix('sha256:')
+                      assert expected and actual==expected,(actual,expected)
+                      with tarfile.open(archive,'r:gz') as tf: tf.extractall(root)
+                  marker.write_text(json.dumps({'filename':pkg['filename'],'sha256_checksum':pkg['sha256_checksum'],'download_url':pkg['download_url']},indent=2)+'\n')
+              reg=gh_json(['api','-X','POST',f'repos/{repo}/actions/runners/registration-token'])['token']
+              assert reg and len(reg)>20
+              run([str(root/'config.sh'),'--unattended','--url',f'https://github.com/{repo}','--token',reg,'--name',name,'--labels',labels,'--work','_work','--replace'],cwd=root,t=150)
+              unit.parent.mkdir(parents=True,exist_ok=True)
+              unit.write_text(f'''[Unit]\nDescription=GitHub Actions Runner {name}\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={root}\nExecStart={root}/run.sh\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n''')
+              run(['systemctl','--user','daemon-reload'],t=30)
+              run(['systemctl','--user','enable','--now',unit_name],t=30)
+              runner=None
+              for _ in range(25):
+                  data=gh_json(['api',f'repos/{repo}/actions/runners'])
+                  runner=next((x for x in data.get('runners',[]) if x.get('name')==name),None)
+                  if runner and runner.get('status')=='online': break
+                  time.sleep(2)
+              assert runner and runner.get('status')=='online',runner
+              state=run(['systemctl','--user','show',unit_name,'-p','ActiveState','-p','SubState','-p','Result','-p','MainPID','--no-pager'],t=30).stdout.strip()
+              assert 'ActiveState=active' in state and 'SubState=running' in state,state
+              return {'repo':repo,'root':str(root),'service':state,'runner':runner}
+
+          out={}
+          out['ptah']=install('jaydumisuni/Ptah-space','/home/kratos/.local/share/github-actions-runner/Ptah-space','KRATOS-PTAH','kratos,linux,x64,physical,ptah','ptah-actions-runner.service')
+          out['oracleBootstrap']=install('jaydumisuni/Oracle-','/home/kratos/.local/share/github-actions-runner/Oracle-Ptah-Bootstrap','KRATOS-ORACLE-BOOTSTRAP','kratos,oracle-bootstrap,ptah-bootstrap','oracle-ptah-bootstrap-actions-runner.service')
+          linger=run(['loginctl','show-user','kratos','-p','Linger','--value'],t=20,check=False).stdout.strip()
+          if linger.lower()!='yes':
+              run(['sudo','-n','loginctl','enable-linger','kratos'],t=20,check=False)
+          out['linger']=run(['loginctl','show-user','kratos','-p','Linger','--value'],t=20,check=False).stdout.strip()
+          print(json.dumps(out,indent=2))
+          PY
