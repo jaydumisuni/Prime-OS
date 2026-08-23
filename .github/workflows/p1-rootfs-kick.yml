@@ -1,4 +1,4 @@
-name: Diagnose P1 Composefs reseal delta
+name: Execute P1 deterministic rpmdb seal correction
 
 on:
   pull_request:
@@ -7,53 +7,40 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
-    runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 20
+  compose:
+    runs-on: ubuntu-latest
     steps:
-      - name: Diff bootc Composefs dumpfiles from persisted proof images
+      - uses: actions/checkout@v6
+        with:
+          ref: proof/p1-first-light-final
+          fetch-depth: 0
+      - name: Normalize transient RPM SQLite sidecars before Composefs seal
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n podman image exists localhost/prime-os:p1-provisional
-          sudo -n podman image exists localhost/prime-os:p1
-          GRAPHROOT="$(sudo -n podman info --format '{{.Store.GraphRoot}}')"
-          WORK="$(mktemp -d /var/tmp/prime-p1-composefs-diag.XXXXXX)"
-          cleanup() { sudo -n rm -rf "$WORK"; }
-          trap cleanup EXIT
+          python3 - <<'PY'
+          from pathlib import Path
 
-          provisional_digest="$(sudo -n podman run --rm --privileged \
-            --security-opt label=disable \
-            --tmpfs /var/tmp:size=8g \
-            -v "$GRAPHROOT:$GRAPHROOT" \
-            -v "$WORK:/diag" \
-            localhost/prime-os:p1 \
-            bootc container compute-composefs-digest-from-storage \
-              --write-dumpfile-to /diag/provisional.dump \
-              localhost/prime-os:p1-provisional | tail -n1)"
+          cf = Path('image/Containerfile')
+          s = cf.read_text()
+          anchor = '    test -f /usr/lib/systemd/system/prime-recovery.target; \\\n    test -f /usr/lib/systemd/system/prime-recovery.service\n'
+          replacement = '    test -f /usr/lib/systemd/system/prime-recovery.target; \\\n    test -f /usr/lib/systemd/system/prime-recovery.service; \\\n    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \\\n    test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \\\n    test ! -e /usr/share/rpm/rpmdb.sqlite-wal\n'
+          if s.count(anchor) != 1:
+              raise SystemExit(f'final seal anchor count={s.count(anchor)}')
+          cf.write_text(s.replace(anchor, replacement, 1))
+          PY
 
-          final_digest="$(sudo -n podman run --rm --privileged \
-            --security-opt label=disable \
-            --tmpfs /var/tmp:size=8g \
-            -v "$GRAPHROOT:$GRAPHROOT" \
-            -v "$WORK:/diag" \
-            localhost/prime-os:p1 \
-            bootc container compute-composefs-digest-from-storage \
-              --write-dumpfile-to /diag/final.dump \
-              localhost/prime-os:p1 | tail -n1)"
+          git diff --check
+          test "$(grep -Fc 'rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal' image/Containerfile)" -eq 1
+          test "$(grep -Fc 'test ! -e /usr/share/rpm/rpmdb.sqlite-shm' image/Containerfile)" -eq 1
+          test "$(grep -Fc 'test ! -e /usr/share/rpm/rpmdb.sqlite-wal' image/Containerfile)" -eq 1
+          git diff -- image/Containerfile
 
-          printf 'PROVISIONAL_DIGEST=%s\nFINAL_DIGEST=%s\n' "$provisional_digest" "$final_digest"
-          test "$provisional_digest" != "$final_digest"
-          sudo -n chown "$(id -u):$(id -g)" "$WORK/provisional.dump" "$WORK/final.dump"
-          printf '%s\n' '--- dumpfile metadata ---'
-          wc -l "$WORK/provisional.dump" "$WORK/final.dump"
-          sha256sum "$WORK/provisional.dump" "$WORK/final.dump"
-          printf '%s\n' '--- changed composefs entries ---'
-          diff -u "$WORK/provisional.dump" "$WORK/final.dump" > "$WORK/diff.txt" || true
-          test -s "$WORK/diff.txt"
-          grep -E '^[+-][^+-]|/boot|EFI/Linux|composefs|usr/lib/modules' "$WORK/diff.txt" | head -n 300 || true
-          printf '%s\n' '--- complete diff tail ---'
-          tail -n 120 "$WORK/diff.txt"
+          git config user.name 'Prime P1 Composer'
+          git config user.email 'prime-p1-composer@users.noreply.github.com'
+          git add image/Containerfile
+          git commit -m 'fix(p1): normalize transient rpmdb seal state'
+          git push origin HEAD:proof/p1-first-light-final
