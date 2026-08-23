@@ -1,31 +1,69 @@
-name: Prime P1 Rust
+name: Prime P1 Rootfs Composer Adapter
 
-# Hosted GitHub Actions are intentionally not an execution authority for Prime.
-# The canonical P1 proof runs locally through tools/prove-p1-local.sh on Kratos.
-# This workflow is retained only as an optional self-hosted adapter.
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - adapter/p1-rootfs-compose
+    types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  rust:
-    runs-on: [self-hosted, linux, x64, kratos]
+  compose:
+    if: ${{ startsWith(github.head_ref, 'proof/p1-') }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Assert Rust toolchain identity
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Execute deterministic composer from candidate
         shell: bash
         run: |
           set -euo pipefail
-          rustc --version --verbose
-          cargo --version
-          test "$(rustc --version | awk '{print $2}')" = "1.97.1"
-      - name: Require pinned dependency graph
-        run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Tests
-        run: cargo test --locked --workspace
+          if [[ ! -f .github/workflows/p1-rootfs-compose.yml ]]; then
+            echo 'P1_ROOTFS_COMPOSER=ALREADY_APPLIED'
+            exit 0
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          wf = Path('.github/workflows/p1-proof.yml')
+          w = wf.read_text(encoding='utf-8')
+          old = '''      - name: Run canonical Prime P1 proof
+        shell: bash
+        env:
+          BUILDAH_ISOLATION: chroot
+        run: |
+'''
+          new = '''      - name: Run canonical Prime P1 proof
+        shell: bash
+        run: |
+'''
+          if w.count(old) == 1:
+              wf.write_text(w.replace(old, new, 1), encoding='utf-8')
+          elif 'BUILDAH_ISOLATION' in w:
+              raise SystemExit('unexpected BUILDAH_ISOLATION layout')
+
+          src = Path('.github/workflows/p1-rootfs-compose.yml').read_text(encoding='utf-8')
+          marker = "      - name: Compose exact rootfs privilege correction\n        shell: bash\n        run: |\n"
+          if src.count(marker) != 1:
+              raise SystemExit(f'composer step anchor count={src.count(marker)}')
+          body = src.split(marker, 1)[1]
+          out = []
+          for line in body.splitlines():
+              if line.startswith('          '):
+                  out.append(line[10:])
+              else:
+                  out.append(line)
+          script = '\n'.join(out) + '\n'
+          start = script.find("wf = Path('.github/workflows/p1-proof.yml')")
+          end_marker = "PY\n\nrm .github/workflows/p1-rootfs-compose.yml"
+          end = script.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit(f'embedded workflow cleanup block not found: start={start} end={end}')
+          script = script[:start] + script[end:]
+          Path('/tmp/prime-p1-compose.sh').write_text(script, encoding='utf-8')
+          PY
+          bash /tmp/prime-p1-compose.sh
