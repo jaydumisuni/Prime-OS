@@ -33,28 +33,36 @@ jobs:
           host_sha="$(sha256sum "$ALT_BWRAP" | awk '{print $1}')"
           test "$host_sha" = "$image_sha"
           echo "PINNED_BWRAP_SHA256=$host_sha"
+          echo '=== host fuse ==='
+          ls -l /dev/fuse || true
+          stat /dev/fuse || true
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
 
-      - name: Prove alternate path and fuse are visible inside builder
+      - name: Prove osbuild path and fuse are visible inside builder
         shell: bash
         run: |
           set -euo pipefail
           ALT_BWRAP=/var/tmp/prime-p1-image-builder-bwrap
-          test -c /dev/fuse
           sudo -n podman run --rm \
             --privileged \
             --security-opt label=disable \
-            --device /dev/fuse \
+            --device /dev/fuse:/dev/fuse \
             -v "$ALT_BWRAP:/usr/sbin/bwrap:ro" \
             --entrypoint /bin/bash \
             "$IMAGE_BUILDER" -ceu '
-              test -x /usr/sbin/bwrap
-              test -c /dev/fuse
-              test "$(command -v bwrap)" = /usr/sbin/bwrap
-              echo "BWRAP_RESOLVED=$(command -v bwrap)"
+              echo "DEFAULT_PATH=$PATH"
+              echo "DEFAULT_BWRAP=$(command -v bwrap || true)"
+              echo "OSBUILD_PATH_BWRAP=$(PATH=/usr/sbin:/usr/bin command -v bwrap || true)"
+              echo "--- files ---"
+              ls -l /usr/sbin/bwrap /usr/bin/bwrap /dev/fuse || true
+              stat /dev/fuse || true
               echo -n "OUTER_SECURITY_ATTR="
               cat /proc/self/attr/current 2>/dev/null || true
+              test -x /usr/sbin/bwrap
+              test "$(PATH=/usr/sbin:/usr/bin command -v bwrap)" = /usr/sbin/bwrap
+              test -e /dev/fuse
               /usr/sbin/bwrap --version
+              echo TRANSPORT_PREFLIGHT=PASS
             '
 
       - name: Run exact image-builder through container-deploy with host AppArmor enforced
@@ -71,7 +79,7 @@ jobs:
           timeout --signal=TERM 75s sudo -n podman run --rm \
             --privileged \
             --security-opt label=disable \
-            --device /dev/fuse \
+            --device /dev/fuse:/dev/fuse \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v "$ALT_BWRAP:/usr/sbin/bwrap:ro" \
             -v "$out:/output" \
