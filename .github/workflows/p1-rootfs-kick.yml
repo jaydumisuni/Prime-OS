@@ -1,0 +1,27 @@
+name: Kick P1 privileged rootfs composer
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-rootfs-compose-v2
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: proof/p1-first-light-final
+          fetch-depth: 0
+      - name: Trigger composer with no-tree-change commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Prime P1 Composer Trigger'
+          git config user.email 'prime-p1-trigger@users.noreply.github.com'
+          git commit --allow-empty -m 'chore(p1): trigger privileged rootfs composer'
+          git push origin HEAD:proof/p1-first-light-final
