@@ -33,7 +33,7 @@ jobs:
           git merge-base --is-ancestor 872b46658863ba0694bd0de017e1a8491047ffa2 HEAD
           test "$(git rev-parse --abbrev-ref HEAD)" = "build/p1-shell-principal-20260822"
 
-      - name: Correct construction helper literal
+      - name: Correct construction helper literals
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +45,12 @@ jobs:
           new='Socket possession alone is not execution authorization.'
           if old not in s:
               raise SystemExit('construction helper correction target missing')
-          p.write_text(s.replace(old,new))
+          s=s.replace(old,new)
+          old_helper='''    if text.count(old) != 1:\n        raise SystemExit(f"{path}: expected exactly one replacement target, got {text.count(old)}")\n    p.write_text(text.replace(old, new, 1))\n'''
+          new_helper='''    count = text.count(old)\n    two_stage_target = (\n        path == "image/Containerfile"\n        and old == "    test -f /usr/lib/systemd/system/prime-recovery.target; \\\\\\n"\n    )\n    expected = 2 if two_stage_target else 1\n    if count != expected:\n        raise SystemExit(\n            f"{path}: expected exactly {expected} replacement target(s), got {count}"\n        )\n    p.write_text(text.replace(old, new, expected))\n'''
+          if old_helper not in s:
+              raise SystemExit('replace_once helper target missing')
+          p.write_text(s.replace(old_helper,new_helper,1))
           PY
 
       - name: Build P1 Shell control seam
@@ -62,6 +67,7 @@ jobs:
           grep -F 'chown(socket_path, None, Some(shell_gid))?' crates/primed/src/server.rs
           grep -F 'if !native_launch_authorized(peer_uid, peer_gid, shell_gid)' crates/primed/src/server.rs
           grep -F 'if peer_uid != 0' crates/primed/src/server.rs >/dev/null
+          test "$(grep -Fc 'Prime Shell service principal' image/Containerfile)" -eq 2
 
       - name: Install frozen Rust toolchain
         shell: bash
