@@ -23,24 +23,23 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import textwrap
 
           workflow = Path('.github/workflows/p1-rootfs-compose.yml')
           text = workflow.read_text()
-          lines = text.splitlines()
-          anchors = [i for i, line in enumerate(lines) if line == '        run: |']
-          if not anchors:
+          marker = '        run: |\n'
+          pos = text.find(marker)
+          if pos < 0:
               raise SystemExit('composer run block missing')
-          start = anchors[0]
-          body = []
-          for line in lines[start + 1:]:
-              if line and not line.startswith('          '):
-                  break
-              body.append(line[10:] if line.startswith('          ') else '')
+          body = text[pos + len(marker):]
           script = Path('/tmp/prime-p1-rootfs-compose.sh')
-          script.write_text('\n'.join(body) + '\n')
+          script.write_text(textwrap.dedent(body))
+          extracted = script.read_text()
           if 'Compose exact rootfs privilege correction' not in text:
               raise SystemExit('composer identity missing')
-          if 'git push origin HEAD:proof/p1-first-light-final' not in script.read_text():
+          if 'git push origin HEAD:proof/p1-first-light-final' not in extracted:
               raise SystemExit('composer push authority missing')
+          if 'fix(p1): externalize privileged Fedora rootfs compose' not in extracted:
+              raise SystemExit('composer commit identity missing')
           PY
           bash /tmp/prime-p1-rootfs-compose.sh
