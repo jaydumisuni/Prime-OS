@@ -36,15 +36,17 @@ jobs:
           end = s.find(end_marker, start)
           if start < 0 or end < 0:
               raise SystemExit('Containerfile rootfs-builder boundary missing')
-          replacement = '''FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder
-
-ARG TARGETARCH
-RUN set -eux; \\
-    test "${TARGETARCH}" = "amd64"; \\
-    test -x /target-rootfs/usr/sbin/bootc; \\
-    test -x /target-rootfs/usr/bin/systemctl; \\
-    test -f /target-rootfs/usr/lib/os-release
-'''
+          replacement = '\n'.join([
+              'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder',
+              '',
+              'ARG TARGETARCH',
+              'RUN set -eux; \\',
+              '    test "${TARGETARCH}" = "amd64"; \\',
+              '    test -x /target-rootfs/usr/sbin/bootc; \\',
+              '    test -x /target-rootfs/usr/bin/systemctl; \\',
+              '    test -f /target-rootfs/usr/lib/os-release',
+              '',
+          ])
           s = s[:start] + replacement + s[end:]
           cf.write_text(s)
 
@@ -54,65 +56,66 @@ RUN set -eux; \\
           cleanup_end = s.find('\nlog "P1 local proof preflight"\n', cleanup_start)
           if cleanup_start < 0 or cleanup_end < 0:
               raise SystemExit('proof cleanup boundary missing')
-          cleanup = '''cleanup_nbd() {
-  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true
-  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true
-  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
-  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-}
-
-ROOTFS_CONTAINER=""
-ROOTFS_BUILDER_IMAGE=""
-cleanup_rootfs_builder() {
-  if [[ -n "$ROOTFS_CONTAINER" ]]; then
-    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then
-    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
-  fi
-}
-cleanup_all() {
-  cleanup_nbd
-  cleanup_rootfs_builder
-}
-trap cleanup_all EXIT
-'''
+          cleanup = '\n'.join([
+              'cleanup_nbd() {',
+              '  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true',
+              '  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true',
+              '  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true',
+              '  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true',
+              '}',
+              '',
+              'ROOTFS_CONTAINER=""',
+              'ROOTFS_BUILDER_IMAGE=""',
+              'cleanup_rootfs_builder() {',
+              '  if [[ -n "$ROOTFS_CONTAINER" ]]; then',
+              '    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
+              '  fi',
+              '  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then',
+              '    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
+              '  fi',
+              '}',
+              'cleanup_all() {',
+              '  cleanup_nbd',
+              '  cleanup_rootfs_builder',
+              '}',
+              'trap cleanup_all EXIT',
+              '',
+          ])
           s = s[:cleanup_start] + cleanup + s[cleanup_end:]
 
           build_anchor = 'log "Build provisional Prime bootc image"\n"${PODMAN[@]}" pull "$BASE_IMAGE"\n'
           if s.count(build_anchor) != 1:
               raise SystemExit(f'proof provisional anchor count={s.count(build_anchor)}')
-          privileged = '''log "Build privileged Fedora rootfs substrate"
-"${PODMAN[@]}" pull "$BASE_IMAGE"
-ROOTFS_CONTAINER="prime-p1-rootfs-${SOURCE_REVISION:0:12}"
-ROOTFS_BUILDER_IMAGE="localhost/prime-p1-rootfs:${SOURCE_REVISION}"
-"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
-"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
-"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \\
-  --privileged \\
-  --security-opt label=disable \\
-  --tmpfs /run \\
-  --tmpfs /tmp \\
-  "$BASE_IMAGE" \\
-  /bin/bash -ceu '\''
-    rm -rf /target-rootfs
-    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs
-    test -x /target-rootfs/usr/sbin/bootc
-    test -x /target-rootfs/usr/bin/systemctl
-    test -f /target-rootfs/usr/lib/os-release
-  '\''
-"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null
-"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null
-ROOTFS_CONTAINER=""
-"${PODMAN[@]}" run --rm "$ROOTFS_BUILDER_IMAGE" \\
-  /bin/bash -ceu '\''
-    test -x /target-rootfs/usr/sbin/bootc
-    test -x /target-rootfs/usr/bin/systemctl
-    test -f /target-rootfs/usr/lib/os-release
-  '\''
-
-log "Build provisional Prime bootc image"
-'''
+          privileged = '\n'.join([
+              'log "Build privileged Fedora rootfs substrate"',
+              '"${PODMAN[@]}" pull "$BASE_IMAGE"',
+              'ROOTFS_CONTAINER="prime-p1-rootfs-${SOURCE_REVISION:0:12}"',
+              'ROOTFS_BUILDER_IMAGE="localhost/prime-p1-rootfs:${SOURCE_REVISION}"',
+              '"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true',
+              '"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true',
+              '"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \\',
+              '  --privileged \\',
+              '  --security-opt label=disable \\',
+              '  --tmpfs /run \\',
+              '  --tmpfs /tmp \\',
+              '  --entrypoint /bin/bash \\',
+              '  "$BASE_IMAGE" \\',
+              "  -ceu '",
+              '    rm -rf /target-rootfs',
+              '    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs',
+              '    test -x /target-rootfs/usr/sbin/bootc',
+              '    test -x /target-rootfs/usr/bin/systemctl',
+              '    test -f /target-rootfs/usr/lib/os-release',
+              "  '",
+              '"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null',
+              '"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null',
+              'ROOTFS_CONTAINER=""',
+              '"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$ROOTFS_BUILDER_IMAGE" -ceu \'',
+              "  'test -x /target-rootfs/usr/sbin/bootc && test -x /target-rootfs/usr/bin/systemctl && test -f /target-rootfs/usr/lib/os-release'",
+              '',
+              'log "Build provisional Prime bootc image"',
+              '',
+          ])
           s = s.replace(build_anchor, privileged, 1)
           build_arg = '  --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \\\n'
           if s.count(build_arg) != 2:
