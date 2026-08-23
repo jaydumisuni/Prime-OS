@@ -1,59 +1,194 @@
-name: Prime P1 Full Proof
+name: Prime P1 Rootfs Composer Adapter
 
-# Self-hosted transport adapter only. The canonical proof is
-# tools/prove-p1-local.sh executing on the Kratos proof Host.
 on:
   pull_request:
     branches:
-      - build/p1-first-light
+      - adapter/p1-rootfs-compose-v2
     types: [opened, synchronize, reopened]
-  workflow_dispatch:
 
 permissions:
-  contents: read
-  packages: read
-
-concurrency:
-  group: prime-p1-proof-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
+  contents: write
 
 jobs:
-  proof:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'proof/p1-') }}
-    runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 120
-    env:
-      PRIME_P1_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  compose:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.PRIME_P1_CANDIDATE_SHA }}
+          ref: proof/p1-first-light-final
           fetch-depth: 0
-      - name: Freeze exact candidate
+      - name: Build corrected P1 candidate
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$PRIME_P1_CANDIDATE_SHA"
-          printf 'P1_PROOF_CANDIDATE=%s\n' "$PRIME_P1_CANDIDATE_SHA"
-      - name: Authenticate locked Prime substrate
-        shell: bash
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
-          printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Run canonical Prime P1 proof
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cf = Path('image/Containerfile')
+          s = cf.read_text(encoding='utf-8')
+          old_global = 'ARG PRIME_BASE_IMAGE\n'
+          new_global = 'ARG PRIME_BASE_IMAGE\nARG PRIME_ROOTFS_BUILDER_IMAGE\n'
+          if new_global not in s:
+              if s.count(old_global) != 1:
+                  raise SystemExit(f'Containerfile PRIME_BASE_IMAGE anchor count={s.count(old_global)}')
+              s = s.replace(old_global, new_global, 1)
+
+          old_stage = '''FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
+
+ARG TARGETARCH
+RUN --mount=type=tmpfs,target=/run \\
+    --mount=type=tmpfs,target=/tmp \\
+    set -eux; \\
+    test "${TARGETARCH}" = "amd64"; \\
+    test -x /usr/libexec/bootc-base-imagectl; \\
+    rm -rf /target-rootfs; \\
+    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs; \\
+    test -x /target-rootfs/usr/sbin/bootc; \\
+    test -x /target-rootfs/usr/bin/systemctl; \\
+    test -f /target-rootfs/usr/lib/os-release
+'''
+          new_stage = '''FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder
+
+ARG TARGETARCH
+RUN set -eux; \\
+    test "${TARGETARCH}" = "amd64"; \\
+    test -x /target-rootfs/usr/sbin/bootc; \\
+    test -x /target-rootfs/usr/bin/systemctl; \\
+    test -f /target-rootfs/usr/lib/os-release
+'''
+          if new_stage not in s:
+              if s.count(old_stage) != 1:
+                  raise SystemExit(f'Containerfile rootfs stage anchor count={s.count(old_stage)}')
+              s = s.replace(old_stage, new_stage, 1)
+          cf.write_text(s, encoding='utf-8')
+
+          proof = Path('tools/prove-p1-local.sh')
+          s = proof.read_text(encoding='utf-8')
+          old_cleanup = '''cleanup_nbd() {
+  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true
+  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true
+  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
+  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
+}
+trap cleanup_nbd EXIT
+'''
+          new_cleanup = '''cleanup_nbd() {
+  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true
+  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true
+  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
+  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
+}
+
+ROOTFS_CONTAINER=""
+ROOTFS_BUILDER_IMAGE=""
+cleanup_rootfs_builder() {
+  if [[ -n "$ROOTFS_CONTAINER" ]]; then
+    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then
+    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
+  fi
+}
+cleanup_all() {
+  cleanup_nbd
+  cleanup_rootfs_builder
+}
+trap cleanup_all EXIT
+'''
+          if new_cleanup not in s:
+              if s.count(old_cleanup) != 1:
+                  raise SystemExit(f'proof cleanup anchor count={s.count(old_cleanup)}')
+              s = s.replace(old_cleanup, new_cleanup, 1)
+
+          old_build = '''log "Build provisional Prime bootc image"
+"${PODMAN[@]}" pull "$BASE_IMAGE"
+"${PODMAN[@]}" build \\
+'''
+          new_build = '''log "Build privileged Fedora rootfs substrate"
+"${PODMAN[@]}" pull "$BASE_IMAGE"
+ROOTFS_CONTAINER="prime-p1-rootfs-${SOURCE_REVISION:0:12}"
+ROOTFS_BUILDER_IMAGE="localhost/prime-p1-rootfs:${SOURCE_REVISION}"
+"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
+"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
+"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \\
+  --privileged \\
+  --security-opt label=disable \\
+  --tmpfs /run \\
+  --tmpfs /tmp \\
+  "$BASE_IMAGE" \\
+  /bin/bash -ceu '\''
+    rm -rf /target-rootfs
+    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs
+    test -x /target-rootfs/usr/sbin/bootc
+    test -x /target-rootfs/usr/bin/systemctl
+    test -f /target-rootfs/usr/lib/os-release
+  '\''
+"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null
+"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null
+ROOTFS_CONTAINER=""
+"${PODMAN[@]}" run --rm "$ROOTFS_BUILDER_IMAGE" \\
+  /bin/bash -ceu '\''
+    test -x /target-rootfs/usr/sbin/bootc
+    test -x /target-rootfs/usr/bin/systemctl
+    test -f /target-rootfs/usr/lib/os-release
+  '\''
+
+log "Build provisional Prime bootc image"
+"${PODMAN[@]}" build \\
+'''
+          if new_build not in s:
+              if s.count(old_build) != 1:
+                  raise SystemExit(f'proof provisional anchor count={s.count(old_build)}')
+              s = s.replace(old_build, new_build, 1)
+
+          needle = '  --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \\\n'
+          rootfs_arg = '  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \\\n'
+          if s.count(rootfs_arg) == 0:
+              if s.count(needle) != 2:
+                  raise SystemExit(f'proof PRIME_BASE_IMAGE build arg count={s.count(needle)}')
+              s = s.replace(needle, needle + rootfs_arg)
+          elif s.count(rootfs_arg) != 2:
+              raise SystemExit(f'proof rootfs build arg count={s.count(rootfs_arg)}')
+          proof.write_text(s, encoding='utf-8')
+
+          wf = Path('.github/workflows/p1-proof.yml')
+          w = wf.read_text(encoding='utf-8')
+          old = '''      - name: Run canonical Prime P1 proof
         shell: bash
         env:
           BUILDAH_ISOLATION: chroot
         run: |
-          set -euo pipefail
-          chmod +x tools/prove-p1-local.sh
-          tools/prove-p1-local.sh
-      - name: Remove ephemeral registry credentials
-        if: ${{ always() }}
+'''
+          new = '''      - name: Run canonical Prime P1 proof
         shell: bash
         run: |
-          skopeo logout ghcr.io >/dev/null 2>&1 || true
-          sudo -n podman logout ghcr.io >/dev/null 2>&1 || true
+'''
+          if old in w:
+              w = w.replace(old, new, 1)
+          if 'BUILDAH_ISOLATION' in w:
+              raise SystemExit('unexpected BUILDAH_ISOLATION remains')
+          wf.write_text(w, encoding='utf-8')
+          PY
+
+          rm -f .github/workflows/p1-rootfs-compose.yml \
+                .p1-rootfs-compose-trigger \
+                .p1-compose-retrigger \
+                .p1-compose-retrigger2
+          git diff --check
+          grep -Fx 'ARG PRIME_ROOTFS_BUILDER_IMAGE' image/Containerfile
+          grep -F 'FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder' image/Containerfile
+          ! grep -Fq 'bootc-base-imagectl build-rootfs' image/Containerfile
+          grep -F 'Build privileged Fedora rootfs substrate' tools/prove-p1-local.sh
+          test "$(grep -Fc -- '--build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE"' tools/prove-p1-local.sh)" -eq 2
+          ! grep -q 'BUILDAH_ISOLATION' .github/workflows/p1-proof.yml
+
+          git config user.name 'Prime P1 Composer'
+          git config user.email 'prime-p1-composer@users.noreply.github.com'
+          git add image/Containerfile tools/prove-p1-local.sh .github/workflows/p1-proof.yml
+          git add -u .github/workflows .
+          if git diff --cached --quiet; then
+            echo 'P1_ROOTFS_COMPOSER=ALREADY_APPLIED'
+            exit 0
+          fi
+          git commit -m 'fix(p1): externalize privileged Fedora rootfs compose'
+          git push origin HEAD:proof/p1-first-light-final
