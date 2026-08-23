@@ -28,7 +28,7 @@ jobs:
           provisional_digest="$(sudo -n podman run --rm --privileged \
             --security-opt label=disable \
             --tmpfs /var/tmp:size=8g \
-            -v "$GRAPHROOT:$GRAPHROOT:ro" \
+            -v "$GRAPHROOT:$GRAPHROOT" \
             -v "$WORK:/diag" \
             localhost/prime-os:p1 \
             bootc container compute-composefs-digest-from-storage \
@@ -38,7 +38,7 @@ jobs:
           final_digest="$(sudo -n podman run --rm --privileged \
             --security-opt label=disable \
             --tmpfs /var/tmp:size=8g \
-            -v "$GRAPHROOT:$GRAPHROOT:ro" \
+            -v "$GRAPHROOT:$GRAPHROOT" \
             -v "$WORK:/diag" \
             localhost/prime-os:p1 \
             bootc container compute-composefs-digest-from-storage \
