@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PRIME_BASE_IMAGE
-ARG PRIME_ROOTFS_BUILDER_IMAGE
 
 # Build prime-compositor inside the exact Prime Fedora substrate so Kratos does
 # not need compositor development packages merely to produce the Prime image.
@@ -65,21 +64,23 @@ RUN set -eux; \
     sha256sum target/release/prime-compositor > /prime-compositor.sha256; \
     sha256sum target/release/prime-shell > /prime-shell.sha256
 
-FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder
+FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
 RUN set -eux; \
     test "${TARGETARCH}" = "amd64"; \
-    test -x /target-rootfs/usr/sbin/bootc; \
-    test -x /target-rootfs/usr/bin/systemctl; \
-    test -f /target-rootfs/usr/lib/os-release
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
+    test -x /usr/sbin/bootc; \
+    test -x /usr/bin/systemctl; \
+    test -f /usr/lib/os-release
 
 # Reconstruct the Fedora root filesystem into a fresh image layer before sealing.
 # Fedora 44 currently has a known directory-walk vs OCI-storage Composefs digest
 # divergence. The outer build performs a provisional pass, computes the canonical
 # OCI-storage digest, then rebuilds only the UKI stage with that digest.
 FROM scratch AS rootfs
-COPY --from=rootfs-builder /target-rootfs/ /
+COPY --from=rootfs-builder / /
 
 ARG TARGETARCH
 ARG PRIME_BASE_DIGEST
