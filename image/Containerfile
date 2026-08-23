@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PRIME_BASE_IMAGE
+ARG PRIME_ROOTFS_BUILDER_IMAGE
 
 # Build prime-compositor inside the exact Prime Fedora substrate so Kratos does
 # not need compositor development packages merely to produce the Prime image.
@@ -64,16 +65,11 @@ RUN set -eux; \
     sha256sum target/release/prime-compositor > /prime-compositor.sha256; \
     sha256sum target/release/prime-shell > /prime-shell.sha256
 
-FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
+FROM ${PRIME_ROOTFS_BUILDER_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
-RUN --mount=type=tmpfs,target=/run \
-    --mount=type=tmpfs,target=/tmp \
-    set -eux; \
+RUN set -eux; \
     test "${TARGETARCH}" = "amd64"; \
-    test -x /usr/libexec/bootc-base-imagectl; \
-    rm -rf /target-rootfs; \
-    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs; \
     test -x /target-rootfs/usr/sbin/bootc; \
     test -x /target-rootfs/usr/bin/systemctl; \
     test -f /target-rootfs/usr/lib/os-release

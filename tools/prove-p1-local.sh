@@ -28,7 +28,22 @@ cleanup_nbd() {
   sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
   sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
 }
-trap cleanup_nbd EXIT
+
+ROOTFS_CONTAINER=""
+ROOTFS_BUILDER_IMAGE=""
+cleanup_rootfs_builder() {
+  if [[ -n "$ROOTFS_CONTAINER" ]]; then
+    "${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ROOTFS_BUILDER_IMAGE" ]]; then
+    "${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
+  fi
+}
+cleanup_all() {
+  cleanup_nbd
+  cleanup_rootfs_builder
+}
+trap cleanup_all EXIT
 
 log "P1 local proof preflight"
 [[ "$(uname -m)" == "x86_64" ]] || fail "P1 proof requires x86_64"
@@ -71,14 +86,40 @@ cargo build --locked --release -p primed
 [[ -x target/release/primed ]] || fail "primed release binary missing"
 [[ -x target/release/prime-recovery ]] || fail "prime-recovery release binary missing"
 
-log "Build provisional Prime bootc image"
+log "Build privileged Fedora rootfs substrate"
 "${PODMAN[@]}" pull "$BASE_IMAGE"
+ROOTFS_CONTAINER="prime-p1-rootfs-${SOURCE_REVISION:0:12}"
+ROOTFS_BUILDER_IMAGE="localhost/prime-p1-rootfs:${SOURCE_REVISION}"
+"${PODMAN[@]}" rm -f "$ROOTFS_CONTAINER" >/dev/null 2>&1 || true
+"${PODMAN[@]}" image rm -f "$ROOTFS_BUILDER_IMAGE" >/dev/null 2>&1 || true
+"${PODMAN[@]}" run --name "$ROOTFS_CONTAINER" \
+  --privileged \
+  --security-opt label=disable \
+  --tmpfs /run \
+  --tmpfs /tmp \
+  --entrypoint /bin/bash \
+  "$BASE_IMAGE" \
+  -ceu '
+    rm -rf /target-rootfs
+    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs
+    test -x /target-rootfs/usr/sbin/bootc
+    test -x /target-rootfs/usr/bin/systemctl
+    test -f /target-rootfs/usr/lib/os-release
+  '
+"${PODMAN[@]}" commit "$ROOTFS_CONTAINER" "$ROOTFS_BUILDER_IMAGE" >/dev/null
+"${PODMAN[@]}" rm "$ROOTFS_CONTAINER" >/dev/null
+ROOTFS_CONTAINER=""
+"${PODMAN[@]}" run --rm --entrypoint /bin/bash "$ROOTFS_BUILDER_IMAGE" -ceu \
+  'test -x /target-rootfs/usr/sbin/bootc && test -x /target-rootfs/usr/bin/systemctl && test -f /target-rootfs/usr/lib/os-release'
+
+log "Build provisional Prime bootc image"
 "${PODMAN[@]}" build \
   --cap-add=all \
   --device /dev/fuse \
   --security-opt label=disable \
   --platform linux/amd64 \
   --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \
+  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \
   --build-arg PRIME_BASE_DIGEST="$BASE_DIGEST" \
   --build-arg TARGETARCH=amd64 \
   --build-arg PRIME_GENERATION_ID="$GENERATION_ID" \
@@ -106,6 +147,7 @@ log "Rebuild Prime with canonical normal and recovery UKI seals"
   --security-opt label=disable \
   --platform linux/amd64 \
   --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \
+  --build-arg PRIME_ROOTFS_BUILDER_IMAGE="$ROOTFS_BUILDER_IMAGE" \
   --build-arg PRIME_BASE_DIGEST="$BASE_DIGEST" \
   --build-arg TARGETARCH=amd64 \
   --build-arg PRIME_GENERATION_ID="$GENERATION_ID" \
