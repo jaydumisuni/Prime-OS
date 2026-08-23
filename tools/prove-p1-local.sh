@@ -229,11 +229,7 @@ log "Prove pinned image-builder sees unified Prime image"
 "${PODMAN[@]}" run --rm "$BUILDER_REF" version
 BUILDER_RUN_ARGS=(
   --privileged
-  --user 0:0
-  --userns=host
-  --cap-add=SYS_ADMIN
-  --cap-add=MKNOD
-  --security-opt label=disable
+  --security-opt label=type:unconfined_t
 )
 
 log "Prove pinned image-builder nested mount authority"
