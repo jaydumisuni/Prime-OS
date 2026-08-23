@@ -28,6 +28,24 @@ jobs:
           fi
           python3 - <<'PY'
           from pathlib import Path
+
+          wf = Path('.github/workflows/p1-proof.yml')
+          w = wf.read_text(encoding='utf-8')
+          old = '''      - name: Run canonical Prime P1 proof
+        shell: bash
+        env:
+          BUILDAH_ISOLATION: chroot
+        run: |
+'''
+          new = '''      - name: Run canonical Prime P1 proof
+        shell: bash
+        run: |
+'''
+          if w.count(old) == 1:
+              wf.write_text(w.replace(old, new, 1), encoding='utf-8')
+          elif 'BUILDAH_ISOLATION' in w:
+              raise SystemExit('unexpected BUILDAH_ISOLATION layout')
+
           src = Path('.github/workflows/p1-rootfs-compose.yml').read_text(encoding='utf-8')
           marker = "      - name: Compose exact rootfs privilege correction\n        shell: bash\n        run: |\n"
           if src.count(marker) != 1:
@@ -39,6 +57,13 @@ jobs:
                   out.append(line[10:])
               else:
                   out.append(line)
-          Path('/tmp/prime-p1-compose.sh').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          script = '\n'.join(out) + '\n'
+          start = script.find("wf = Path('.github/workflows/p1-proof.yml')")
+          end_marker = "PY\n\nrm .github/workflows/p1-rootfs-compose.yml"
+          end = script.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit(f'embedded workflow cleanup block not found: start={start} end={end}')
+          script = script[:start] + script[end:]
+          Path('/tmp/prime-p1-compose.sh').write_text(script, encoding='utf-8')
           PY
           bash /tmp/prime-p1-compose.sh
