@@ -1,0 +1,44 @@
+name: Prime P1 Rootfs Composer Adapter
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-rootfs-compose
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  compose:
+    if: ${{ startsWith(github.head_ref, 'proof/p1-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Execute deterministic composer from candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f .github/workflows/p1-rootfs-compose.yml ]]; then
+            echo 'P1_ROOTFS_COMPOSER=ALREADY_APPLIED'
+            exit 0
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('.github/workflows/p1-rootfs-compose.yml').read_text(encoding='utf-8')
+          marker = '        run: |\n'
+          if src.count(marker) != 1:
+              raise SystemExit(f'composer run-block count={src.count(marker)}')
+          body = src.split(marker, 1)[1]
+          out = []
+          for line in body.splitlines():
+              if line.startswith('          '):
+                  out.append(line[10:])
+              else:
+                  out.append(line)
+          Path('/tmp/prime-p1-compose.sh').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          PY
+          bash /tmp/prime-p1-compose.sh
