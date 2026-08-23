@@ -215,6 +215,7 @@ log "Inspect final Prime image and recovery contract"
     ukify --json=short inspect "$normal" > /tmp/prime-normal-uki.json
     ukify --json=short inspect "$recovery" > /tmp/prime-recovery-uki.json
     python3 -c '\''import json; n=json.load(open("/tmp/prime-normal-uki.json")); r=json.load(open("/tmp/prime-recovery-uki.json")); nc=n[".cmdline"]["text"]; rc=r[".cmdline"]["text"]; assert "prime.recovery=1" not in nc; assert "systemd.unit=prime-recovery.target" not in nc; assert "prime.recovery=1" in rc; assert "systemd.unit=prime-recovery.target" in rc; assert "Prime OS P1 First Light" in n[".osrel"]["text"]; assert "Prime OS Recovery" in r[".osrel"]["text"]'\''
+    rm -f /tmp/prime-normal-uki.json /tmp/prime-recovery-uki.json
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
     bootc container lint --fatal-warnings
     bootc container inspect --json > /tmp/prime-container.json
