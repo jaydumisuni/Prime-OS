@@ -1,4 +1,4 @@
-name: Prime P1 proven-boundary transplant
+name: Prime P1 installed UKI survivor probe
 
 on:
   pull_request:
@@ -7,263 +7,85 @@ on:
     types: [synchronize]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  transplant-proven-boundary:
+  identify-installed-uki:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 8
     env:
-      EXPECTED_HEAD: b64fc4c1080e45b0ff3a4d31056e67f24332e964
-      TARGET_BRANCH: proof/p1-first-light-final
+      QCOW2: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      NBD: /dev/nbd1
+      MNT: /var/tmp/prime-p1-installed-uki-probe-esp
+      COPY: /var/tmp/prime-p1-installed-uki-probe.efi
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.EXPECTED_HEAD }}
-          fetch-depth: 0
-
-      - name: Freeze exact proof head before mutation
+      - name: Identify the single UKI bootc installed
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          remote_head="$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
-          echo "REMOTE_PROOF_HEAD=$remote_head"
-          test "$remote_head" = "$EXPECTED_HEAD"
-          test -z "$(git status --porcelain)"
+          test -f "$QCOW2"
+          sudo -n podman image exists localhost/prime-os:p1
 
-      - name: Apply only proven product and proof-boundary changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
+          cleanup() {
+            sudo -n umount "$MNT" >/dev/null 2>&1 || true
+            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+            rm -f "$COPY"
+          }
+          trap cleanup EXIT
+          cleanup
+          mkdir -p "$MNT"
 
-          # Product boundary: all RPM database mutation must finish before the
-          # Composefs storage digest is frozen. This is the exact change already
-          # proven in disposable QCOW2 run 32724434548.
-          p = Path('image/Containerfile')
-          s = p.read_text()
-          marker = 'FROM split AS sealed-rootfs\n'
-          start = s.index(marker)
-          end = s.index('\nFROM rootfs AS uki-tools', start)
-          sealed = s[start:end]
-          needle = "    ! find /usr/lib/modules -type f \\( -name vmlinuz -o -name initramfs.img \\) -print -quit | grep -q ."
-          if sealed.count(needle) != 1:
-              raise SystemExit('sealed-rootfs insertion point is not exact')
-          sealed = sealed.replace(
-              needle,
-              needle + "; \\\n    ! rpm -q bootupd >/dev/null 2>&1; \\\n    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \\\n    test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \\\n    test ! -e /usr/share/rpm/rpmdb.sqlite-wal",
-              1,
-          )
-          s = s[:start] + sealed + s[end:]
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$QCOW2"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          test -n "$ESP"
+          sudo -n mount -o ro "$ESP" "$MNT"
 
-          final_start = s.index('FROM sealed-rootfs AS final\n')
-          head, final = s[:final_start], s[final_start:]
-          for line in (
-              "    ! rpm -q bootupd >/dev/null 2>&1; \\\n",
-              "    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \\\n",
-          ):
-              if final.count(line) != 1:
-                  raise SystemExit(f'final-stage mutation anchor is not exact: {line!r}')
-              final = final.replace(line, '', 1)
-          if '! rpm -q bootupd' in final or 'rm -f /usr/share/rpm/rpmdb.sqlite-shm' in final:
-              raise SystemExit('post-seal RPM mutation remains')
-          p.write_text(head + final)
+          mapfile -t installed < <(sudo -n find "$MNT/EFI/Linux/bootc" -maxdepth 1 -type f -name '*.efi' -print | sort)
+          test "${#installed[@]}" -eq 1
+          sudo -n cp "${installed[0]}" "$COPY"
+          sudo -n chown "$(id -u):$(id -g)" "$COPY"
+          installed_sha="$(sha256sum "$COPY" | awk '{print $1}')"
+          echo "INSTALLED_UKI_PATH=${installed[0]#$MNT}"
+          echo "INSTALLED_UKI_SHA256=$installed_sha"
 
-          # Canonical proof boundary: make AppArmor relaxation explicit,
-          # reversible and bounded; use the exact successful rootful/no-VM
-          # image-builder invocation; reject any final Composefs digest drift.
-          p = Path('tools/prove-p1-local.sh')
-          s = p.read_text()
+          source_hashes="$(sudo -n podman run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
+            recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
+            test -n "$normal"; test -n "$recovery"
+            printf "NORMAL %s\n" "$(sha256sum "$normal" | awk "{print \\$1}")"
+            printf "RECOVERY %s\n" "$(sha256sum "$recovery" | awk "{print \\$1}")"
+          ')"
+          printf '%s\n' "$source_hashes"
+          normal_sha="$(printf '%s\n' "$source_hashes" | awk '$1=="NORMAL" {print $2}')"
+          recovery_sha="$(printf '%s\n' "$source_hashes" | awk '$1=="RECOVERY" {print $2}')"
+          test -n "$normal_sha"; test -n "$recovery_sha"
 
-          anchor = 'NBD_DEV="${PRIME_P1_NBD_DEVICE:-/dev/nbd0}"\n'
-          if s.count(anchor) != 1:
-              raise SystemExit('NBD anchor is not exact')
-          s = s.replace(
-              anchor,
-              anchor
-              + '\nBWRAP_POLICY="/etc/apparmor.d/bwrap-userns-restrict"\n'
-              + 'LSBLK_POLICY="/etc/apparmor.d/lsblk"\n'
-              + 'EXPECTED_BWRAP_POLICY_SHA256="d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990"\n'
-              + 'EXPECTED_LSBLK_POLICY_SHA256="6b3097d4b9fc10c34bc593c5fed2c95af86d619eb68fa7611f98b55cec841569"\n'
-              + 'APPARMOR_WINDOW_OPEN=0\n',
-              1,
-          )
+          if [[ "$installed_sha" == "$normal_sha" ]]; then
+            survivor=NORMAL
+          elif [[ "$installed_sha" == "$recovery_sha" ]]; then
+            survivor=RECOVERY
+          else
+            survivor=NEITHER
+          fi
+          echo "INSTALLED_SURVIVOR=$survivor"
 
-          old_cleanup = '''cleanup_nbd() {
-  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true
-  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true
-  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
-  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-}
-trap cleanup_nbd EXIT
-'''
-          new_cleanup = '''cleanup_nbd() {
-  sudo -n umount "$MOUNT_ESP" 2>/dev/null || true
-  sudo -n umount "$MOUNT_XBOOTLDR" 2>/dev/null || true
-  sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
-  sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-}
+          echo '=== installed UKI inspect ==='
+          sudo -n podman run --rm --security-opt label=disable -v "$COPY:/tmp/installed.efi:ro" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            ukify --json=short inspect /tmp/installed.efi > /tmp/inspect.json
+            python3 - <<"PY"
+import json
+x=json.load(open("/tmp/inspect.json"))
+print("CMDLINE=" + x[".cmdline"]["text"].strip())
+print("OSREL=" + x[".osrel"]["text"].replace("\n", " | "))
+PY
+          '
 
-restore_apparmor_profiles() {
-  if [[ "${APPARMOR_WINDOW_OPEN:-0}" -eq 1 ]]; then
-    sudo -n apparmor_parser -r "$BWRAP_POLICY" >/dev/null 2>&1 || true
-    sudo -n apparmor_parser -r "$LSBLK_POLICY" >/dev/null 2>&1 || true
-    APPARMOR_WINDOW_OPEN=0
-  fi
-}
+          echo '=== installed systemd-boot entries ==='
+          sudo -n find "$MNT/loader/entries" -maxdepth 1 -type f -name '*.conf' -print -exec sh -c 'echo --- "$1"; cat "$1"' _ {} \;
 
-cleanup() {
-  restore_apparmor_profiles
-  cleanup_nbd
-}
-trap cleanup EXIT
-'''
-          if s.count(old_cleanup) != 1:
-              raise SystemExit('cleanup anchor is not exact')
-          s = s.replace(old_cleanup, new_cleanup, 1)
-
-          old_tools = 'for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum; do need "$tool"; done'
-          new_tools = 'for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum apparmor_parser; do need "$tool"; done'
-          if s.count(old_tools) != 1:
-              raise SystemExit('preflight tool anchor is not exact')
-          s = s.replace(old_tools, new_tools, 1)
-
-          env_anchor = '[[ -x /usr/bin/env ]] || fail "invalid host environment"\n'
-          policy_checks = '''[[ -f "$BWRAP_POLICY" ]] || fail "missing canonical bwrap AppArmor policy"
-[[ -f "$LSBLK_POLICY" ]] || fail "missing canonical lsblk AppArmor policy"
-[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy drift"
-[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy drift"
-sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \\(enforce\\)$' | wc -l | grep -Fx 3 >/dev/null || fail "expected bwrap/unpriv_bwrap/lsblk AppArmor profiles in enforce mode"
-'''
-          if s.count(env_anchor) != 1:
-              raise SystemExit('environment preflight anchor is not exact')
-          s = s.replace(env_anchor, env_anchor + policy_checks, 1)
-
-          digest_anchor = 'case "$FINAL_DIGEST" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) fail "invalid final image storage digest: $FINAL_DIGEST" ;; esac\n'
-          if s.count(digest_anchor) != 1:
-              raise SystemExit('final digest anchor is not exact')
-          s = s.replace(
-              digest_anchor,
-              digest_anchor + '[[ "$FINAL_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "final image Composefs digest does not match sealed rootfs digest"\n',
-              1,
-          )
-
-          old_builder_args = '''BUILDER_RUN_ARGS=(
-  --privileged
-  --security-opt label=type:unconfined_t
-)
-'''
-          new_builder_args = '''BUILDER_RUN_ARGS=(
-  --privileged
-  --security-opt label=disable
-  --device /dev/fuse:/dev/fuse
-)
-'''
-          if s.count(old_builder_args) != 1:
-              raise SystemExit('builder args anchor is not exact')
-          s = s.replace(old_builder_args, new_builder_args, 1)
-
-          old_qcow = '''log "Build Prime QCOW2"
-rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"
-"${PODMAN[@]}" run --rm \\
-  "${BUILDER_RUN_ARGS[@]}" \\
-  -v /var/lib/containers/storage:/var/lib/containers/storage \\
-  -v "$OUTPUT_DIR:/output" \\
-  "$BUILDER_REF" \\
-  --output-dir /output \\
-  build \\
-  --bootc-ref localhost/prime-os:p1 \\
-  --bootc-default-fs ext4 \\
-  --with-manifest \\
-  --with-buildlog \\
-  --progress verbose \\
-  qcow2
-'''
-          new_qcow = '''log "Build Prime QCOW2"
-[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy drift before QCOW2 build"
-[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy drift before QCOW2 build"
-sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \\(enforce\\)$' | wc -l | grep -Fx 3 >/dev/null || fail "AppArmor profiles not enforced before QCOW2 build"
-
-APPARMOR_WINDOW_OPEN=1
-sudo -n apparmor_parser -r -C "$BWRAP_POLICY"
-sudo -n apparmor_parser -r -C "$LSBLK_POLICY"
-sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \\(complain\\)$' | wc -l | grep -Fx 3 >/dev/null || fail "bounded AppArmor complain window did not open"
-
-rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"
-set +e
-timeout --signal=TERM --kill-after=10s 1200s "${PODMAN[@]}" run --rm \\
-  "${BUILDER_RUN_ARGS[@]}" \\
-  -v /var/lib/containers/storage:/var/lib/containers/storage \\
-  -v "$OUTPUT_DIR:/output" \\
-  "$BUILDER_REF" \\
-  --output-dir /output \\
-  build \\
-  --bootc-ref localhost/prime-os:p1 \\
-  --bootc-build-ref "$BASE_IMAGE" \\
-  --bootc-default-fs ext4 \\
-  --with-manifest \\
-  --with-buildlog \\
-  --progress verbose \\
-  qcow2
-BUILDER_RC=$?
-set -e
-
-restore_apparmor_profiles
-[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy changed during QCOW2 build"
-[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy changed during QCOW2 build"
-sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \\(enforce\\)$' | wc -l | grep -Fx 3 >/dev/null || fail "AppArmor profiles were not restored to enforce mode"
-[[ "$BUILDER_RC" -eq 0 ]] || fail "bounded rootful image-builder QCOW2 build failed: $BUILDER_RC"
-'''
-          if s.count(old_qcow) != 1:
-              raise SystemExit('canonical QCOW2 block is not exact')
-          s = s.replace(old_qcow, new_qcow, 1)
-
-          if '--in-vm' in s:
-              raise SystemExit('rejected --in-vm path present')
-          p.write_text(s)
-          PY
-
-      - name: Review and freeze transplant diff
-        shell: bash
-        run: |
-          set -euo pipefail
-          changed="$(git diff --name-only | sort)"
-          expected="$(printf '%s\n' image/Containerfile tools/prove-p1-local.sh | sort)"
-          test "$changed" = "$expected"
-          git diff --check
-          bash -n tools/prove-p1-local.sh
-          grep -F 'final image Composefs digest does not match sealed rootfs digest' tools/prove-p1-local.sh
-          grep -F -- '--bootc-build-ref "$BASE_IMAGE"' tools/prove-p1-local.sh
-          grep -F 'timeout --signal=TERM --kill-after=10s 1200s' tools/prove-p1-local.sh
-          ! grep -F -- '--in-vm' tools/prove-p1-local.sh
-          ! grep -F 'label=type:unconfined_t' tools/prove-p1-local.sh
-          python3 - <<'PY'
-          from pathlib import Path
-          s = Path('image/Containerfile').read_text()
-          sealed = s[s.index('FROM split AS sealed-rootfs\n'):s.index('\nFROM rootfs AS uki-tools')]
-          final = s[s.index('FROM sealed-rootfs AS final\n'):]
-          assert '! rpm -q bootupd' in sealed
-          assert 'rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal' in sealed
-          assert '! rpm -q bootupd' not in final
-          assert 'rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal' not in final
-          PY
-          git diff -- image/Containerfile tools/prove-p1-local.sh
-
-      - name: Commit exact transplant with lease
-        shell: bash
-        run: |
-          set -euo pipefail
-          remote_head="$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
-          test "$remote_head" = "$EXPECTED_HEAD"
-          git config user.name 'THE TECH GUY'
-          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
-          git add image/Containerfile tools/prove-p1-local.sh
-          git commit -m 'fix(p1): freeze sealed rootfs before QCOW2 proof'
-          new_head="$(git rev-parse HEAD)"
-          echo "NEW_PROOF_HEAD=$new_head"
-          git push --force-with-lease="refs/heads/$TARGET_BRANCH:$EXPECTED_HEAD" origin "HEAD:refs/heads/$TARGET_BRANCH"
+          test "$survivor" != NEITHER
+          echo INSTALLED_UKI_SURVIVOR_PROBE=PROVEN
