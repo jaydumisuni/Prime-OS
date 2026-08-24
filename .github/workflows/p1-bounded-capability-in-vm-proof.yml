@@ -1,4 +1,4 @@
-name: Prime P1 composefs seal convergence probe
+name: Prime P1 composefs digest-view probe
 
 on:
   pull_request:
@@ -8,125 +8,78 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
-  prove-composefs-seal:
+  inspect-composefs-views:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 45
+    timeout-minutes: 12
     env:
       SOURCE_SHA: b64fc4c1080e45b0ff3a4d31056e67f24332e964
-      BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
-      INITIAL_FINAL_DIGEST: 3df022cb8dfa81a54259783a86c08d45c18f8a1473cebe282536100679a65de3e12dc83de9743ba8be57d61cca2b20db769a7a89dc8b22be398f13d6ff126b31
+      ROOTFS_IMAGE: localhost/prime-os:p1-rootfs
+      FINAL_IMAGE: localhost/prime-os:p1
       EXPECTED_ROOTFS_DIGEST: 76a93d6ff724d3ead8b41de13a825b8d972a5f09b777803c370f7f66b5ddef16e93cfe733ac9dae47ba093c5f898765e3aaa0258d7fa205a822dd17bfbaaa67c
-      PROBE_TAG: localhost/prime-os:p1-reseal-probe
+      EXPECTED_FINAL_DIGEST: 3df022cb8dfa81a54259783a86c08d45c18f8a1473cebe282536100679a65de3e12dc83de9743ba8be57d61cca2b20db769a7a89dc8b22be398f13d6ff126b31
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.SOURCE_SHA }}
-          fetch-depth: 0
-
-      - name: Authenticate Prime-owned Fedora substrate
-        shell: bash
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Recreate canonical host-built Core artifacts
+      - name: Freeze exact local images and tool versions
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$(rustc --version | awk '{print $2}')" = '1.97.1'
-          cargo metadata --locked --no-deps --format-version 1 >/dev/null
-          cargo build --locked --release -p primed
-          test -x target/release/primed
-          test -x target/release/prime-recovery
-
-      - name: Prove current contradiction and iterate UKI reseal
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git show -s --format=%cI HEAD)" = '2026-08-24T01:11:21+02:00'
-          test -c /dev/fuse
-          sudo -n podman image exists localhost/prime-os:p1-rootfs
-          sudo -n podman image exists localhost/prime-os:p1
-          revision="$(sudo -n podman image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' localhost/prime-os:p1)"
+          sudo -n podman image exists "$ROOTFS_IMAGE"
+          sudo -n podman image exists "$FINAL_IMAGE"
+          revision="$(sudo -n podman image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$FINAL_IMAGE")"
           test "$revision" = "$SOURCE_SHA"
+          echo '=== rootfs bootc version ==='
+          sudo -n podman run --rm "$ROOTFS_IMAGE" bootc --version
+          sudo -n podman run --rm "$ROOTFS_IMAGE" rpm -q bootc composefs composefs-libs 2>/dev/null || true
+          echo '=== final bootc version ==='
+          sudo -n podman run --rm "$FINAL_IMAGE" bootc --version
+          sudo -n podman run --rm "$FINAL_IMAGE" rpm -q bootc composefs composefs-libs 2>/dev/null || true
 
-          digest_of() {
+      - name: Diff exact storage-view Composefs trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=/var/tmp/prime-p1-composefs-view-probe
+          sudo -n rm -rf "$out"
+          sudo -n mkdir -p "$out"
+          sudo -n chown "$(id -u):$(id -g)" "$out"
+
+          digest_dump() {
             local image="$1"
+            local dump="$2"
             sudo -n podman run --rm \
               --privileged \
               --security-opt label=disable \
               --tmpfs /var/tmp:size=8g \
               -v /var/lib/containers/storage:/var/lib/containers/storage \
+              -v "$out:/out" \
               "$image" \
-              bootc container compute-composefs-digest-from-storage "$image" | tail -n1
+              bootc container compute-composefs-digest-from-storage \
+                --write-dumpfile-to "/out/$dump" "$image" | tail -n1
           }
 
-          rootfs_digest="$(digest_of localhost/prime-os:p1-rootfs)"
-          current_final_digest="$(digest_of localhost/prime-os:p1)"
-          echo "CURRENT_ROOTFS_DIGEST=$rootfs_digest"
-          echo "CURRENT_FINAL_DIGEST=$current_final_digest"
+          rootfs_digest="$(digest_dump "$ROOTFS_IMAGE" rootfs.dump)"
+          final_digest="$(digest_dump "$FINAL_IMAGE" final.dump)"
+          echo "ROOTFS_STORAGE_DIGEST=$rootfs_digest"
+          echo "FINAL_STORAGE_DIGEST=$final_digest"
           test "$rootfs_digest" = "$EXPECTED_ROOTFS_DIGEST"
-          test "$current_final_digest" = "$INITIAL_FINAL_DIGEST"
+          test "$final_digest" = "$EXPECTED_FINAL_DIGEST"
 
-          created_at="$(git show -s --format=%cI HEAD)"
-          generation_id="p1-first-light-${SOURCE_SHA:0:12}"
-          base_digest="sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341"
-          seal="$INITIAL_FINAL_DIGEST"
-          converged=0
+          echo '=== exact dump diff summary ==='
+          set +e
+          diff -u "$out/rootfs.dump" "$out/final.dump" > "$out/diff.txt"
+          diff_rc=$?
+          set -e
+          test "$diff_rc" -eq 1
+          wc -l "$out/rootfs.dump" "$out/final.dump" "$out/diff.txt"
+          grep -E '^[+-]/boot|^[+-]/kernel|^@@' "$out/diff.txt" | head -n 240 || true
+          echo '=== changed top-level paths ==='
+          awk '/^[+-]\// && !/^---/ && !/^\+\+\+/ {line=substr($0,2); split(line,a,"/"); if (a[2] != "") print "/" a[2]}' "$out/diff.txt" | sort | uniq -c
 
-          for round in 1 2 3; do
-            echo "=== RESEAL ROUND $round input=$seal ==="
-            sudo -n podman build \
-              --cap-add=all \
-              --device /dev/fuse \
-              --security-opt label=disable \
-              --platform linux/amd64 \
-              --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \
-              --build-arg PRIME_BASE_DIGEST="$base_digest" \
-              --build-arg TARGETARCH=amd64 \
-              --build-arg PRIME_GENERATION_ID="$generation_id" \
-              --build-arg PRIME_SOURCE_REVISION="$SOURCE_SHA" \
-              --build-arg PRIME_CREATED_AT="$created_at" \
-              --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
-              --build-arg PRIME_COMPOSEFS_DIGEST="$seal" \
-              -f image/Containerfile \
-              -t "$PROBE_TAG" .
+          echo '=== UKI inventory ==='
+          sudo -n podman run --rm --entrypoint /bin/bash "$FINAL_IMAGE" -ceu '
+            find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -printf "%f %s bytes\n" | sort
+          '
 
-            embedded="$(sudo -n podman run --rm --entrypoint /bin/bash "$PROBE_TAG" -ceu '
-              normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
-              recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
-              grep -aoE "composefs=[0-9a-f]{128}" "$normal" | head -n1 | cut -d= -f2
-              grep -aoE "composefs=[0-9a-f]{128}" "$recovery" | head -n1 | cut -d= -f2
-            ')"
-            normal="$(printf '%s\n' "$embedded" | sed -n '1p')"
-            recovery="$(printf '%s\n' "$embedded" | sed -n '2p')"
-            test "$normal" = "$seal"
-            test "$recovery" = "$seal"
-
-            next="$(digest_of "$PROBE_TAG")"
-            echo "ROUND_${round}_EMBEDDED=$seal"
-            echo "ROUND_${round}_FINAL_DIGEST=$next"
-            if test "$next" = "$seal"; then
-              echo "COMPOSEFS_RESEAL_CONVERGED_ROUND=$round"
-              converged=1
-              break
-            fi
-            seal="$next"
-          done
-
-          if test "$converged" -eq 0; then
-            echo 'COMPOSEFS_RESEAL_NONCONVERGENT=1'
-          fi
-
-      - name: Remove ephemeral registry credentials
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          sudo -n podman logout ghcr.io >/dev/null 2>&1 || true
+          echo COMPOSEFS_STORAGE_VIEW_DIFF=PROVEN
