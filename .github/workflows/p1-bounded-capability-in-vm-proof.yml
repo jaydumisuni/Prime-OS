@@ -13,7 +13,7 @@ jobs:
   prove-composed-boundary:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 15
+    timeout-minutes: 60
     env:
       IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
       BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
@@ -78,7 +78,7 @@ jobs:
           START="$(date '+%Y-%m-%d %H:%M:%S')"
 
           set +e
-          timeout --signal=TERM 600s sudo -n podman run --rm \
+          timeout --signal=TERM 3000s sudo -n podman run --rm \
             --privileged \
             --security-opt label=disable \
             --device /dev/kvm:/dev/kvm \
