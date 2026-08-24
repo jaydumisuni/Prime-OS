@@ -35,11 +35,21 @@ jobs:
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Prove current digest contradiction and test iterative reseal
+      - name: Recreate canonical host-built Core artifacts
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(rustc --version | awk '{print $2}')" = '1.97.1'
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          cargo build --locked --release -p primed
+          test -x target/release/primed
+          test -x target/release/prime-recovery
+
+      - name: Prove current contradiction and iterate UKI reseal
+        shell: bash
+        run: |
+          set -euo pipefail
           test "$(git show -s --format=%cI HEAD)" = '2026-08-24T01:11:21+02:00'
           test -c /dev/fuse
           sudo -n podman image exists localhost/prime-os:p1-rootfs
