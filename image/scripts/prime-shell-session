@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readiness="${PRIME_COMPOSITOR_READINESS:-/run/prime-compositor/readiness.json}"
+deadline=$((SECONDS + 90))
+
+while (( SECONDS < deadline )); do
+  if [[ -f "$readiness" ]]; then
+    socket="$(python3 - "$readiness" <<'PY'
+import json, sys
+p=sys.argv[1]
+try:
+    d=json.load(open(p, 'r', encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+if d.get('schema') != 'prime.compositor-readiness.v1':
+    raise SystemExit(1)
+if not d.get('wayland_listener_ready'):
+    raise SystemExit(1)
+s=d.get('wayland_socket')
+if not isinstance(s, str) or not s or '/' in s:
+    raise SystemExit(1)
+print(s)
+PY
+)" || true
+    if [[ -n "${socket:-}" && -S "${XDG_RUNTIME_DIR}/${socket}" ]]; then
+      export WAYLAND_DISPLAY="$socket"
+      exec /usr/libexec/prime/prime-shell
+    fi
+  fi
+  sleep 1
+done
+
+echo "prime-shell-session: compositor Wayland socket was not ready before timeout" >&2
+exit 1

@@ -55,32 +55,32 @@ COPY crates ./crates
 RUN set -eux; \
     cargo metadata --locked --no-deps --format-version 1 >/dev/null; \
     cargo fmt --all -- --check; \
-    cargo clippy --locked -p prime-compositor --all-targets -- -D warnings; \
-    cargo build --locked --release -p prime-compositor; \
+    cargo clippy --locked -p prime-compositor -p prime-shell --all-targets -- -D warnings; \
+    cargo build --locked --release -p prime-compositor -p prime-shell; \
     test -x target/release/prime-compositor; \
+    test -x target/release/prime-shell; \
     ! ldd target/release/prime-compositor | grep -q 'not found'; \
-    sha256sum target/release/prime-compositor > /prime-compositor.sha256
+    ! ldd target/release/prime-shell | grep -q 'not found'; \
+    sha256sum target/release/prime-compositor > /prime-compositor.sha256; \
+    sha256sum target/release/prime-shell > /prime-shell.sha256
 
 FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
-RUN --mount=type=tmpfs,target=/run \
-    --mount=type=tmpfs,target=/tmp \
-    set -eux; \
+RUN set -eux; \
     test "${TARGETARCH}" = "amd64"; \
-    test -x /usr/libexec/bootc-base-imagectl; \
-    rm -rf /target-rootfs; \
-    /usr/libexec/bootc-base-imagectl build-rootfs --manifest=standard /target-rootfs; \
-    test -x /target-rootfs/usr/sbin/bootc; \
-    test -x /target-rootfs/usr/bin/systemctl; \
-    test -f /target-rootfs/usr/lib/os-release
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
+    test -x /usr/sbin/bootc; \
+    test -x /usr/bin/systemctl; \
+    test -f /usr/lib/os-release
 
 # Reconstruct the Fedora root filesystem into a fresh image layer before sealing.
 # Fedora 44 currently has a known directory-walk vs OCI-storage Composefs digest
 # divergence. The outer build performs a provisional pass, computes the canonical
 # OCI-storage digest, then rebuilds only the UKI stage with that digest.
 FROM scratch AS rootfs
-COPY --from=rootfs-builder /target-rootfs/ /
+COPY --from=rootfs-builder / /
 
 ARG TARGETARCH
 ARG PRIME_BASE_DIGEST
@@ -109,6 +109,8 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        libwayland-client-1.25.0-1.fc44 \
+        libxkbcommon-1.13.1-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -119,6 +121,8 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
+        libwayland-client-1.25.0-1.fc44 \
+        libxkbcommon-1.13.1-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -160,11 +164,19 @@ RUN set -eux; \
     chmod 0444 /usr/lib/prime/substrate-release.json; \
     python3 -c 'import json; d=json.load(open("/usr/lib/prime/substrate-release.json", "r", encoding="utf-8")); assert d["schema"]=="prime.substrate-release.v1"; assert d["id"]=="fedora"; assert d["version_id"]=="44"'
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install /usr/lib/sysusers.d /usr/lib/tmpfiles.d
 COPY target/release/primed /usr/libexec/prime/primed
 COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
 COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
+COPY --from=compositor-builder /source/target/release/prime-shell /usr/libexec/prime/prime-shell
+COPY image/scripts/prime-shell-session /usr/libexec/prime/prime-shell-session
+COPY image/scripts/prime-first-light-witness /usr/libexec/prime/prime-first-light-witness
+COPY image/sysusers/prime-shell.conf /usr/lib/sysusers.d/prime-shell.conf
+COPY image/tmpfiles/prime-libx11-cache.conf /usr/lib/tmpfiles.d/prime-libx11-cache.conf
 COPY image/systemd/primed.service /usr/lib/systemd/system/primed.service
+COPY image/systemd/prime-compositor.service /usr/lib/systemd/system/prime-compositor.service
+COPY image/systemd/prime-shell.service /usr/lib/systemd/system/prime-shell.service
+COPY image/systemd/prime-first-light-witness.service /usr/lib/systemd/system/prime-first-light-witness.service
 COPY image/systemd/prime-recovery.service /usr/lib/systemd/system/prime-recovery.service
 COPY image/systemd/prime-recovery.target /usr/lib/systemd/system/prime-recovery.target
 COPY image/bootc/10-prime.toml /usr/lib/bootc/install/10-prime.toml
@@ -173,9 +185,15 @@ RUN set -eux; \
     chmod 0755 \
         /usr/libexec/prime/primed \
         /usr/libexec/prime/prime-recovery \
-        /usr/libexec/prime/prime-compositor; \
-    chmod 0444 /usr/lib/bootc/install/10-prime.toml; \
+        /usr/libexec/prime/prime-compositor \
+        /usr/libexec/prime/prime-shell \
+        /usr/libexec/prime/prime-shell-session \
+        /usr/libexec/prime/prime-first-light-witness; \
+    chmod 0444 /usr/lib/bootc/install/10-prime.toml /usr/lib/tmpfiles.d/prime-libx11-cache.conf; \
+    grep -Fx 'd /var/cache/libX11 0755 root root - -' /usr/lib/tmpfiles.d/prime-libx11-cache.conf; \
+    grep -Fx 'd /var/cache/libX11/compose 0755 root root - -' /usr/lib/tmpfiles.d/prime-libx11-cache.conf; \
     ! ldd /usr/libexec/prime/prime-compositor | grep -q 'not found'; \
+    ! ldd /usr/libexec/prime/prime-shell | grep -q 'not found'; \
     test -e /usr/lib64/libEGL.so.1; \
     test -e /usr/lib64/libEGL_mesa.so.0; \
     test -e /usr/lib64/libgbm.so.1; \
@@ -187,11 +205,15 @@ RUN set -eux; \
     rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.7-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
-    systemctl enable primed.service; \
+    systemctl enable primed.service prime-compositor.service prime-shell.service prime-first-light-witness.service; \
+    systemctl set-default graphical.target; \
+    systemctl mask getty@tty1.service; \
     systemctl disable bootc-fetch-apply-updates.timer >/dev/null 2>&1 || true; \
     test -f /usr/lib/systemd/system/prime-recovery.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
-    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     bootc install print-configuration > /tmp/prime-install-config.json; \
     python3 -c 'import json; c=json.load(open("/tmp/prime-install-config.json")); assert c.get("bootloader") == "systemd", c'; \
     rm -f /tmp/prime-install-config.json
@@ -218,7 +240,15 @@ RUN set -eux; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
     test -x /usr/libexec/prime/prime-compositor; \
+    test -x /usr/libexec/prime/prime-shell; \
+    test -x /usr/libexec/prime/prime-shell-session; \
+    test -x /usr/libexec/prime/prime-first-light-witness; \
+    test -f /usr/lib/sysusers.d/prime-shell.conf; \
+    test -f /usr/lib/tmpfiles.d/prime-libx11-cache.conf; \
     test -L /etc/systemd/system/multi-user.target.wants/primed.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer; \
     bootc container lint --fatal-warnings
 
@@ -228,11 +258,20 @@ RUN set -eux; \
     bootc container split-kernel-and-rootfs --rootfs / --output /kernel; \
     test "$(find /kernel -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
 
+# This stage is the exact filesystem sealed by the UKIs. Kernel build
+# artifacts are kept only in `split` and are intentionally excluded from
+# the Composefs rootfs digest, matching bootc's documented sealing model.
+FROM split AS sealed-rootfs
+RUN set -eux; \
+    rm -rf /kernel; \
+    test ! -e /kernel; \
+    ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
+
 FROM rootfs AS uki-tools
 ARG PRIME_COMPOSEFS_DIGEST
 COPY image/scripts/prepare-uki-cmdlines.py /tmp/prepare-uki-cmdlines.py
 COPY image/scripts/check-uki-contract.py /tmp/check-uki-contract.py
-RUN --mount=type=bind,from=split,target=/target,ro \
+RUN --mount=type=bind,from=sealed-rootfs,target=/target,ro \
     --mount=type=bind,from=split,source=/kernel,target=/kernel,ro \
     set -eux; \
     mkdir -p /out; \
@@ -249,7 +288,7 @@ RUN --mount=type=bind,from=split,target=/target,ro \
       -- \
       --output "${provisional}"; \
     test -s "${provisional}"; \
-    ukify inspect --json=short "${provisional}" > /tmp/prime-provisional-uki.json; \
+    ukify --json=short inspect "${provisional}" > /tmp/prime-provisional-uki.json; \
     python3 /tmp/prepare-uki-cmdlines.py \
       --inspect-json /tmp/prime-provisional-uki.json \
       --normal-out /tmp/prime-normal-cmdline \
@@ -281,8 +320,8 @@ RUN --mount=type=bind,from=split,target=/target,ro \
       --output "${recovery}"; \
     test -s "${normal}"; \
     test -s "${recovery}"; \
-    ukify inspect --json=short "${normal}" > /tmp/prime-normal-uki.json; \
-    ukify inspect --json=short "${recovery}" > /tmp/prime-recovery-uki.json; \
+    ukify --json=short inspect "${normal}" > /tmp/prime-normal-uki.json; \
+    ukify --json=short inspect "${recovery}" > /tmp/prime-recovery-uki.json; \
     python3 /tmp/check-uki-contract.py \
       --provisional /tmp/prime-provisional-uki.json \
       --normal /tmp/prime-normal-uki.json \
@@ -300,12 +339,13 @@ RUN --mount=type=bind,from=split,target=/target,ro \
     test "$(find /out -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
     test "$(find /out -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1
 
-FROM split AS final
+FROM sealed-rootfs AS final
 COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
 
 RUN set -eux; \
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \
+    test ! -e /kernel; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
     ! rpm -q bootupd >/dev/null 2>&1; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
@@ -317,6 +357,15 @@ RUN set -eux; \
     test -x /usr/libexec/prime/primed; \
     test -x /usr/libexec/prime/prime-recovery; \
     test -x /usr/libexec/prime/prime-compositor; \
-    test ! -e /etc/systemd/system/multi-user.target.wants/prime-compositor.service; \
+    test -x /usr/libexec/prime/prime-shell; \
+    test -x /usr/libexec/prime/prime-shell-session; \
+    test -x /usr/libexec/prime/prime-first-light-witness; \
+    test -f /usr/lib/tmpfiles.d/prime-libx11-cache.conf; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-compositor.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
+    test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
-    test -f /usr/lib/systemd/system/prime-recovery.service
+    test -f /usr/lib/systemd/system/prime-recovery.service; \
+    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-wal

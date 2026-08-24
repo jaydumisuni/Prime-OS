@@ -1,4 +1,4 @@
-use crate::{identity, launcher, storage, CoreState};
+use crate::{identity, launcher, power, shell_api, storage, CoreState};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -9,15 +9,16 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use prime_contracts::{
     CapabilitiesProjection, HardwareProjection, HealthProjection, HealthStatus, HostProjection,
-    HostProjectionBody, InterfaceError, NativeLaunchRequest, StoragePreflightRequest,
-    StorageProjection, VersionsProjection, CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION,
-    NATIVE_LAUNCH_REQUEST_SCHEMA, STORAGE_PREFLIGHT_SCHEMA,
+    HostProjectionBody, InterfaceError, NativeLaunchRequest, ShellLaunchRequest,
+    StoragePreflightRequest, StorageProjection, SystemPowerRequest, VersionsProjection,
+    CAPABILITY_INTERFACE, CAPABILITY_INTERFACE_VERSION, NATIVE_LAUNCH_REQUEST_SCHEMA,
+    SHELL_LAUNCH_REQUEST_SCHEMA, STORAGE_PREFLIGHT_SCHEMA, SYSTEM_POWER_REQUEST_SCHEMA,
 };
 use serde::Serialize;
 use std::convert::Infallible;
 use std::fs;
 use std::io;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use tokio::net::UnixListener;
 
@@ -29,6 +30,10 @@ const MAX_MUTATION_BODY_BYTES: usize = 16 * 1024;
 enum NegotiationError {
     VersionRequired,
     Incompatible(Vec<String>),
+}
+
+fn shell_peer_authorized(peer_uid: u32, peer_gid: u32, socket_gid: u32) -> bool {
+    peer_uid == 0 || (socket_gid != 0 && peer_gid == socket_gid)
 }
 
 pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
@@ -48,6 +53,7 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
 
     let listener = UnixListener::bind(socket_path)?;
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))?;
+    let shell_gid = fs::metadata(socket_path)?.gid();
 
     let mut state = state;
     state
@@ -64,11 +70,14 @@ pub async fn run(socket_path: &Path, state: CoreState) -> io::Result<()> {
             }
         };
         let peer_uid = credential.uid();
+        let peer_gid = credential.gid();
         let state = state.clone();
 
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
-            let service = service_fn(move |request| route(request, state.clone(), peer_uid));
+            let service = service_fn(move |request| {
+                route(request, state.clone(), peer_uid, peer_gid, shell_gid)
+            });
             if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("primed connection failed: {error}");
             }
@@ -80,6 +89,8 @@ async fn route(
     request: Request<Incoming>,
     state: CoreState,
     peer_uid: u32,
+    peer_gid: u32,
+    shell_gid: u32,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     if request.method() == Method::GET && request.uri().path() == "/v1/versions" {
         return Ok(json_response(
@@ -96,6 +107,122 @@ async fn route(
         Ok(version) => version,
         Err(error) => return Ok(negotiation_error_response(error)),
     };
+
+    if request.method() == Method::POST && request.uri().path() == "/v1/shell/launch" {
+        if !shell_peer_authorized(peer_uid, peer_gid, shell_gid) {
+            return Ok(error_response(
+                StatusCode::FORBIDDEN,
+                "PRIME_SHELL_AUTHORIZATION_REQUIRED",
+                "Prime Shell launch requires root or the dedicated Core socket group",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let body = match collect_mutation_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return Ok(response),
+        };
+        let shell_request: ShellLaunchRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "PRIME_SHELL_LAUNCH_REQUEST_INVALID",
+                    "Shell launch request is not valid prime.shell-launch-request.v1 JSON",
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+        };
+        if shell_request.schema != SHELL_LAUNCH_REQUEST_SCHEMA {
+            return Ok(error_response(
+                StatusCode::BAD_REQUEST,
+                "PRIME_SHELL_LAUNCH_SCHEMA_INVALID",
+                "Shell launch request schema is not supported",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+
+        let launch_state = state.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            shell_api::launch_selected(&launch_state, &shell_request)
+        })
+        .await;
+
+        return Ok(match result {
+            Ok(Ok(evidence)) => json_response(StatusCode::OK, &evidence, true),
+            Ok(Err(error)) => error_response(
+                StatusCode::CONFLICT,
+                "PRIME_SHELL_LAUNCH_DENIED",
+                &error.to_string(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(_) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_SHELL_LAUNCH_TASK_FAILED",
+                "Shell launch worker terminated before returning evidence",
+                Vec::new(),
+                Vec::new(),
+            ),
+        });
+    }
+
+    if request.method() == Method::POST && request.uri().path() == "/v1/system/power" {
+        if !shell_peer_authorized(peer_uid, peer_gid, shell_gid) {
+            return Ok(error_response(
+                StatusCode::FORBIDDEN,
+                "PRIME_SYSTEM_POWER_AUTHORIZATION_REQUIRED",
+                "Prime power mutation requires root or the dedicated Core socket group",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let body = match collect_mutation_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return Ok(response),
+        };
+        let power_request: SystemPowerRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "PRIME_SYSTEM_POWER_REQUEST_INVALID",
+                    "Power request is not valid prime.system-power-request.v1 JSON",
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+        };
+        if power_request.schema != SYSTEM_POWER_REQUEST_SCHEMA {
+            return Ok(error_response(
+                StatusCode::BAD_REQUEST,
+                "PRIME_SYSTEM_POWER_SCHEMA_INVALID",
+                "Power request schema is not supported",
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let result = tokio::task::spawn_blocking(move || power::execute(&power_request)).await;
+        return Ok(match result {
+            Ok(Ok(evidence)) => json_response(StatusCode::ACCEPTED, &evidence, true),
+            Ok(Err(error)) => error_response(
+                StatusCode::CONFLICT,
+                "PRIME_SYSTEM_POWER_DENIED",
+                &error.to_string(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(_) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_SYSTEM_POWER_TASK_FAILED",
+                "Power mutation worker terminated before returning evidence",
+                Vec::new(),
+                Vec::new(),
+            ),
+        });
+    }
 
     if request.method() == Method::POST && request.uri().path() == "/v1/exec/native/launch" {
         if peer_uid != 0 {
@@ -341,6 +468,16 @@ async fn route(
             },
             true,
         ),
+        "/v1/applications" => match shell_api::applications_projection(&state, negotiated) {
+            Ok(applications) => json_response(StatusCode::OK, &applications, true),
+            Err(error) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PRIME_APPLICATION_REGISTRY_UNAVAILABLE",
+                &error.to_string(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        },
         "/v1/capabilities" => json_response(
             StatusCode::OK,
             &CapabilitiesProjection {
@@ -491,6 +628,26 @@ fn json_response<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_authorization_accepts_root() {
+        assert!(shell_peer_authorized(0, 0, 0));
+    }
+
+    #[test]
+    fn shell_authorization_accepts_dedicated_nonzero_socket_group() {
+        assert!(shell_peer_authorized(1000, 991, 991));
+    }
+
+    #[test]
+    fn shell_authorization_rejects_wrong_group() {
+        assert!(!shell_peer_authorized(1000, 992, 991));
+    }
+
+    #[test]
+    fn shell_authorization_does_not_delegate_root_group() {
+        assert!(!shell_peer_authorized(1000, 0, 0));
+    }
 
     #[test]
     fn negotiation_accepts_v1() {

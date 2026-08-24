@@ -4,6 +4,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub const APPLICATIONS_PROJECTION_SCHEMA: &str = "prime.applications.v1";
+pub const SHELL_LAUNCH_REQUEST_SCHEMA: &str = "prime.shell-launch-request.v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ApplicationArtifact {
     pub identity: String,
@@ -37,4 +40,36 @@ pub struct ApplicationProfile {
     pub revoked: bool,
     pub revocation_reason: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplicationEntry {
+    pub application_id: Uuid,
+    pub display_name: String,
+    pub profile_revision: u64,
+    pub profile_digest: String,
+    pub execution_backend: ExecutionBackend,
+    pub compatibility: CompatibilityRecord,
+    pub launch_ready: bool,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplicationsProjection {
+    pub schema: String,
+    pub interface: String,
+    pub interface_version: String,
+    pub host_id: Uuid,
+    pub generation_id: String,
+    #[serde(default)]
+    pub applications: Vec<ApplicationEntry>,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShellLaunchRequest {
+    pub schema: String,
+    pub application_id: Uuid,
 }

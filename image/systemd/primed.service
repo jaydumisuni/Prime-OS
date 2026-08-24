@@ -1,8 +1,7 @@
 [Unit]
 Description=Prime Core Host Authority
-Documentation=https://github.com/jaydumisuni/Prime-OS
-After=local-fs.target
-Before=graphical.target
+After=local-fs.target systemd-sysusers.service
+Before=prime-compositor.service graphical.target
 ConditionPathExists=/usr/lib/prime/generation-seed.json
 ConditionPathIsExecutable=/usr/sbin/bootc
 
@@ -10,24 +9,26 @@ ConditionPathIsExecutable=/usr/sbin/bootc
 Type=simple
 ExecStart=/usr/libexec/prime/primed
 User=root
-Group=root
+Group=prime-shell
 RuntimeDirectory=prime
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0770
 StateDirectory=prime
 StateDirectoryMode=0711
 Restart=on-failure
-RestartSec=1s
+RestartSec=2s
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
 PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/prime /run/prime
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_BOOT
+AmbientCapabilities=
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-ReadWritePaths=/var/lib/prime /run/prime
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
