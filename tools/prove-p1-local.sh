@@ -335,9 +335,9 @@ find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-
 XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
 if [[ -n "$XBOOTLDR" ]]; then
   sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
-  find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
+  sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
 fi
-mapfile -t INSTALLED_UKIS < <(find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/*.efi' -print 2>/dev/null | sort)
+mapfile -t INSTALLED_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/*.efi' -print | sort)
 [[ "${#INSTALLED_UKIS[@]}" -eq 2 ]] || fail "expected two installed Prime UKIs, found ${#INSTALLED_UKIS[@]}"
 INSTALLED_RECOVERY_COUNT="$(printf '%s\n' "${INSTALLED_UKIS[@]}" | grep -c '\.recovery\.efi$' || true)"
 [[ "$INSTALLED_RECOVERY_COUNT" -eq 1 ]] || fail "expected exactly one installed recovery UKI"
