@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readiness="${PRIME_COMPOSITOR_READINESS:-/run/prime-compositor/readiness.json}"
+core_socket="${PRIME_CORE_SOCKET:-/run/prime/core.sock}"
+out=/var/lib/prime/first-light/mechanical.json
+deadline=$((SECONDS + 90))
+mkdir -p "$(dirname "$out")"
+
+while (( SECONDS < deadline )); do
+  if [[ -f "$readiness" && -S "$core_socket" ]]; then
+    if python3 - "$readiness" "$core_socket" "$out" <<'PY'
+import datetime, json, os, pathlib, stat, sys
+readiness_path, socket_path, out_path = sys.argv[1:]
+try:
+    d = json.load(open(readiness_path, 'r', encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+required = (
+    d.get('schema') == 'prime.compositor-readiness.v1'
+    and d.get('phase') == 'SHELL_READY'
+    and d.get('shell_ready') is True
+    and d.get('frame_loop_ready') is True
+    and d.get('wayland_listener_ready') is True
+    and d.get('wayland_protocols_ready') is True
+    and d.get('outputs_ready') is True
+    and d.get('renderer_ready') is True
+    and int(d.get('clients_accepted', 0)) >= 1
+    and int(d.get('mapped_surface_frames_submitted', 0)) >= 1
+)
+if not required:
+    raise SystemExit(1)
+st = os.stat(socket_path)
+if not stat.S_ISSOCK(st.st_mode) or st.st_gid == 0:
+    raise SystemExit(1)
+out = {
+    'schema': 'prime.first-light-mechanical.v1',
+    'status': 'SHELL_READY',
+    'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'compositor_phase': d['phase'],
+    'shell_ready': True,
+    'frame_loop_ready': True,
+    'wayland_listener_ready': True,
+    'wayland_socket': d.get('wayland_socket'),
+    'clients_accepted': int(d.get('clients_accepted', 0)),
+    'mapped_surface_frames_submitted': int(d.get('mapped_surface_frames_submitted', 0)),
+    'core_socket_gid': st.st_gid,
+    'core_socket_group_nonzero': True,
+    'owner_visual_acceptance': False,
+}
+p = pathlib.Path(out_path)
+tmp = p.with_suffix('.tmp')
+tmp.write_text(json.dumps(out, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+os.chmod(tmp, 0o644)
+os.replace(tmp, p)
+PY
+    then
+      exit 0
+    fi
+  fi
+  sleep 1
+done
+
+echo "prime-first-light-witness: SHELL_READY evidence was not earned before timeout" >&2
+exit 1

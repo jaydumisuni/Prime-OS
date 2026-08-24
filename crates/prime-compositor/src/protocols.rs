@@ -128,6 +128,14 @@ impl CompositorHandler for Runtime {
 
         handle_xdg_commit(&mut self.protocols.popups, &self.protocols.space, surface);
         handle_layer_commit(&self._output, surface);
+        if crate::shell::persistent_layer_for_surface(&self._output, surface) {
+            let output = self._output.clone();
+            if crate::shell::persistent_baseline_renderable(&mut self._renderer, &output).is_none()
+            {
+                self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+                self.persist_best_effort();
+            }
+        }
         self.request_frame();
     }
 }
@@ -202,9 +210,11 @@ impl WlrLayerShellHandler for Runtime {
         if target != self._output {
             eprintln!("prime-compositor rejected layer surface for unsupported output");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+            self.persist_best_effort();
             return;
         }
 
+        let persistent_shell = crate::shell::is_persistent_namespace(&namespace);
         let desktop_surface = DesktopLayerSurface::new(surface, namespace);
         let map_result = {
             let mut map = layer_map_for_output(&self._output);
@@ -213,6 +223,11 @@ impl WlrLayerShellHandler for Runtime {
         if let Err(error) = map_result {
             eprintln!("prime-compositor could not map layer surface: {error}");
             self.invalidate_frame_loop("FRAME_MAPPING_ERROR", crate::frame::FRAME_ERROR_LIMITATION);
+            self.persist_best_effort();
+        } else if persistent_shell {
+            self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+            self.request_frame();
+            self.persist_best_effort();
         }
     }
 
@@ -223,8 +238,13 @@ impl WlrLayerShellHandler for Runtime {
             .find(|layer| layer.wl_surface() == surface.wl_surface())
             .cloned();
         if let Some(layer) = mapped {
+            let persistent_shell = crate::shell::is_persistent_namespace(layer.namespace());
             map.unmap_layer(&layer);
             drop(map);
+            if persistent_shell {
+                self.invalidate_shell_readiness(crate::shell::SHELL_NOT_PROVEN_LIMITATION);
+                self.persist_best_effort();
+            }
             self.request_frame();
         }
     }

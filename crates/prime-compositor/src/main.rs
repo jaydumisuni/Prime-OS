@@ -2,6 +2,7 @@ mod frame;
 mod input;
 mod output;
 mod protocols;
+mod shell;
 
 use serde::Serialize;
 use smithay::{
@@ -137,6 +138,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
         self.add_limitation(limitation);
     }
 
@@ -148,6 +150,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
         self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -158,6 +161,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
         self.add_limitation(limitation);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -169,6 +173,7 @@ impl Runtime {
         self.readiness.frame_loop_ready = false;
         self.readiness.frame_in_flight = false;
         self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
         self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
         self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
     }
@@ -396,7 +401,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
                 "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
                 frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
-                "Prime Shell is not started yet".to_owned(),
+                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
             ],
         },
     };
