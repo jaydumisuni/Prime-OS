@@ -1,4 +1,4 @@
-name: Prime P1 rootful bounded AppArmor QCOW2 proof
+name: Prime P1 composefs seal convergence probe
 
 on:
   pull_request:
@@ -8,112 +8,115 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
-  prove-rootful-boundary:
+  prove-composefs-seal:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
-      IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
+      SOURCE_SHA: b64fc4c1080e45b0ff3a4d31056e67f24332e964
       BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
-      BWRAP_POLICY: /etc/apparmor.d/bwrap-userns-restrict
-      LSBLK_POLICY: /etc/apparmor.d/lsblk
-      EXPECTED_BWRAP_SHA256: d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990
-      EXPECTED_PRIME_REVISION: b64fc4c1080e45b0ff3a4d31056e67f24332e964
+      INITIAL_FINAL_DIGEST: 3df022cb8dfa81a54259783a86c08d45c18f8a1473cebe282536100679a65de3e12dc83de9743ba8be57d61cca2b20db769a7a89dc8b22be398f13d6ff126b31
+      EXPECTED_ROOTFS_DIGEST: 76a93d6ff724d3ead8b41de13a825b8d972a5f09b777803c370f7f66b5ddef16e93cfe733ac9dae47ba093c5f898765e3aaa0258d7fa205a822dd17bfbaaa67c
+      PROBE_TAG: localhost/prime-os:p1-reseal-probe
     steps:
-      - name: Freeze exact host profiles, Prime image and builder inputs
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+
+      - name: Authenticate Prime-owned Fedora substrate
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | sudo -n podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Prove current digest contradiction and test iterative reseal
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git show -s --format=%cI HEAD)" = '2026-08-24T01:11:21+02:00'
           test -c /dev/fuse
-          test -f "$BWRAP_POLICY"
-          test -f "$LSBLK_POLICY"
-          actual="$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')"
-          test "$actual" = "$EXPECTED_BWRAP_SHA256"
-          printf 'LSBLK_POLICY_SHA256=%s\n' "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(enforce\)$' | wc -l | grep -Fx 3
+          sudo -n podman image exists localhost/prime-os:p1-rootfs
           sudo -n podman image exists localhost/prime-os:p1
           revision="$(sudo -n podman image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' localhost/prime-os:p1)"
-          echo "LOCAL_PRIME_REVISION=$revision"
-          test "$revision" = "$EXPECTED_PRIME_REVISION"
-          sudo -n podman image exists "$BASE_IMAGE"
-          sudo -n podman image exists "$IMAGE_BUILDER"
-          sudo -n podman run --rm "$IMAGE_BUILDER" build --help | grep -F -- '--bootc-build-ref'
+          test "$revision" = "$SOURCE_SHA"
 
-      - name: Build QCOW2 rootfully in bounded reversible bwrap plus lsblk complain window
+          digest_of() {
+            local image="$1"
+            sudo -n podman run --rm \
+              --privileged \
+              --security-opt label=disable \
+              --tmpfs /var/tmp:size=8g \
+              -v /var/lib/containers/storage:/var/lib/containers/storage \
+              "$image" \
+              bootc container compute-composefs-digest-from-storage "$image" | tail -n1
+          }
+
+          rootfs_digest="$(digest_of localhost/prime-os:p1-rootfs)"
+          current_final_digest="$(digest_of localhost/prime-os:p1)"
+          echo "CURRENT_ROOTFS_DIGEST=$rootfs_digest"
+          echo "CURRENT_FINAL_DIGEST=$current_final_digest"
+          test "$rootfs_digest" = "$EXPECTED_ROOTFS_DIGEST"
+          test "$current_final_digest" = "$INITIAL_FINAL_DIGEST"
+
+          created_at="$(git show -s --format=%cI HEAD)"
+          generation_id="p1-first-light-${SOURCE_SHA:0:12}"
+          base_digest="sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341"
+          seal="$INITIAL_FINAL_DIGEST"
+          converged=0
+
+          for round in 1 2 3; do
+            echo "=== RESEAL ROUND $round input=$seal ==="
+            sudo -n podman build \
+              --cap-add=all \
+              --device /dev/fuse \
+              --security-opt label=disable \
+              --platform linux/amd64 \
+              --build-arg PRIME_BASE_IMAGE="$BASE_IMAGE" \
+              --build-arg PRIME_BASE_DIGEST="$base_digest" \
+              --build-arg TARGETARCH=amd64 \
+              --build-arg PRIME_GENERATION_ID="$generation_id" \
+              --build-arg PRIME_SOURCE_REVISION="$SOURCE_SHA" \
+              --build-arg PRIME_CREATED_AT="$created_at" \
+              --build-arg PRIME_BOOT_ATTEMPT_LIMIT=3 \
+              --build-arg PRIME_COMPOSEFS_DIGEST="$seal" \
+              -f image/Containerfile \
+              -t "$PROBE_TAG" .
+
+            embedded="$(sudo -n podman run --rm --entrypoint /bin/bash "$PROBE_TAG" -ceu '
+              normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
+              recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
+              grep -aoE "composefs=[0-9a-f]{128}" "$normal" | head -n1 | cut -d= -f2
+              grep -aoE "composefs=[0-9a-f]{128}" "$recovery" | head -n1 | cut -d= -f2
+            ')"
+            normal="$(printf '%s\n' "$embedded" | sed -n '1p')"
+            recovery="$(printf '%s\n' "$embedded" | sed -n '2p')"
+            test "$normal" = "$seal"
+            test "$recovery" = "$seal"
+
+            next="$(digest_of "$PROBE_TAG")"
+            echo "ROUND_${round}_EMBEDDED=$seal"
+            echo "ROUND_${round}_FINAL_DIGEST=$next"
+            if test "$next" = "$seal"; then
+              echo "COMPOSEFS_RESEAL_CONVERGED_ROUND=$round"
+              converged=1
+              break
+            fi
+            seal="$next"
+          done
+
+          if test "$converged" -eq 0; then
+            echo 'COMPOSEFS_RESEAL_NONCONVERGENT=1'
+          fi
+
+      - name: Remove ephemeral registry credentials
+        if: ${{ always() }}
         shell: bash
         run: |
-          set -u
-          out=/var/tmp/prime-p1-rootful-bounded-qcow2-proof
-          bwrap_sha="$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')"
-          lsblk_sha="$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')"
-
-          restore_profiles() {
-            sudo -n apparmor_parser -r "$BWRAP_POLICY" >/dev/null 2>&1 || true
-            sudo -n apparmor_parser -r "$LSBLK_POLICY" >/dev/null 2>&1 || true
-          }
-          trap restore_profiles EXIT INT TERM
-
-          sudo -n apparmor_parser -r -C "$BWRAP_POLICY"
-          sudo -n apparmor_parser -r -C "$LSBLK_POLICY"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(complain\)$' | wc -l | grep -Fx 3
-
-          sudo -n rm -rf "$out"
-          sudo -n mkdir -p "$out"
-          sudo -n chown "$(id -u):$(id -g)" "$out"
-          START="$(date '+%Y-%m-%d %H:%M:%S')"
-
-          set +e
-          timeout --signal=TERM --kill-after=10s 1200s sudo -n podman run --rm \
-            --privileged \
-            --security-opt label=disable \
-            --device /dev/fuse:/dev/fuse \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$out:/output" \
-            "$IMAGE_BUILDER" \
-            --output-dir /output \
-            build \
-            --bootc-ref localhost/prime-os:p1 \
-            --bootc-build-ref "$BASE_IMAGE" \
-            --bootc-default-fs ext4 \
-            --with-manifest \
-            --with-buildlog \
-            --progress verbose \
-            qcow2 2>&1 | tee "$out/probe.log"
-          rc=${PIPESTATUS[0]}
-          set -e
-          echo "IMAGE_BUILDER_RC=$rc"
-
-          restore_profiles
-          trap - EXIT INT TERM
-          test "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" = "$bwrap_sha"
-          test "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" = "$lsblk_sha"
-          test "$bwrap_sha" = "$EXPECTED_BWRAP_SHA256"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(enforce\)$' | wc -l | grep -Fx 3
-          echo "RESTORED_BWRAP_POLICY_SHA256=$bwrap_sha"
-          echo "RESTORED_LSBLK_POLICY_SHA256=$lsblk_sha"
-
-          old_mount=0
-          old_overlay=0
-          old_lsblk=0
-          grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
-          grep -Fq "'overlay' is not supported over tmpfs" "$out/probe.log" && old_overlay=1
-          grep -Fq 'Listing device /dev/loop' "$out/probe.log" && old_lsblk=1
-          echo "OLD_APPARMOR_MOUNT_FAILURE=$old_mount"
-          echo "OLD_FUSE_OVERLAY_FAILURE=$old_overlay"
-          echo "OLD_LSBLK_DEVICE_FAILURE=$old_lsblk"
-          echo '=== relevant rootful boundary evidence ==='
-          grep -E 'org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Pipeline image|Pipeline qcow2|Results saved|Success|Failed|error:|Listing device|mount: /run/osbuild/containers/storage' "$out/probe.log" | tail -n 480 || true
-          echo '=== AppArmor audit during bounded window ==='
-          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor=.*(unpriv_bwrap|bwrap|lsblk)' | tail -n 200 || true
-
-          test "$old_mount" -eq 0
-          test "$old_overlay" -eq 0
-          test "$old_lsblk" -eq 0
-          test "$rc" -eq 0
-          qcow="$(find "$out" -type f -name '*.qcow2' -print -quit)"
-          test -n "$qcow"
-          qemu-img info "$qcow"
-          qemu-img check "$qcow"
-          echo ROOTFUL_BOUNDED_QCOW2_BOUNDARY=PROVEN
+          sudo -n podman logout ghcr.io >/dev/null 2>&1 || true
