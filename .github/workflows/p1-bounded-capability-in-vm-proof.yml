@@ -4,7 +4,7 @@ on:
   pull_request:
     branches:
       - adapter/p1-image-builder-mount-probe
-    types: [synchronize]
+    types: [reopened]
 
 permissions:
   contents: read
