@@ -1,4 +1,4 @@
-name: Prime P1 bounded capability plus Fedora buildroot VM proof
+name: Prime P1 rootful bounded capability QCOW2 proof
 
 on:
   pull_request:
@@ -10,10 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  prove-composed-boundary:
+  prove-rootful-boundary:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
       BASE_IMAGE: ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341
@@ -21,39 +21,28 @@ jobs:
       EXPECTED_POLICY_SHA256: d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990
       EXPECTED_PRIME_REVISION: b64fc4c1080e45b0ff3a4d31056e67f24332e964
     steps:
-      - name: Freeze exact host, policy, Prime image, Fedora buildroot and builder
+      - name: Freeze exact host policy, Prime image and builder inputs
         shell: bash
         run: |
           set -euo pipefail
-          test -c /dev/kvm
           test -c /dev/fuse
           actual="$(sha256sum "$POLICY" | awk '{print $1}')"
           test "$actual" = "$EXPECTED_POLICY_SHA256"
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$' | wc -l | grep -Fx 2
-
           sudo -n podman image exists localhost/prime-os:p1
           revision="$(sudo -n podman image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' localhost/prime-os:p1)"
           echo "LOCAL_PRIME_REVISION=$revision"
           test "$revision" = "$EXPECTED_PRIME_REVISION"
-
           sudo -n podman image exists "$BASE_IMAGE"
-          sudo -n podman run --rm --entrypoint /bin/bash "$BASE_IMAGE" -ceu '
-            kernel_dir="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -print -quit)"
-            test -n "$kernel_dir"
-            test -f "$kernel_dir/vmlinuz"
-            printf "FEDORA_BUILDROOT_KERNEL_DIR=%s\n" "$kernel_dir"
-            printf "FEDORA_BUILDROOT_VMLINUZ=%s\n" "$kernel_dir/vmlinuz"
-          '
-
-          sudo -n podman run --rm "$IMAGE_BUILDER" build --help | grep -F -- '--in-vm'
+          sudo -n podman image exists "$IMAGE_BUILDER"
           sudo -n podman run --rm "$IMAGE_BUILDER" build --help | grep -F -- '--bootc-build-ref'
 
-      - name: Build QCOW2 with bounded build-pipeline capability window and pinned Fedora VM buildroot
+      - name: Build QCOW2 rootfully through bounded reversible AppArmor capability window
         shell: bash
         run: |
           set -u
           tmp_policy=/tmp/prime-p1-bwrap-userns-restrict
-          out=/var/tmp/prime-p1-fedora-buildroot-in-vm-proof
+          out=/var/tmp/prime-p1-rootful-bounded-qcow2-proof
 
           restore_policy() {
             sudo -n apparmor_parser -r "$POLICY" >/dev/null 2>&1 || true
@@ -66,7 +55,7 @@ jobs:
           needle = '  audit deny capability,\n'
           if src.count(needle) != 1:
               raise SystemExit(f'expected one child capability deny, found {src.count(needle)}')
-          replacement = '''  # Prime P1 proof-only build-pipeline window for the exact pinned image-builder.\n  allow capability,\n'''
+          replacement = '''  # Prime P1 proof-only capability window for the exact pinned image-builder.\n  allow capability,\n'''
           Path('/tmp/prime-p1-bwrap-userns-restrict').write_text(src.replace(needle, replacement, 1))
           PY
           sudo -n apparmor_parser -r "$tmp_policy"
@@ -78,17 +67,15 @@ jobs:
           START="$(date '+%Y-%m-%d %H:%M:%S')"
 
           set +e
-          timeout --signal=TERM 3000s sudo -n podman run --rm \
+          timeout --signal=TERM --kill-after=10s 1200s sudo -n podman run --rm \
             --privileged \
             --security-opt label=disable \
-            --device /dev/kvm:/dev/kvm \
             --device /dev/fuse:/dev/fuse \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v "$out:/output" \
             "$IMAGE_BUILDER" \
             --output-dir /output \
             build \
-            --in-vm \
             --bootc-ref localhost/prime-os:p1 \
             --bootc-build-ref "$BASE_IMAGE" \
             --bootc-default-fs ext4 \
@@ -108,24 +95,25 @@ jobs:
           sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$' | wc -l | grep -Fx 2
 
           old_mount=0
+          old_overlay=0
           old_lsblk=0
-          old_kernel=0
           grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
+          grep -Fq "'overlay' is not supported over tmpfs" "$out/probe.log" && old_overlay=1
           grep -Fq 'Listing device /dev/loop' "$out/probe.log" && old_lsblk=1
-          grep -Fq 'No valid kernel directory found in /usr/lib/modules' "$out/probe.log" && old_kernel=1
-          echo "OLD_INNER_MOUNT_FAILURE=$old_mount"
-          echo "OLD_LSBLK_FAILURE=$old_lsblk"
-          echo "OLD_VM_KERNEL_FAILURE=$old_kernel"
-          echo '=== relevant composed-boundary evidence ==='
-          grep -E 'org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Pipeline image|in vm|qemu|KVM|Success|Failed|error:' "$out/probe.log" | tail -n 320 || true
-          echo '=== host bwrap audit during composed window ==='
-          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor=.*(unpriv_bwrap|bwrap)' | tail -n 120 || true
+          echo "OLD_APPARMOR_MOUNT_FAILURE=$old_mount"
+          echo "OLD_FUSE_OVERLAY_FAILURE=$old_overlay"
+          echo "OLD_LSBLK_DEVICE_FAILURE=$old_lsblk"
+          echo '=== relevant rootful boundary evidence ==='
+          grep -E 'org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Pipeline image|Pipeline qcow2|Results saved|Success|Failed|error:|Listing device|mount: /run/osbuild/containers/storage' "$out/probe.log" | tail -n 420 || true
+          echo '=== host bwrap audit during bounded window ==='
+          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor=.*(unpriv_bwrap|bwrap)' | tail -n 160 || true
 
           test "$old_mount" -eq 0
+          test "$old_overlay" -eq 0
           test "$old_lsblk" -eq 0
-          test "$old_kernel" -eq 0
           test "$rc" -eq 0
           qcow="$(find "$out" -type f -name '*.qcow2' -print -quit)"
           test -n "$qcow"
           qemu-img info "$qcow"
-          echo FEDORA_BUILDROOT_VM_BOUNDARY=PROVEN
+          qemu-img check "$qcow"
+          echo ROOTFUL_BOUNDED_QCOW2_BOUNDARY=PROVEN
