@@ -66,14 +66,14 @@ jobs:
           test "$rootfs_digest" = "$EXPECTED_ROOTFS_DIGEST"
           test "$final_digest" = "$EXPECTED_FINAL_DIGEST"
 
-          echo '=== exact dump diff summary ==='
+          echo '=== exact dump diff ==='
           set +e
           diff -u "$out/rootfs.dump" "$out/final.dump" > "$out/diff.txt"
           diff_rc=$?
           set -e
           test "$diff_rc" -eq 1
           wc -l "$out/rootfs.dump" "$out/final.dump" "$out/diff.txt"
-          grep -E '^[+-]/boot|^[+-]/kernel|^@@' "$out/diff.txt" | head -n 240 || true
+          cat "$out/diff.txt"
           echo '=== changed top-level paths ==='
           awk '/^[+-]\// && !/^---/ && !/^\+\+\+/ {line=substr($0,2); split(line,a,"/"); if (a[2] != "") print "/" a[2]}' "$out/diff.txt" | sort | uniq -c
 
