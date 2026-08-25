@@ -1,0 +1,58 @@
+name: Prime P1 Core failure evidence
+
+on:
+  push:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 5
+    env:
+      DISK: /var/tmp/prime-p1-bls-root-probe/root-uuid.qcow2
+      STATE: /var/tmp/prime-p1-core-evidence
+      NBD: /dev/nbd1
+    steps:
+      - name: Inspect persisted Prime state and journal
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$STATE"; mkdir -p "$STATE/root"
+          test -f "$DISK"
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
+          sleep 2; sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ROOT"; sudo -n mount -o ro "$ROOT" "$STATE/root"
+          echo PRIME_STATE_SCAN_BEGIN
+          sudo -n find "$STATE/root" -path '*/var/lib/prime/*' -type f -maxdepth 12 -printf '%p\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 200 || true
+          echo PRIME_STATE_SCAN_END
+          for base in "$STATE/root/state/os/default/var/lib/prime" "$STATE/root/var/lib/prime"; do
+            if sudo -n test -d "$base"; then
+              echo "PRIME_BASE=${base#$STATE/root}"
+              for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
+                if sudo -n test -f "$base/$rel"; then
+                  echo "PRIME_FILE_BEGIN=$rel"
+                  sudo -n cat "$base/$rel"
+                  echo "PRIME_FILE_END=$rel"
+                else
+                  echo "PRIME_FILE_MISSING=$rel"
+                fi
+              done
+            fi
+          done
+          echo JOURNAL_SCAN_BEGIN
+          while IFS= read -r jdir; do
+            echo "JOURNAL_DIR=${jdir#$STATE/root}"
+            sudo -n journalctl --directory="$jdir" --no-pager -b -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>/dev/null | tail -n 300 || true
+          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal/*' -print 2>/dev/null | head -n 8)
+          echo JOURNAL_SCAN_END
+          echo BOOTC_STATE_FILES_BEGIN
+          sudo -n find "$STATE/root" -maxdepth 8 \( -path '*/bootc*' -o -path '*/ostree*' \) -print 2>/dev/null | sed "s#$STATE/root##" | head -n 200 || true
+          echo BOOTC_STATE_FILES_END
+          sudo -n umount "$STATE/root"; sudo -n qemu-nbd --disconnect "$NBD"
