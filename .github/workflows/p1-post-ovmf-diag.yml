@@ -29,15 +29,13 @@ jobs:
           test -f "$OVERLAY"
           echo "CANDIDATE_EXPECTED=$EXPECTED_CANDIDATE"
           echo "OVERLAY=$OVERLAY"
-          qemu-img info "$OVERLAY" | grep -E '^(file format|virtual size|backing file|backing file format):' || true
-
           if test -f "$SERIAL"; then
             echo "SERIAL_BYTES=$(wc -c < "$SERIAL")"
-            echo 'SERIAL_MARKERS_BEGIN'
-            grep -E -i 'error|failed|failure|panic|VFS|dracut|emergency|root|composefs|bootc|initrd|mount|systemd|virtio' "$SERIAL" | head -n 80 || true
-            echo 'SERIAL_MARKERS_END'
+            echo SERIAL_ALL_BEGIN
+            cat "$SERIAL" || true
+            echo SERIAL_ALL_END
           else
-            echo 'SERIAL_MISSING=1'
+            echo SERIAL_MISSING=1
           fi
 
           cleanup() {
@@ -69,17 +67,30 @@ jobs:
           test -z "$XBOOT" || sudo -n mount -o ro "$XBOOT" "$MNT/boot"
           sudo -n mount -o ro "$ROOT" "$MNT/root"
 
-          echo 'BLS_BEGIN'
+          echo LOADER_CONF_BEGIN
+          for f in "$MNT/esp/loader/loader.conf" "$MNT/boot/loader/loader.conf"; do
+            if sudo -n test -f "$f"; then
+              echo "LOADER_FILE=${f#$MNT/}"
+              sudo -n cat "$f"
+            fi
+          done
+          echo LOADER_CONF_END
+
+          echo BLS_BEGIN
           for root in "$MNT/esp" "$MNT/boot"; do
             for f in "$root"/loader/entries/*.conf; do
               sudo -n test -f "$f" || continue
-              printf 'BLS_FILE=%s\n' "${f#$MNT/}"
-              sudo -n grep -E '^(title|version|efi|linux|options|sort-key)' "$f" || true
+              echo "BLS_FILE=${f#$MNT/}"
+              sudo -n cat "$f"
             done
           done
-          echo 'BLS_END'
+          echo BLS_END
 
-          UKI="$(sudo -n find "$MNT/esp/EFI/Linux/bootc" "$MNT/boot/EFI/Linux/bootc" -maxdepth 1 -type f -name '*.efi' -print 2>/dev/null | head -n1)"
+          echo EFI_LINUX_FILES_BEGIN
+          sudo -n find "$MNT/esp" "$MNT/boot" -type f -path '*/EFI/Linux/*' -printf '%p\n' 2>/dev/null | sed "s#^$MNT/##" | sort || true
+          echo EFI_LINUX_FILES_END
+
+          UKI="$(sudo -n find "$MNT/esp" "$MNT/boot" -type f -path '*/EFI/Linux/bootc/*.efi' -print 2>/dev/null | head -n1 || true)"
           test -n "$UKI"
           COPY="$RUN_DIR/compact-normal.efi"
           INITRD="$RUN_DIR/compact-normal.initrd"
@@ -89,48 +100,30 @@ jobs:
           echo "NORMAL_UKI=${UKI#$MNT/}"
           echo "NORMAL_UKI_SHA256=$(sha256sum "$COPY" | awk '{print $1}')"
 
-          if command -v objcopy >/dev/null 2>&1; then
-            rm -f "$RUN_DIR/compact-normal.cmdline" "$INITRD"
-            objcopy --dump-section .cmdline="$RUN_DIR/compact-normal.cmdline" "$COPY"
-            objcopy --dump-section .initrd="$INITRD" "$COPY"
-            printf 'CMDLINE='
-            tr -d '\000' < "$RUN_DIR/compact-normal.cmdline"
-            printf '\n'
-            echo "INITRD_BYTES=$(wc -c < "$INITRD")"
-          else
-            echo OBJCOPY_MISSING=1
-          fi
+          rm -f "$RUN_DIR/compact-normal.cmdline" "$INITRD"
+          objcopy --dump-section .cmdline="$RUN_DIR/compact-normal.cmdline" "$COPY"
+          objcopy --dump-section .initrd="$INITRD" "$COPY"
+          printf CMDLINE=
+          tr -d '\000' < "$RUN_DIR/compact-normal.cmdline"
+          printf '\n'
+          echo "INITRD_BYTES=$(wc -c < "$INITRD")"
 
           : > "$LISTING"
-          if test -s "$INITRD" && command -v lsinitrd >/dev/null 2>&1; then
+          if command -v lsinitrd >/dev/null 2>&1; then
             lsinitrd "$INITRD" > "$LISTING" 2>&1 || true
-          elif test -s "$INITRD"; then
+          else
             strings -a "$INITRD" > "$LISTING" || true
           fi
-
-          for token in 'bootc' 'composefs' 'ostree' 'systemd' 'virtio_blk' 'virtio_pci' 'ext4' 'systemd-veritysetup' 'rootfs'; do
+          for token in bootc composefs ostree systemd virtio_blk virtio_pci ext4 systemd-veritysetup rootfs; do
             key="$(printf '%s' "$token" | tr '[:lower:]-' '[:upper:]_')"
-            if grep -E -i -q "$token" "$LISTING"; then
-              echo "INITRD_HAS_${key}=1"
-            else
-              echo "INITRD_HAS_${key}=0"
-            fi
+            if grep -E -i -q "$token" "$LISTING"; then echo "INITRD_HAS_${key}=1"; else echo "INITRD_HAS_${key}=0"; fi
           done
-          echo 'INITRD_ROOT_MARKERS_BEGIN'
+          echo INITRD_ROOT_MARKERS_BEGIN
           grep -E -i 'bootc|composefs|ostree|rootfs|sysroot|verity|virtio(_|-)(blk|pci)|ext4' "$LISTING" | head -n 80 || true
-          echo 'INITRD_ROOT_MARKERS_END'
+          echo INITRD_ROOT_MARKERS_END
 
           for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
             rel="${p#$MNT/root}"
-            if sudo -n test -e "$p"; then
-              echo "PRIME_STATE_EXISTS[$rel]=1"
-              sudo -n find "$p" -maxdepth 3 -type f -printf 'PRIME_FILE=%P\n' | sort | head -n 40 || true
-            else
-              echo "PRIME_STATE_EXISTS[$rel]=0"
-            fi
+            if sudo -n test -e "$p"; then echo "PRIME_STATE_EXISTS[$rel]=1"; else echo "PRIME_STATE_EXISTS[$rel]=0"; fi
           done
-
-          echo 'ROOT_BOOT_LAYOUT_BEGIN'
-          sudo -n find "$MNT/root" -maxdepth 4 \( -path '*/bootc*' -o -path '*/ostree*' -o -path '*/state/os/default*' \) -printf '%y %P -> %l\n' | sort | head -n 80 || true
-          echo 'ROOT_BOOT_LAYOUT_END'
           echo COMPACT_GUEST_BOOT_EVIDENCE=PASS
