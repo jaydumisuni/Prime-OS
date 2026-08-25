@@ -1,4 +1,4 @@
-name: Prime P1 compact guest boot evidence
+name: Prime P1 SATA guest causality proof
 
 on:
   pull_request:
@@ -10,120 +10,96 @@ permissions:
   contents: read
 
 jobs:
-  diagnose:
+  sata-causality:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 10
+    timeout-minutes: 6
     env:
       EXPECTED_CANDIDATE: 0398835ff01c9139be1c32f41530e4d1af12175b
       RUN_DIR: /var/tmp/prime-p1-local-proof/run
-      OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-boot-overlay.qcow2
-      SERIAL: /var/tmp/prime-p1-local-proof/run/prime-serial.log
+      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      TEST_OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-sata-diag-overlay.qcow2
+      TEST_SERIAL: /var/tmp/prime-p1-local-proof/run/prime-p1-sata-diag-serial.log
+      TEST_VARS: /var/tmp/prime-p1-local-proof/run/OVMF_VARS_4M-sata-diag.fd
       NBD: /dev/nbd1
-      MNT: /var/tmp/prime-p1-compact-guest-diag
+      MNT: /var/tmp/prime-p1-sata-diag-mnt
     steps:
-      - name: Emit decisive preserved-guest markers
+      - name: Boot exact QCOW2 through non-virtio SATA transport
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$OVERLAY"
+          OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+          OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+          test -f "$DISK"
+          test -r "$OVMF_CODE"
+          test -r "$OVMF_VARS_TEMPLATE"
           echo "CANDIDATE_EXPECTED=$EXPECTED_CANDIDATE"
-          echo "OVERLAY=$OVERLAY"
-          if test -f "$SERIAL"; then
-            echo "SERIAL_BYTES=$(wc -c < "$SERIAL")"
-            echo SERIAL_ALL_BEGIN
-            cat "$SERIAL" || true
-            echo SERIAL_ALL_END
-          else
-            echo SERIAL_MISSING=1
-          fi
+          echo "DISK=$DISK"
 
           cleanup() {
-            sudo -n umount "$MNT/esp" >/dev/null 2>&1 || true
-            sudo -n umount "$MNT/boot" >/dev/null 2>&1 || true
-            sudo -n umount "$MNT/root" >/dev/null 2>&1 || true
+            sudo -n umount "$MNT" >/dev/null 2>&1 || true
             sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
           rm -rf "$MNT"
-          mkdir -p "$MNT/esp" "$MNT/boot" "$MNT/root"
+          mkdir -p "$MNT"
+          rm -f "$TEST_OVERLAY" "$TEST_SERIAL" "$TEST_VARS"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$TEST_OVERLAY"
+          cp "$OVMF_VARS_TEMPLATE" "$TEST_VARS"
+
+          echo SATA_QEMU_BEGIN
+          set +e
+          timeout --signal=TERM 120s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$TEST_VARS" \
+            -device ich9-ahci,id=ahci \
+            -drive file="$TEST_OVERLAY",if=none,format=qcow2,id=prime-disk \
+            -device ide-hd,drive=prime-disk,bus=ahci.0 \
+            -display none \
+            -serial "file:$TEST_SERIAL" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          QEMU_RC=$?
+          set -e
+          echo "SATA_QEMU_RC=$QEMU_RC"
+          echo SATA_QEMU_END
+          test "$QEMU_RC" -eq 0 -o "$QEMU_RC" -eq 124 -o "$QEMU_RC" -eq 143
+          echo "SATA_SERIAL_BYTES=$(wc -c < "$TEST_SERIAL" 2>/dev/null || echo 0)"
+          echo SATA_SERIAL_BEGIN
+          cat "$TEST_SERIAL" 2>/dev/null || true
+          echo SATA_SERIAL_END
+
+          cleanup
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --read-only --connect="$NBD" "$OVERLAY"
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$TEST_OVERLAY"
           sleep 2
           sudo -n partprobe "$NBD"
-
-          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
-          XBOOT="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          test -n "$ESP"
           test -n "$ROOT"
-          echo "ESP=$ESP"
-          echo "XBOOT=${XBOOT:-NONE}"
-          echo "ROOT=$ROOT"
-          lsblk -no NAME,FSTYPE,LABEL,UUID,PARTLABEL "$ROOT" | sed 's/^/ROOT_IDENTITY=/'
+          echo "SATA_ROOT=$ROOT"
+          sudo -n mount -o ro "$ROOT" "$MNT"
 
-          sudo -n mount -o ro "$ESP" "$MNT/esp"
-          test -z "$XBOOT" || sudo -n mount -o ro "$XBOOT" "$MNT/boot"
-          sudo -n mount -o ro "$ROOT" "$MNT/root"
-
-          echo LOADER_CONF_BEGIN
-          for f in "$MNT/esp/loader/loader.conf" "$MNT/boot/loader/loader.conf"; do
-            if sudo -n test -f "$f"; then
-              echo "LOADER_FILE=${f#$MNT/}"
-              sudo -n cat "$f"
+          FOUND=0
+          for p in "$MNT/state/os/default/var/lib/prime" "$MNT/var/lib/prime"; do
+            rel="${p#$MNT}"
+            if sudo -n test -f "$p/hardware/current.json"; then
+              FOUND=1
+              echo "SATA_PRIME_STATE_PATH=$rel"
+              sudo -n find "$p" -maxdepth 3 -type f -printf 'SATA_PRIME_FILE=%P\n' | sort | head -n 80 || true
+              if sudo -n test -f "$p/generations/current.json"; then
+                printf 'SATA_GENERATION='; sudo -n cat "$p/generations/current.json"; printf '\n'
+              fi
+              if sudo -n test -f "$p/first-light/mechanical.json"; then
+                printf 'SATA_FIRST_LIGHT='; sudo -n cat "$p/first-light/mechanical.json"; printf '\n'
+              fi
             fi
           done
-          echo LOADER_CONF_END
-
-          echo BLS_BEGIN
-          for root in "$MNT/esp" "$MNT/boot"; do
-            for f in "$root"/loader/entries/*.conf; do
-              sudo -n test -f "$f" || continue
-              echo "BLS_FILE=${f#$MNT/}"
-              sudo -n cat "$f"
-            done
-          done
-          echo BLS_END
-
-          echo EFI_LINUX_FILES_BEGIN
-          sudo -n find "$MNT/esp" "$MNT/boot" -type f -path '*/EFI/Linux/*' -printf '%p\n' 2>/dev/null | sed "s#^$MNT/##" | sort || true
-          echo EFI_LINUX_FILES_END
-
-          UKI="$(sudo -n find "$MNT/esp" "$MNT/boot" -type f -path '*/EFI/Linux/bootc/*.efi' -print 2>/dev/null | head -n1 || true)"
-          test -n "$UKI"
-          COPY="$RUN_DIR/compact-normal.efi"
-          INITRD="$RUN_DIR/compact-normal.initrd"
-          LISTING="$RUN_DIR/compact-normal.lsinitrd"
-          sudo -n cp "$UKI" "$COPY"
-          sudo -n chown "$(id -u):$(id -g)" "$COPY"
-          echo "NORMAL_UKI=${UKI#$MNT/}"
-          echo "NORMAL_UKI_SHA256=$(sha256sum "$COPY" | awk '{print $1}')"
-
-          rm -f "$RUN_DIR/compact-normal.cmdline" "$INITRD"
-          objcopy --dump-section .cmdline="$RUN_DIR/compact-normal.cmdline" "$COPY"
-          objcopy --dump-section .initrd="$INITRD" "$COPY"
-          printf CMDLINE=
-          tr -d '\000' < "$RUN_DIR/compact-normal.cmdline"
-          printf '\n'
-          echo "INITRD_BYTES=$(wc -c < "$INITRD")"
-
-          : > "$LISTING"
-          if command -v lsinitrd >/dev/null 2>&1; then
-            lsinitrd "$INITRD" > "$LISTING" 2>&1 || true
-          else
-            strings -a "$INITRD" > "$LISTING" || true
-          fi
-          for token in bootc composefs ostree systemd virtio_blk virtio_pci ext4 systemd-veritysetup rootfs; do
-            key="$(printf '%s' "$token" | tr '[:lower:]-' '[:upper:]_')"
-            if grep -E -i -q "$token" "$LISTING"; then echo "INITRD_HAS_${key}=1"; else echo "INITRD_HAS_${key}=0"; fi
-          done
-          echo INITRD_ROOT_MARKERS_BEGIN
-          grep -E -i 'bootc|composefs|ostree|rootfs|sysroot|verity|virtio(_|-)(blk|pci)|ext4' "$LISTING" | head -n 80 || true
-          echo INITRD_ROOT_MARKERS_END
-
-          for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
-            rel="${p#$MNT/root}"
-            if sudo -n test -e "$p"; then echo "PRIME_STATE_EXISTS[$rel]=1"; else echo "PRIME_STATE_EXISTS[$rel]=0"; fi
-          done
-          echo COMPACT_GUEST_BOOT_EVIDENCE=PASS
+          echo "SATA_PRIME_STATE=$FOUND"
+          test "$FOUND" -eq 1
+          echo SATA_CAUSALITY_PROOF=PASS
