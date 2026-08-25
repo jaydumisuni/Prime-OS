@@ -62,10 +62,10 @@ jobs:
           done
 
           echo JOURNAL_SCAN_BEGIN
-          while IFS= read -r jdir; do
-            echo "JOURNAL_DIR=${jdir#$STATE/root}"
-            sudo -n journalctl --directory="$jdir" --no-pager -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>/dev/null | tail -n 500 || true
-          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal/*' -print 2>/dev/null | head -n 8)
+          while IFS= read -r jroot; do
+            echo "JOURNAL_ROOT=${jroot#$STATE/root}"
+            sudo -n journalctl --directory="$jroot" --no-pager -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>/dev/null | tail -n 700 || true
+          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
           echo JOURNAL_SCAN_END
 
           echo BOOTC_STATE_FILES_BEGIN

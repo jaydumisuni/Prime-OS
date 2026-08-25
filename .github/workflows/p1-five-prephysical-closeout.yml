@@ -1,9 +1,7 @@
 name: Prime P1 exact-UKI BLS root-locator probe
 
 on:
-  push:
-    branches:
-      - adapter/p1-image-builder-mount-probe
+  workflow_dispatch:
 
 permissions:
   contents: read

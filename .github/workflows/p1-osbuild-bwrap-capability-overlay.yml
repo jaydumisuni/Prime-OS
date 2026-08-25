@@ -1,17 +1,13 @@
 name: Prime P1 post-OVMF guest diagnostic
 
 on:
-  pull_request:
-    branches:
-      - adapter/p1-image-builder-mount-probe
-    types: [reopened, synchronize]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   diagnose-guest:
-    if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 10
     env:
