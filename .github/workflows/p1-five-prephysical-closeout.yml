@@ -1,0 +1,177 @@
+name: Prime P1 five pre-physical First-Light gates
+
+on:
+  push:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+
+permissions:
+  contents: read
+
+jobs:
+  five-gates:
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 45
+    env:
+      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      STATE: /var/tmp/prime-p1-five-closeout
+      NBD: /dev/nbd1
+      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
+      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
+      ROOT_X86_64_GUID: 4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+
+    steps:
+      - name: Checkout diagnostic lane
+        uses: actions/checkout@v4
+
+      - name: Build corrected clean-UKI boot overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$STATE"
+          mkdir -p "$STATE/mnt"
+          test -f "$DISK"
+          qemu-img check "$DISK"
+          rm -f "$STATE/clean-uki.qcow2" "$STATE/ovmf-vars.fd" "$STATE/serial.log"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/clean-uki.qcow2"
+          bash tools/p1-finalize-discoverable-root.sh "$STATE/clean-uki.qcow2" /dev/nbd2
+          cp "$OVMF_VARS_TEMPLATE" "$STATE/ovmf-vars.fd"
+
+      - name: Boot normal OVMF to exact Prime UKI
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM 180s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$STATE/ovmf-vars.fd" \
+            -drive file="$STATE/clean-uki.qcow2",if=virtio,format=qcow2 \
+            -display none \
+            -serial "file:$STATE/serial.log" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
+          grep -q 'BdsDxe: starting Boot' "$STATE/serial.log"
+          echo CLEAN_UKI_OVMF_STARTED=PASS
+
+      - name: Inspect clean-UKI guest evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            sudo -n umount "$STATE/mnt" >/dev/null 2>&1 || true
+            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$STATE/clean-uki.qcow2"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          test -n "$ROOT"
+          test -n "$ESP"
+          test "$(lsblk -nrpo PARTTYPE "$ROOT" | tr '[:upper:]' '[:lower:]')" = "$ROOT_X86_64_GUID"
+          sudo -n mount -o ro "$ROOT" "$STATE/mnt"
+
+          PRIME_DIR=""
+          for p in "$STATE/mnt/state/os/default/var/lib/prime" "$STATE/mnt/var/lib/prime"; do
+            if sudo -n test -f "$p/hardware/current.json"; then PRIME_DIR="$p"; break; fi
+          done
+
+          echo JOURNAL_EVIDENCE_BEGIN
+          FIRST_JOURNAL="$(sudo -n find "$STATE/mnt" -type f -path '*/var/log/journal/*/*.journal' -print 2>/dev/null | head -n1 || true)"
+          if test -n "$FIRST_JOURNAL"; then
+            JDIR="$(dirname "$(dirname "$FIRST_JOURNAL")")"
+            sudo -n journalctl --directory="$JDIR" --no-pager -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>/dev/null | tail -n 240 || true
+          else
+            echo NO_PERSISTENT_JOURNAL_FOUND
+          fi
+          echo JOURNAL_EVIDENCE_END
+
+          test -n "$PRIME_DIR"
+          echo "PRIME_DIR=${PRIME_DIR#$STATE/mnt}"
+          sudo -n find "$PRIME_DIR" -maxdepth 3 -type f -printf 'PRIME_FILE=%P\n' | sort
+
+          GENERATION="$PRIME_DIR/generations/current.json"
+          WITNESS="$PRIME_DIR/first-light/mechanical.json"
+          test -f "$GENERATION"
+          test -f "$WITNESS"
+
+          sudo -n python3 - "$GENERATION" <<'PY'
+          import json, sys
+          g=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert g.get('state') == 'HEALTH_PROVING', g
+          assert 'prime.core.socket.bound.v1' in g.get('evidence_refs', []), g
+          PY
+          echo GATE_1_CORE_STABLE=PASS
+
+          sudo -n python3 - "$WITNESS" <<'PY'
+          import json, sys
+          w=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert w.get('schema') == 'prime.first-light-mechanical.v1', w
+          assert w.get('compositor_phase') == 'SHELL_READY', w
+          assert w.get('frame_loop_ready') is True, w
+          assert w.get('wayland_listener_ready') is True, w
+          assert int(w.get('clients_accepted',0)) >= 1, w
+          assert int(w.get('mapped_surface_frames_submitted',0)) >= 1, w
+          PY
+          echo GATE_2_COMPOSITOR_SESSION_STABLE=PASS
+
+          sudo -n python3 - "$WITNESS" <<'PY'
+          import json, sys
+          w=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert w.get('status') == 'SHELL_READY', w
+          assert w.get('shell_ready') is True, w
+          assert w.get('core_socket_group_nonzero') is True, w
+          PY
+          echo GATE_3_SHELL_READY=PASS
+
+          cleanup
+          mkdir -p "$STATE/esp"
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$STATE/clean-uki.qcow2"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          sudo -n mount -o ro "$ESP" "$STATE/esp"
+          UKI="$(sudo -n find "$STATE/esp" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
+          sudo -n cp "$UKI" "$STATE/normal.efi"
+          sudo -n chown "$(id -u):$(id -g)" "$STATE/normal.efi"
+          objcopy --dump-section .cmdline="$STATE/normal.cmdline" "$STATE/normal.efi"
+          CMDLINE="$(tr -d '\000' < "$STATE/normal.cmdline")"
+          echo "NORMAL_UKI_CMDLINE=$CMDLINE"
+          printf '%s\n' "$CMDLINE" | grep -Eq '^composefs=[0-9a-f]{128}$'
+          ! printf '%s\n' "$CMDLINE" | grep -q 'root='
+          echo GATE_4_CLEAN_EFI_UKI_BOOT=PASS
+
+      - name: Patch disposable canonical proof with discovered root finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/prove-p1-local.sh')
+          s=p.read_text()
+          needle='DISK="${DISKS[0]}"\nqemu-img info "$DISK"'
+          repl='DISK="${DISKS[0]}"\nbash "$ROOT/tools/p1-finalize-discoverable-root.sh" "$DISK" /dev/nbd2\nqemu-img info "$DISK"'
+          if needle not in s:
+              raise SystemExit('canonical disk insertion point not found')
+          p.write_text(s.replace(needle,repl,1))
+          PY
+          grep -n 'p1-finalize-discoverable-root' tools/prove-p1-local.sh
+
+      - name: Gate 5 — rerun canonical P1 proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/prove-p1-local.sh
+          echo GATE_5_CANONICAL_P1_PROOF=PASS
+          echo PRIME_P1_PREPHYSICAL_5_OF_5=PASS
