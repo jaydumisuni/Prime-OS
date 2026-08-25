@@ -155,9 +155,9 @@ FINAL_DIGEST="$("${PODMAN[@]}" run --rm \
   bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
 case "$FINAL_DIGEST" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) fail "invalid final image storage digest: $FINAL_DIGEST" ;; esac
 [[ "$FINAL_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "final image Composefs digest does not match sealed rootfs digest"
-UKI_DIGESTS="$("${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+UKI_DIGESTS="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
   normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
-  recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"
+  recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
   test -n "$normal"
   test -s "$recovery"
   test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" | wc -l)" -eq 1
@@ -179,6 +179,7 @@ log "Inspect final Prime image and recovery contract"
   -e EXPECTED_CREATED_AT="$CREATED_AT" \
   -e EXPECTED_GENERATION_ID="$GENERATION_ID" \
   -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \
+  -e EXPECTED_DIGEST="$CANONICAL_DIGEST" \
   --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
     test -x /usr/libexec/prime/primed
     test -x /usr/libexec/prime/prime-recovery
@@ -232,7 +233,7 @@ log "Inspect final Prime image and recovery contract"
     test -L /etc/systemd/system/graphical.target.wants/prime-shell.service
     test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service
     normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
-    recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"
+    recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
     test -n "$normal"
     test -s "$recovery"
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 1
