@@ -1,4 +1,4 @@
-name: Prime P1 Core capability proof
+name: Prime P1 bootloader entry inventory
 
 on:
   push:
@@ -9,142 +9,64 @@ permissions:
   contents: read
 
 jobs:
-  core-capability:
+  inventory:
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 6
+    timeout-minutes: 5
     env:
       DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
-      STATE: /var/tmp/prime-p1-core-capability
+      STATE: /var/tmp/prime-p1-entry-inventory
       NBD: /dev/nbd1
-      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
-      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build one-capability diagnostic overlay
+      - name: Inventory installed BLS and EFI artifacts
         shell: bash
         run: |
           set -euo pipefail
           cleanup() {
             sudo -n umount "$STATE/esp" >/dev/null 2>&1 || true
-            sudo -n umount "$STATE/root" >/dev/null 2>&1 || true
+            sudo -n umount "$STATE/xboot" >/dev/null 2>&1 || true
             sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
-          rm -rf "$STATE"; mkdir -p "$STATE/root" "$STATE/esp"
+          rm -rf "$STATE"; mkdir -p "$STATE/esp" "$STATE/xboot"
           test -f "$DISK"
           qemu-img check "$DISK"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/core-cap.qcow2"
-          bash tools/p1-finalize-discoverable-root.sh "$STATE/core-cap.qcow2" /dev/nbd2
-
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/core-cap.qcow2"
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
           sleep 2; sudo -n partprobe "$NBD"
-          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          echo PARTITIONS_BEGIN
+          lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD"
+          echo PARTITIONS_END
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
-          test -n "$ROOT"; test -n "$ESP"
-          sudo -n mount "$ROOT" "$STATE/root"
-          sudo -n mount "$ESP" "$STATE/esp"
+          XBOOT="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
+          test -n "$ESP"
+          sudo -n mount -o ro "$ESP" "$STATE/esp"
+          if test -n "$XBOOT"; then sudo -n mount -o ro "$XBOOT" "$STATE/xboot"; fi
 
-          DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
-          test -n "$DEPLOY_ETC"
-          sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/primed.service.d"
-          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/primed.service.d/10-core-capability-proof.conf" >/dev/null
-          [Service]
-          CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_BOOT CAP_SYS_PTRACE
-          ExecStartPre=/bin/sh -c 'echo CORE_CAP_PROOF_BEGIN >/dev/ttyS0; printf "CORE_CAP_BND=" >/dev/ttyS0; grep "^CapBnd:" /proc/self/status | cut -f2 >>/dev/ttyS0; printf "CORE_NS_READLINK=" >/dev/ttyS0; readlink /proc/1/ns/mnt >>/dev/ttyS0 2>&1; /usr/sbin/bootc status --format=json --format-version=1 >/run/prime/bootc-status-cap-proof.txt 2>&1; rc=$?; cat /run/prime/bootc-status-cap-proof.txt >/dev/ttyS0; echo CORE_BOOTC_STATUS_RC=$rc >/dev/ttyS0; echo CORE_CAP_PROOF_END >/dev/ttyS0; exit 0'
-          EOF
-
-          UKI="$(sudo -n find "$STATE/esp" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
-          BLS="$(sudo -n find "$STATE/esp/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"
-          test -n "$UKI"; test -n "$BLS"
-          sudo -n cp "$UKI" "$STATE/exact.efi"
-          sudo -n chown "$(id -u):$(id -g)" "$STATE/exact.efi"
-          sha256sum "$STATE/exact.efi" | tee "$STATE/uki.sha256"
-          objcopy --dump-section .cmdline="$STATE/embedded.cmdline" "$STATE/exact.efi"
-          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"
-          printf '%s\n' "$BASE" | grep -Eq '^composefs=[0-9a-f]{128}$'
-          printf 'options %s root=gpt-auto rw console=ttyS0,115200n8 systemd.log_level=info systemd.log_target=console\n' "$BASE" | sudo -n tee -a "$BLS" >/dev/null
-          sudo -n sync
-          test "$(sudo -n sha256sum "$UKI" | awk '{print $1}')" = "$(awk '{print $1}' "$STATE/uki.sha256")"
-          echo CORE_CAP_DROPIN_BEGIN; sudo -n cat "$DEPLOY_ETC/systemd/system/primed.service.d/10-core-capability-proof.conf"; echo CORE_CAP_DROPIN_END
-          cleanup
-          cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
-
-      - name: Prove Core generation binding under exact EFI boot
-        shell: bash
-        run: |
-          set -euo pipefail
-          set +e
-          timeout --signal=TERM 115s qemu-system-x86_64 \
-            -machine q35,accel=tcg \
-            -cpu max \
-            -smp 2 \
-            -m 3072 \
-            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-            -drive if=pflash,format=raw,file="$STATE/vars.fd" \
-            -drive file="$STATE/core-cap.qcow2",if=virtio,format=qcow2 \
-            -display none \
-            -serial "file:$STATE/serial.log" \
-            -monitor none \
-            -net none \
-            -no-reboot
-          RC=$?
-          set -e
-          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
-          echo CORE_CAP_SERIAL_EVIDENCE_BEGIN
-          grep -E -i 'CORE_CAP_|CORE_NS_|CORE_BOOTC|primed:|prime-compositor|prime-shell|SHELL_READY|Error:|Failed with result' "$STATE/serial.log" | tail -n 800 || true
-          echo CORE_CAP_SERIAL_EVIDENCE_END
-          grep -q 'CORE_CAP_PROOF_BEGIN' "$STATE/serial.log"
-          grep -Eq 'CORE_NS_READLINK=mnt:\[[0-9]+\]' "$STATE/serial.log"
-          grep -q 'CORE_BOOTC_STATUS_RC=0' "$STATE/serial.log"
-          grep -q 'CORE_CAP_PROOF_END' "$STATE/serial.log"
-          grep -q 'primed: host=' "$STATE/serial.log"
-          echo GATE_1_CORE_EARLY_BINDING=PASS
-
-      - name: Recover post-boot Prime state without mutating evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          cleanup() {
-            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
-            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          cleanup
-          mkdir -p "$STATE/replay-root"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/core-cap.qcow2")" "$STATE/replay.qcow2"
-          sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
-          sleep 2; sudo -n partprobe "$NBD"
-          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          test -n "$ROOT"
-          set +e
-          sudo -n e2fsck -fy "$ROOT"
-          FSCK_RC=$?
-          set -e
-          test $((FSCK_RC & 12)) -eq 0
-          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
-          PRIME="$STATE/replay-root/state/os/default/var/lib/prime"
-          test -d "$PRIME"
-          echo PRIME_POSTBOOT_FILES_BEGIN
-          sudo -n find "$PRIME" -maxdepth 4 -type f -printf '%P\n' | sort
-          echo PRIME_POSTBOOT_FILES_END
-          for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
-            if sudo -n test -f "$PRIME/$rel"; then
-              echo "PRIME_POSTBOOT_BEGIN=$rel"
-              sudo -n cat "$PRIME/$rel"
-              echo "PRIME_POSTBOOT_END=$rel"
-            else
-              echo "PRIME_POSTBOOT_MISSING=$rel"
-            fi
+          for root in "$STATE/esp" "$STATE/xboot"; do
+            sudo -n test -d "$root" || continue
+            echo "ROOT_BEGIN=${root#$STATE/}"
+            sudo -n find "$root" -maxdepth 6 -type f -printf '%P\n' | sort | head -n 500
+            for d in "$root/loader/entries" "$root/loader/entries.staged"; do
+              sudo -n test -d "$d" || continue
+              echo "ENTRY_DIR_BEGIN=${d#$root/}"
+              while IFS= read -r f; do
+                echo "ENTRY_FILE_BEGIN=${f#$root/}"
+                sudo -n cat "$f"
+                echo "ENTRY_FILE_END=${f#$root/}"
+              done < <(sudo -n find "$d" -maxdepth 1 -type f -name '*.conf' -print | sort)
+              echo "ENTRY_DIR_END=${d#$root/}"
+            done
+            echo "ROOT_END=${root#$STATE/}"
           done
-          test -f "$PRIME/generations/current.json"
-          sudo -n python3 - "$PRIME/generations/current.json" <<'PY'
-          import json,sys
-          g=json.load(open(sys.argv[1]))
-          assert g['state'] in ('BOOT_TRY','HEALTH_PROVING','KNOWN_GOOD'), g
-          print('CORE_GENERATION_STATE='+g['state'])
-          PY
-          echo GATE_1_CORE_GENERATION_STATE=PASS
+
+          echo UKI_PREFIX_AUDIT_BEGIN
+          while IFS= read -r f; do
+            key="$(sudo -n awk '$1=="uki" || $1=="efi" {print $1; exit}' "$f")"
+            path="$(sudo -n awk '$1=="uki" || $1=="efi" {print $2; exit}' "$f")"
+            test -n "$key" || continue
+            base="${path##*/}"
+            printf 'BLS=%s KEY=%s PATH=%s BASENAME=%s PREFIX_OK=' "${f#$STATE/}" "$key" "$path" "$base"
+            case "$base" in bootc_composefs-*.efi) echo YES ;; *) echo NO ;; esac
+          done < <(sudo -n find "$STATE/esp" "$STATE/xboot" -type f -path '*/loader/entries*/*.conf' -print 2>/dev/null | sort)
+          echo UKI_PREFIX_AUDIT_END
