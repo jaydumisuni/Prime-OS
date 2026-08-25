@@ -1,4 +1,4 @@
-name: Prime P1 EFI UKI root-locator probe
+name: Prime P1 exact-UKI BLS root-locator probe
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 12
     env:
       DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
-      STATE: /var/tmp/prime-p1-efi-root-probe
+      STATE: /var/tmp/prime-p1-bls-root-probe
       NBD: /dev/nbd1
       OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
       OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract exact installed UKI and root identity
+      - name: Recover exact UKI identity and root UUID
         shell: bash
         run: |
           set -euo pipefail
@@ -33,34 +33,40 @@ jobs:
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
-          ROOT_UUID="$(lsblk -nrpo UUID "$ROOT")"
-          test -n "$ROOT_UUID"; echo "$ROOT_UUID" > "$STATE/root.uuid"
+          ROOT_UUID="$(lsblk -nrpo UUID "$ROOT")"; test -n "$ROOT_UUID"; echo "$ROOT_UUID" > "$STATE/root.uuid"
           sudo -n mount -o ro "$ESP" "$STATE/mnt"
           UKI="$(sudo -n find "$STATE/mnt" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
-          test -n "$UKI"; echo "${UKI#$STATE/mnt}" > "$STATE/uki.rel"
-          sudo -n cp "$UKI" "$STATE/original.efi"; sudo -n chown "$(id -u):$(id -g)" "$STATE/original.efi"
-          objcopy --dump-section .initrd="$STATE/initrd" "$STATE/original.efi"
-          objcopy --dump-section .cmdline="$STATE/cmdline" "$STATE/original.efi"
-          echo "ORIGINAL_CMDLINE=$(tr -d '\000' < "$STATE/cmdline")"
-          if lsinitrd "$STATE/initrd" 2>/dev/null | grep -q 'systemd-gpt-auto-generator'; then echo INITRD_GPT_AUTO_GENERATOR=1; else echo INITRD_GPT_AUTO_GENERATOR=0; fi
+          BLS="$(sudo -n find "$STATE/mnt/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"
+          test -n "$UKI"; test -n "$BLS"
+          sudo -n cp "$UKI" "$STATE/exact.efi"; sudo -n chown "$(id -u):$(id -g)" "$STATE/exact.efi"
+          sudo -n cp "$BLS" "$STATE/original.bls"; sudo -n chown "$(id -u):$(id -g)" "$STATE/original.bls"
+          sha256sum "$STATE/exact.efi" | tee "$STATE/exact.sha256"
+          objcopy --dump-section .cmdline="$STATE/embedded.cmdline" "$STATE/exact.efi"
+          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"
+          echo "EMBEDDED_CMDLINE=$BASE"
+          printf '%s\n' "$BASE" | grep -Eq '^composefs=[0-9a-f]{128}$'
+          grep -q '^uki ' "$STATE/original.bls"
+          echo BLS_ORIGINAL_BEGIN; cat "$STATE/original.bls"; echo BLS_ORIGINAL_END
           sudo -n umount "$STATE/mnt"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 2
 
-      - name: EFI test A — explicit gpt-auto through systemd-boot UKI
+      - name: EFI test A — exact UKI plus BLS root gpt-auto
         shell: bash
         run: |
           set -euo pipefail
           qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/gpt-auto.qcow2"
           bash tools/p1-finalize-discoverable-root.sh "$STATE/gpt-auto.qcow2" /dev/nbd2
-          cp "$STATE/original.efi" "$STATE/diag.efi"
-          BASE="$(tr -d '\000' < "$STATE/cmdline")"
-          printf '%s' "$BASE root=gpt-auto console=ttyS0,115200n8 rd.debug systemd.log_level=info systemd.log_target=console" > "$STATE/diag.cmdline"
-          objcopy --update-section .cmdline="$STATE/diag.cmdline" "$STATE/diag.efi"
+          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"
           sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           sudo -n qemu-nbd --connect="$NBD" "$STATE/gpt-auto.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
           mkdir -p "$STATE/esp-a"; sudo -n mount "$ESP" "$STATE/esp-a"
-          REL="$(cat "$STATE/uki.rel")"; sudo -n install -m 0644 "$STATE/diag.efi" "$STATE/esp-a$REL"; sudo -n sync
+          BLS="$(sudo -n find "$STATE/esp-a/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"; test -n "$BLS"
+          printf 'options %s root=gpt-auto console=ttyS0,115200n8 rd.debug systemd.log_level=info systemd.log_target=console\n' "$BASE" | sudo -n tee -a "$BLS" >/dev/null
+          sudo -n sync
+          EXACT_AFTER="$(sudo -n sha256sum "$(sudo -n find "$STATE/esp-a" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)" | awk '{print $1}')"
+          test "$EXACT_AFTER" = "$(awk '{print $1}' "$STATE/exact.sha256")"
+          echo BLS_A_BEGIN; sudo -n cat "$BLS"; echo BLS_A_END
           sudo -n umount "$STATE/esp-a"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 3
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars-a.fd"
           set +e
@@ -69,25 +75,28 @@ jobs:
             -drive file="$STATE/gpt-auto.qcow2",if=virtio,format=qcow2 -display none -serial "file:$STATE/a.log" -monitor none -net none -no-reboot
           RC=$?; set -e; test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
           echo TEST_A_MARKERS_BEGIN
-          grep -E -i 'Linux version|Kernel command line|gpt-auto|sysroot|bootc-root|switching root|emergency|failed|panic' "$STATE/a.log" | tail -n 180 || true
+          grep -E -i 'Linux version|Kernel command line|gpt-auto|sysroot|bootc-root|switching root|primed|SHELL_READY|emergency|failed|panic' "$STATE/a.log" | tail -n 220 || true
           echo TEST_A_MARKERS_END
+          if grep -q 'Linux version' "$STATE/a.log"; then echo EFI_BLS_UKI_EXECUTION_A=PASS; else echo EFI_BLS_UKI_EXECUTION_A=FAIL; fi
           if grep -q 'Switching root' "$STATE/a.log"; then echo EFI_GPT_AUTO_ROOT=PASS; else echo EFI_GPT_AUTO_ROOT=FAIL; fi
 
-      - name: EFI test B — explicit root UUID through systemd-boot UKI
+      - name: EFI test B — exact UKI plus BLS root UUID
         shell: bash
         run: |
           set -euo pipefail
           qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/root-uuid.qcow2"
-          cp "$STATE/original.efi" "$STATE/diag-b.efi"
-          BASE="$(tr -d '\000' < "$STATE/cmdline")"; ROOT_UUID="$(cat "$STATE/root.uuid")"
-          printf '%s' "$BASE root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200n8 rd.debug systemd.log_level=info systemd.log_target=console" > "$STATE/diag-b.cmdline"
-          objcopy --update-section .cmdline="$STATE/diag-b.cmdline" "$STATE/diag-b.efi"
+          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"; ROOT_UUID="$(cat "$STATE/root.uuid")"
           sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           sudo -n qemu-nbd --connect="$NBD" "$STATE/root-uuid.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
           mkdir -p "$STATE/esp-b"; sudo -n mount "$ESP" "$STATE/esp-b"
-          REL="$(cat "$STATE/uki.rel")"; sudo -n install -m 0644 "$STATE/diag-b.efi" "$STATE/esp-b$REL"; sudo -n sync
+          BLS="$(sudo -n find "$STATE/esp-b/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"; test -n "$BLS"
+          printf 'options %s root=UUID=%s rootfstype=ext4 rw console=ttyS0,115200n8 rd.debug systemd.log_level=info systemd.log_target=console\n' "$BASE" "$ROOT_UUID" | sudo -n tee -a "$BLS" >/dev/null
+          sudo -n sync
+          EXACT_AFTER="$(sudo -n sha256sum "$(sudo -n find "$STATE/esp-b" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)" | awk '{print $1}')"
+          test "$EXACT_AFTER" = "$(awk '{print $1}' "$STATE/exact.sha256")"
+          echo BLS_B_BEGIN; sudo -n cat "$BLS"; echo BLS_B_END
           sudo -n umount "$STATE/esp-b"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 3
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars-b.fd"
           set +e
@@ -96,9 +105,9 @@ jobs:
             -drive file="$STATE/root-uuid.qcow2",if=virtio,format=qcow2 -display none -serial "file:$STATE/b.log" -monitor none -net none -no-reboot
           RC=$?; set -e; test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
           echo TEST_B_MARKERS_BEGIN
-          grep -E -i 'Linux version|Kernel command line|root=UUID|sysroot|bootc-root|switching root|primed|prime-compositor|prime-shell|SHELL_READY|emergency|failed|panic' "$STATE/b.log" | tail -n 240 || true
+          grep -E -i 'Linux version|Kernel command line|root=UUID|sysroot|bootc-root|switching root|primed|prime-compositor|prime-shell|SHELL_READY|emergency|failed|panic' "$STATE/b.log" | tail -n 260 || true
           echo TEST_B_MARKERS_END
-          grep -q 'Linux version' "$STATE/b.log" || { echo EFI_SYSTEMD_BOOT_UKI_EXECUTION=FAIL; exit 1; }
+          grep -q 'Linux version' "$STATE/b.log" || { echo EFI_BLS_UKI_EXECUTION_B=FAIL; exit 1; }
           grep -q 'Switching root' "$STATE/b.log" || { echo EFI_ROOT_UUID_HANDOFF=FAIL; exit 1; }
-          echo EFI_SYSTEMD_BOOT_UKI_EXECUTION=PASS
+          echo EFI_BLS_UKI_EXECUTION_B=PASS
           echo EFI_ROOT_UUID_HANDOFF=PASS
