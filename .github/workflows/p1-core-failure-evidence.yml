@@ -1,4 +1,4 @@
-name: Prime P1 post-bootc Core evidence
+name: Prime P1 compositor failure evidence
 
 on:
   push:
@@ -11,14 +11,15 @@ permissions:
 jobs:
   inspect:
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 5
+    timeout-minutes: 6
     env:
-      DISK: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
-      SERIAL: /var/tmp/prime-p1-core-recovery-proof/serial.log
-      STATE: /var/tmp/prime-p1-post-bootc-core-evidence
+      BASE: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
+      STATE: /var/tmp/prime-p1-compositor-evidence
       NBD: /dev/nbd1
+      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
+      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - name: Recover state and journal after bootc RC zero
+      - name: Build logging-only compositor evidence overlay
         shell: bash
         run: |
           set -euo pipefail
@@ -29,16 +30,74 @@ jobs:
           trap cleanup EXIT
           cleanup
           rm -rf "$STATE"; mkdir -p "$STATE/root"
-          test -f "$DISK"
-          test -f "$SERIAL"
-
-          echo SERIAL_CORE_MARKERS_BEGIN
-          grep -E -i 'CORE_BOOTC_STATUS_RC=0|primed:|primed\[|Error:|generation|hardware|storage|core.sock|panic|fatal' "$SERIAL" | tail -n 1000 || true
-          echo SERIAL_CORE_MARKERS_END
-
-          qemu-img check "$DISK" || true
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/replay.qcow2"
+          test -f "$BASE"
+          qemu-img check "$BASE" || true
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$BASE")" "$STATE/evidence.qcow2"
           sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/evidence.qcow2"
+          sleep 2; sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ROOT"
+          set +e
+          sudo -n e2fsck -fy "$ROOT"
+          FSCK_RC=$?
+          set -e
+          test $((FSCK_RC & 12)) -eq 0
+          sudo -n mount "$ROOT" "$STATE/root"
+          DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
+          test -n "$DEPLOY_ETC"
+          sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/prime-compositor.service.d"
+          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-error-evidence.conf" >/dev/null
+          [Service]
+          Restart=no
+          StandardOutput=journal+console
+          StandardError=journal+console
+          Environment=RUST_BACKTRACE=full
+          EOF
+          echo COMPOSITOR_EVIDENCE_DROPIN_BEGIN
+          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-error-evidence.conf"
+          echo COMPOSITOR_EVIDENCE_DROPIN_END
+          sudo -n sync
+          cleanup
+          cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
+
+      - name: Boot exact corrected EFI path and capture compositor error
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM 105s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$STATE/vars.fd" \
+            -drive file="$STATE/evidence.qcow2",if=virtio,format=qcow2 \
+            -display none \
+            -serial "file:$STATE/serial.log" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
+          echo COMPOSITOR_SERIAL_EVIDENCE_BEGIN
+          grep -E -i 'prime-compositor|libseat|seat|DRM|GPU|GBM|EGL|GLES|render|udev|Permission denied|No such|Error:|failed' "$STATE/serial.log" | tail -n 1200 || true
+          echo COMPOSITOR_SERIAL_EVIDENCE_END
+
+      - name: Replay journal and require exact compositor error evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
+            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          mkdir -p "$STATE/replay-root"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/evidence.qcow2")" "$STATE/replay.qcow2"
           sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
@@ -48,35 +107,13 @@ jobs:
           FSCK_RC=$?
           set -e
           test $((FSCK_RC & 12)) -eq 0
-          echo "EVIDENCE_FSCK_RC=$FSCK_RC"
-          sudo -n mount -o ro "$ROOT" "$STATE/root"
-
-          PRIME="$STATE/root/state/os/default/var/lib/prime"
-          echo PRIME_TREE_BEGIN
-          if sudo -n test -d "$PRIME"; then sudo -n find "$PRIME" -maxdepth 5 -printf '%y %P -> %l\n' | sort; fi
-          echo PRIME_TREE_END
-          for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
-            if sudo -n test -f "$PRIME/$rel"; then
-              echo "PRIME_FILE_BEGIN=$rel"
-              sudo -n cat "$PRIME/$rel"
-              echo "PRIME_FILE_END=$rel"
-            else
-              echo "PRIME_FILE_MISSING=$rel"
-            fi
-          done
-
-          echo JOURNAL_CORE_BEGIN
+          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
+          echo COMPOSITOR_JOURNAL_EVIDENCE_BEGIN
+          FOUND=0
           while IFS= read -r jroot; do
-            echo "JOURNAL_ROOT=${jroot#$STATE/root}"
-            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>&1 | tail -n 1500 || true
-          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
-          echo JOURNAL_CORE_END
-
-          test -f "$PRIME/generations/current.json"
-          sudo -n python3 - "$PRIME/generations/current.json" <<'PY'
-          import json,sys
-          g=json.load(open(sys.argv[1]))
-          print('POST_BOOTC_GENERATION_STATE='+g['state'])
-          print('POST_BOOTC_EVIDENCE_REFS='+','.join(g.get('evidence_refs', [])))
-          PY
-          echo POST_BOOTC_GENERATION_PERSISTED=PASS
+            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u prime-compositor.service 2>&1 | tail -n 1000 | tee "$STATE/compositor-journal.txt"
+            if grep -E -i 'Error:|libseat|DRM|GPU|GBM|EGL|GLES|udev|Permission denied|No such|inactive' "$STATE/compositor-journal.txt" >/dev/null; then FOUND=1; fi
+          done < <(sudo -n find "$STATE/replay-root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
+          echo COMPOSITOR_JOURNAL_EVIDENCE_END
+          test "$FOUND" -eq 1
+          echo COMPOSITOR_EXACT_ERROR_CAPTURED=PASS
