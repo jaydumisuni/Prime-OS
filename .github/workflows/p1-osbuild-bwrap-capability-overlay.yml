@@ -1,4 +1,4 @@
-name: Prime P1 recovery digest env composer
+name: Prime P1 recovery source hash composer
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  fix-recovery-digest-env:
+  fix-recovery-source-hash:
     if: github.event.pull_request.number == 85
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Fix bounded digest environment handoff
+      - name: Fix container-side source hash extraction
         shell: bash
         run: |
           set -euo pipefail
@@ -29,33 +29,23 @@ jobs:
           from pathlib import Path
           p = Path('tools/prove-p1-local.sh')
           s = p.read_text()
-
-          old = 'UKI_DIGESTS="$("${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
-          new = 'UKI_DIGESTS="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          old = 'sha256sum "$normal" | awk "{print \\\\$1}"'
+          new = 'sha256sum "$normal" | cut -d" " -f1'
           if s.count(old) != 1:
-              raise SystemExit(f'UKI digest command anchor count={s.count(old)}')
+              raise SystemExit(f'normal source hash anchor count={s.count(old)}')
           s = s.replace(old, new, 1)
-
-          old = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
-          new = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  -e EXPECTED_DIGEST="$CANONICAL_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          old = 'sha256sum "$recovery" | awk "{print \\\\$1}"'
+          new = 'sha256sum "$recovery" | cut -d" " -f1'
           if s.count(old) != 1:
-              raise SystemExit(f'image inspect env anchor count={s.count(old)}')
+              raise SystemExit(f'recovery source hash anchor count={s.count(old)}')
           s = s.replace(old, new, 1)
-
-          old = 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"'
-          new = 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"'
-          if s.count(old) != 2:
-              raise SystemExit(f'recovery digest literal count={s.count(old)}')
-          s = s.replace(old, new)
-
           p.write_text(s)
-          print('RECOVERY_DIGEST_ENV_FIX=PASS')
+          print('RECOVERY_SOURCE_HASH_FIX=PASS')
           PY
-
           git diff --check
-          ! grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"' tools/prove-p1-local.sh >/dev/null
-          grep -F -- '-e EXPECTED_DIGEST="$CANONICAL_DIGEST"' tools/prove-p1-local.sh >/dev/null
-          grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"' tools/prove-p1-local.sh >/dev/null
+          ! grep -F 'awk "{print \\$1}"' tools/prove-p1-local.sh >/dev/null
+          grep -F 'sha256sum "$normal" | cut -d" " -f1' tools/prove-p1-local.sh >/dev/null
+          grep -F 'sha256sum "$recovery" | cut -d" " -f1' tools/prove-p1-local.sh >/dev/null
           git diff -- tools/prove-p1-local.sh
 
       - name: Publish exact proof candidate
@@ -65,6 +55,6 @@ jobs:
           git config user.name 'THE TECH GUY'
           git config user.email '65334711+jaydumisuni@users.noreply.github.com'
           git add tools/prove-p1-local.sh
-          git diff --cached --quiet && { echo 'No digest env delta produced'; exit 1; }
-          git commit -m 'fix(p1): pass recovery digest into proof containers'
+          git diff --cached --quiet && { echo 'No source hash delta produced'; exit 1; }
+          git commit -m 'fix(p1): make recovery source hash extraction shell-safe'
           git push origin HEAD:proof/p1-first-light-final
