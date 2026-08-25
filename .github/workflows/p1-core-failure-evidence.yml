@@ -1,4 +1,4 @@
-name: Prime P1 compositor failure evidence
+name: Prime P1 compositor runtime-dir evidence
 
 on:
   push:
@@ -14,12 +14,12 @@ jobs:
     timeout-minutes: 6
     env:
       BASE: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
-      STATE: /var/tmp/prime-p1-compositor-evidence
+      STATE: /var/tmp/prime-p1-compositor-runtime-dir
       NBD: /dev/nbd1
       OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
       OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - name: Build logging-only compositor evidence overlay
+      - name: Build runtime-directory evidence overlay
         shell: bash
         run: |
           set -euo pipefail
@@ -31,89 +31,53 @@ jobs:
           cleanup
           rm -rf "$STATE"; mkdir -p "$STATE/root"
           test -f "$BASE"
-          qemu-img check "$BASE" || true
           qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$BASE")" "$STATE/evidence.qcow2"
           sudo -n modprobe nbd max_part=16
           sudo -n qemu-nbd --connect="$NBD" "$STATE/evidence.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ROOT"
-          set +e
-          sudo -n e2fsck -fy "$ROOT"
-          FSCK_RC=$?
-          set -e
+          set +e; sudo -n e2fsck -fy "$ROOT"; FSCK_RC=$?; set -e
           test $((FSCK_RC & 12)) -eq 0
           sudo -n mount "$ROOT" "$STATE/root"
           DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
           test -n "$DEPLOY_ETC"
           sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/prime-compositor.service.d"
-          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-error-evidence.conf" >/dev/null
+          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-runtime-dir-evidence.conf" >/dev/null
           [Service]
           Restart=no
           StandardOutput=journal+console
           StandardError=journal+console
-          Environment=RUST_BACKTRACE=full
+          ExecStartPre=/bin/sh -c 'echo PRIME_XDG_PRE=${XDG_RUNTIME_DIR:-UNSET}; id; stat -c "PRIME_RUNTIME_STAT=%U:%G:%a:%n" /run/prime-compositor; touch /run/prime-compositor/.prime-write-probe 2>&1; rc=$?; echo PRIME_RUNTIME_WRITE_RC=$rc; rm -f /run/prime-compositor/.prime-write-probe; exit 0'
+          ExecStart=
+          ExecStart=/bin/sh -c 'echo PRIME_XDG_MAIN=${XDG_RUNTIME_DIR:-UNSET}; id; stat -c "PRIME_RUNTIME_MAIN_STAT=%U:%G:%a:%n" /run/prime-compositor; exec /usr/libexec/prime/prime-compositor'
           EOF
-          echo COMPOSITOR_EVIDENCE_DROPIN_BEGIN
-          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-error-evidence.conf"
-          echo COMPOSITOR_EVIDENCE_DROPIN_END
           sudo -n sync
+          echo RUNTIME_DIR_DROPIN_BEGIN
+          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-runtime-dir-evidence.conf"
+          echo RUNTIME_DIR_DROPIN_END
           cleanup
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
 
-      - name: Boot exact corrected EFI path and capture compositor error
+      - name: Boot corrected EFI path and capture post-PAM runtime environment
         shell: bash
         run: |
           set -euo pipefail
           set +e
           timeout --signal=TERM 105s qemu-system-x86_64 \
-            -machine q35,accel=tcg \
-            -cpu max \
-            -smp 2 \
-            -m 3072 \
+            -machine q35,accel=tcg -cpu max -smp 2 -m 3072 \
             -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
             -drive if=pflash,format=raw,file="$STATE/vars.fd" \
             -drive file="$STATE/evidence.qcow2",if=virtio,format=qcow2 \
-            -display none \
-            -serial "file:$STATE/serial.log" \
-            -monitor none \
-            -net none \
-            -no-reboot
+            -display none -serial "file:$STATE/serial.log" -monitor none -net none -no-reboot
           RC=$?
           set -e
           test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
-          echo COMPOSITOR_SERIAL_EVIDENCE_BEGIN
-          grep -E -i 'prime-compositor|libseat|seat|DRM|GPU|GBM|EGL|GLES|render|udev|Permission denied|No such|Error:|failed' "$STATE/serial.log" | tail -n 1200 || true
-          echo COMPOSITOR_SERIAL_EVIDENCE_END
-
-      - name: Replay journal and require exact compositor error evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          cleanup() {
-            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
-            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          cleanup
-          mkdir -p "$STATE/replay-root"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/evidence.qcow2")" "$STATE/replay.qcow2"
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
-          sleep 2; sudo -n partprobe "$NBD"
-          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          test -n "$ROOT"
-          set +e
-          sudo -n e2fsck -fy "$ROOT"
-          FSCK_RC=$?
-          set -e
-          test $((FSCK_RC & 12)) -eq 0
-          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
-          echo COMPOSITOR_JOURNAL_EVIDENCE_BEGIN
-          FOUND=0
-          while IFS= read -r jroot; do
-            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u prime-compositor.service 2>&1 | tail -n 1000 | tee "$STATE/compositor-journal.txt"
-            if grep -E -i 'Error:|libseat|DRM|GPU|GBM|EGL|GLES|udev|Permission denied|No such|inactive' "$STATE/compositor-journal.txt" >/dev/null; then FOUND=1; fi
-          done < <(sudo -n find "$STATE/replay-root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
-          echo COMPOSITOR_JOURNAL_EVIDENCE_END
-          test "$FOUND" -eq 1
-          echo COMPOSITOR_EXACT_ERROR_CAPTURED=PASS
+          echo RUNTIME_DIR_SERIAL_BEGIN
+          grep -E 'PRIME_XDG_|PRIME_RUNTIME_|prime-compositor initialized output|Error: PermissionDenied' "$STATE/serial.log" | tail -n 200 || true
+          echo RUNTIME_DIR_SERIAL_END
+          grep -q 'PRIME_XDG_PRE=' "$STATE/serial.log"
+          grep -q 'PRIME_XDG_MAIN=' "$STATE/serial.log"
+          grep -q 'PRIME_RUNTIME_WRITE_RC=' "$STATE/serial.log"
+          grep -q 'Error: PermissionDenied' "$STATE/serial.log"
+          echo COMPOSITOR_RUNTIME_ENV_CAPTURED=PASS
