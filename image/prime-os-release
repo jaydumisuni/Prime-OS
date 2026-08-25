@@ -1,0 +1,9 @@
+NAME="Prime OS"
+ID=prime
+ID_LIKE=fedora
+PRETTY_NAME="Prime OS P1 First Light"
+VERSION="P1 First Light"
+VERSION_ID="0.1"
+VERSION_CODENAME=first-light
+VARIANT="First Light"
+VARIANT_ID=p1

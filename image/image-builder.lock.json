@@ -1,0 +1,13 @@
+{
+  "schema": "prime.disk-builder-lock.v1",
+  "source_tag": "ghcr.io/osbuild/image-builder-cli:v78.0.0",
+  "pinned_reference": "ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b",
+  "version": "78.0.0",
+  "os": "linux",
+  "architecture": "amd64",
+  "manifest_digest": "sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b",
+  "upstream_release": "v78.0.0",
+  "resolved_at": "2026-08-15T11:19:31Z",
+  "resolver_workflow_run": 31881744017,
+  "verification": "skopeo resolved v78.0.0 with --override-os linux --override-arch amd64 to this digest; the permanent disk proof re-opens the digest-only reference and asserts platform before use"
+}

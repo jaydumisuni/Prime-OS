@@ -1,0 +1,517 @@
+mod frame;
+mod input;
+mod output;
+mod protocols;
+mod shell;
+
+use serde::Serialize;
+use smithay::{
+    backend::{
+        allocator::gbm::GbmDevice,
+        drm::{DrmDeviceFd, DrmEvent, DrmNode},
+        egl::{context::ContextPriority, EGLContext, EGLDisplay},
+        libinput::{LibinputInputBackend, LibinputSessionInterface},
+        renderer::gles::GlesRenderer,
+        session::{
+            libseat::{LibSeatSession, LibSeatSessionNotifier},
+            Event as SessionEvent, Session,
+        },
+        udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
+    },
+    reexports::{
+        calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
+        input::Libinput,
+        rustix::fs::OFlags,
+        wayland_server::{
+            backend::{ClientData, ClientId, DisconnectReason},
+            Display, DisplayHandle,
+        },
+    },
+    utils::DeviceFd,
+    wayland::{compositor::CompositorClientState, socket::ListeningSocketSource},
+};
+use std::{
+    env,
+    error::Error,
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
+    process,
+    sync::Arc,
+    time::Duration,
+};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+const READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
+const DEFAULT_READINESS_PATH: &str = "/run/prime/compositor/readiness.json";
+const GRAPHICS_REVALIDATION_LIMITATION: &str =
+    "Renderer, DRM access and output require revalidation after session activation";
+const OUTPUT_ERROR_LIMITATION: &str = "DRM output requires revalidation after notifier error";
+const OUTPUT_TOPOLOGY_LIMITATION: &str =
+    "DRM topology changed; selected output requires revalidation";
+const WAYLAND_PROTOCOL_ERROR_LIMITATION: &str =
+    "Wayland protocol dispatch requires compositor restart or explicit revalidation";
+
+#[derive(Debug, Serialize)]
+struct Readiness {
+    schema: &'static str,
+    observed_at: String,
+    phase: String,
+    direct_tty_backend: bool,
+    seat_name: String,
+    wayland_socket: String,
+    primary_gpu: String,
+    gpu_count: usize,
+    udev_device_count: usize,
+    drm_access_ready: bool,
+    libinput_bound: bool,
+    session_active: bool,
+    wayland_listener_ready: bool,
+    wayland_protocols_ready: bool,
+    wayland_seat_ready: bool,
+    keyboard_ready: bool,
+    pointer_ready: bool,
+    input_delivery_ready: bool,
+    frame_loop_ready: bool,
+    frame_in_flight: bool,
+    frames_queued: u64,
+    frames_submitted: u64,
+    mapped_surface_frames_submitted: u64,
+    renderer_ready: bool,
+    outputs_ready: bool,
+    shell_ready: bool,
+    clients_accepted: u64,
+    input_events_seen: u64,
+    last_udev_event: Option<String>,
+    limitations: Vec<String>,
+}
+
+pub(crate) struct Runtime {
+    display_handle: DisplayHandle,
+    protocols: protocols::ProtocolState,
+    _output: smithay::output::Output,
+    _drm_output: output::PrimeDrmOutput,
+    output_manager: output::PrimeDrmOutputManager,
+    _renderer: GlesRenderer,
+    frame: frame::FrameState,
+    _session: LibSeatSession,
+    readiness_path: PathBuf,
+    readiness: Readiness,
+}
+
+impl Runtime {
+    fn persist(&mut self) -> Result<(), Box<dyn Error>> {
+        self.readiness.observed_at = now_rfc3339()?;
+        write_json_atomic(&self.readiness_path, &self.readiness)?;
+        Ok(())
+    }
+
+    fn persist_best_effort(&mut self) {
+        if let Err(error) = self.persist() {
+            eprintln!("prime-compositor could not persist readiness: {error}");
+        }
+    }
+
+    fn add_limitation(&mut self, limitation: &str) {
+        if !self
+            .readiness
+            .limitations
+            .iter()
+            .any(|item| item == limitation)
+        {
+            self.readiness.limitations.push(limitation.to_owned());
+        }
+    }
+
+    fn remove_limitation(&mut self, limitation: &str) {
+        self.readiness.limitations.retain(|item| item != limitation);
+    }
+
+    pub(crate) fn request_frame(&mut self) {
+        frame::request(self);
+    }
+
+    fn invalidate_frame_loop(&mut self, phase: &str, limitation: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
+        self.add_limitation(limitation);
+    }
+
+    fn require_graphics_revalidation(&mut self, phase: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.drm_access_ready = false;
+        self.readiness.renderer_ready = false;
+        self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
+        self.add_limitation(GRAPHICS_REVALIDATION_LIMITATION);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+    }
+
+    fn invalidate_output(&mut self, phase: &str, limitation: &str) {
+        self.readiness.phase = phase.to_owned();
+        self.readiness.outputs_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
+        self.add_limitation(limitation);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+    }
+
+    fn invalidate_wayland_protocols(&mut self) {
+        self.readiness.phase = "WAYLAND_PROTOCOL_ERROR".to_owned();
+        self.readiness.wayland_protocols_ready = false;
+        self.readiness.input_delivery_ready = false;
+        self.readiness.frame_loop_ready = false;
+        self.readiness.frame_in_flight = false;
+        self.frame.reset();
+        self.invalidate_shell_readiness(shell::SHELL_REVALIDATION_LIMITATION);
+        self.add_limitation(WAYLAND_PROTOCOL_ERROR_LIMITATION);
+        self.add_limitation(frame::FRAME_REVALIDATION_LIMITATION);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PrimeClientState {
+    pub(crate) compositor_state: CompositorClientState,
+}
+
+impl ClientData for PrimeClientState {
+    fn initialized(&self, _client_id: ClientId) {}
+
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let probe_only = parse_args()?;
+    let readiness_path = env::var_os("PRIME_COMPOSITOR_READINESS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_READINESS_PATH));
+
+    let mut event_loop: EventLoop<Runtime> = EventLoop::try_new()?;
+    let display: Display<Runtime> = Display::new()?;
+    let display_handle = display.handle();
+
+    let (mut session, notifier) = LibSeatSession::new()?;
+    let seat_name = session.seat();
+    let session_active = session.is_active();
+    if !session_active {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("libseat session {seat_name} is inactive; output initialization requires an active seat"),
+        )
+        .into());
+    }
+
+    let gpu_paths = all_gpus(&seat_name)?;
+    if gpu_paths.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no DRM GPU is available on seat {seat_name}"),
+        )
+        .into());
+    }
+    let primary_gpu_path = primary_gpu(&seat_name)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no primary DRM GPU is available on seat {seat_name}"),
+        )
+    })?;
+    let _primary_gpu_node = DrmNode::from_path(&primary_gpu_path)?;
+
+    let drm_fd = session.open(
+        &primary_gpu_path,
+        OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+    )?;
+    let drm_fd = DrmDeviceFd::new(DeviceFd::from(drm_fd));
+    let gbm = GbmDevice::new(drm_fd.clone())?;
+    let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
+    let egl_context = EGLContext::new_with_priority(&egl_display, ContextPriority::High)?;
+    let mut renderer = unsafe { GlesRenderer::new(egl_context)? };
+    let output::OutputBackend {
+        output: physical_output,
+        manager: output_manager,
+        drm_output,
+        notifier: drm_notifier,
+        connector_name,
+        mode,
+    } = output::initialize_primary_output(drm_fd, gbm, &mut renderer)?;
+    eprintln!(
+        "prime-compositor initialized output {connector_name} at {}x{} {}mHz",
+        mode.size.w, mode.size.h, mode.refresh
+    );
+
+    let protocols = protocols::ProtocolState::new(&display_handle, &physical_output, &seat_name)?;
+
+    let udev_backend = UdevBackend::new(&seat_name)?;
+    let udev_device_count = udev_backend.device_list().count();
+    if udev_device_count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("udev reported no DRM device on seat {seat_name}"),
+        )
+        .into());
+    }
+
+    let mut libinput_context =
+        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
+    libinput_context
+        .udev_assign_seat(&seat_name)
+        .map_err(|()| io::Error::other(format!("libinput rejected seat {seat_name}")))?;
+    let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
+
+    let listening_socket = ListeningSocketSource::new_auto()?;
+    let socket_name: OsString = listening_socket.socket_name().to_os_string();
+
+    let loop_handle = event_loop.handle();
+    loop_handle.insert_source(listening_socket, |client_stream, _, runtime| match runtime
+        .display_handle
+        .insert_client(client_stream, Arc::new(PrimeClientState::default()))
+    {
+        Ok(_) => {
+            runtime.readiness.clients_accepted =
+                runtime.readiness.clients_accepted.saturating_add(1);
+        }
+        Err(error) => {
+            eprintln!("prime-compositor rejected Wayland client: {error}");
+        }
+    })?;
+
+    loop_handle.insert_source(
+        Generic::new(display, Interest::READ, Mode::Level),
+        |_, display, runtime| {
+            let mut protocol_error = false;
+            // SAFETY: calloop owns the Display source for the lifetime of this event source,
+            // matching Smithay's v0.7.0 Smallvil listener pattern.
+            unsafe {
+                let display = display.get_mut();
+                if let Err(error) = display.dispatch_clients(runtime) {
+                    eprintln!("prime-compositor Wayland dispatch failed: {error}");
+                    protocol_error = true;
+                }
+                if let Err(error) = display.flush_clients() {
+                    eprintln!("prime-compositor Wayland flush failed: {error}");
+                    protocol_error = true;
+                }
+            }
+            if protocol_error {
+                runtime.invalidate_wayland_protocols();
+                runtime.persist_best_effort();
+            }
+            Ok(PostAction::Continue)
+        },
+    )?;
+
+    loop_handle.insert_source(libinput_backend, |event, _, runtime| {
+        input::process_input_event(runtime, event);
+    })?;
+
+    loop_handle.insert_source(drm_notifier, |event, _, runtime| match event {
+        DrmEvent::VBlank(crtc) => match frame::handle_vblank(runtime, crtc) {
+            Ok(true) => runtime.persist_best_effort(),
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("prime-compositor frame retirement failed: {error}");
+                runtime.invalidate_frame_loop("FRAME_ERROR", frame::FRAME_ERROR_LIMITATION);
+                runtime.persist_best_effort();
+            }
+        },
+        DrmEvent::Error(error) => {
+            eprintln!("prime-compositor DRM event processing failed: {error}");
+            runtime.invalidate_output("OUTPUT_ERROR", OUTPUT_ERROR_LIMITATION);
+            runtime.persist_best_effort();
+        }
+    })?;
+
+    install_session_notifier(&loop_handle, notifier, libinput_context)?;
+
+    loop_handle.insert_source(udev_backend, |event, _, runtime| {
+        match event {
+            UdevEvent::Added { device_id, path } => {
+                runtime.readiness.udev_device_count =
+                    runtime.readiness.udev_device_count.saturating_add(1);
+                runtime.readiness.last_udev_event =
+                    Some(format!("ADDED:{device_id}:{}", path.display()));
+            }
+            UdevEvent::Changed { device_id } => {
+                runtime.readiness.last_udev_event = Some(format!("CHANGED:{device_id}"));
+                runtime
+                    .invalidate_output("OUTPUT_REVALIDATION_REQUIRED", OUTPUT_TOPOLOGY_LIMITATION);
+            }
+            UdevEvent::Removed { device_id } => {
+                runtime.readiness.udev_device_count =
+                    runtime.readiness.udev_device_count.saturating_sub(1);
+                runtime.readiness.last_udev_event = Some(format!("REMOVED:{device_id}"));
+                runtime
+                    .invalidate_output("OUTPUT_REVALIDATION_REQUIRED", OUTPUT_TOPOLOGY_LIMITATION);
+            }
+        }
+        runtime.persist_best_effort();
+    })?;
+
+    let mut runtime = Runtime {
+        display_handle,
+        protocols,
+        _output: physical_output,
+        _drm_output: drm_output,
+        output_manager,
+        _renderer: renderer,
+        frame: frame::FrameState::new(),
+        _session: session,
+        readiness_path,
+        readiness: Readiness {
+            schema: READINESS_SCHEMA,
+            observed_at: now_rfc3339()?,
+            phase: "WAYLAND_INPUT_READY".to_owned(),
+            direct_tty_backend: true,
+            seat_name,
+            wayland_socket: socket_name.to_string_lossy().into_owned(),
+            primary_gpu: primary_gpu_path.display().to_string(),
+            gpu_count: gpu_paths.len(),
+            udev_device_count,
+            drm_access_ready: true,
+            libinput_bound: true,
+            session_active: true,
+            wayland_listener_ready: true,
+            wayland_protocols_ready: true,
+            wayland_seat_ready: true,
+            keyboard_ready: true,
+            pointer_ready: true,
+            input_delivery_ready: true,
+            frame_loop_ready: false,
+            frame_in_flight: false,
+            frames_queued: 0,
+            frames_submitted: 0,
+            mapped_surface_frames_submitted: 0,
+            renderer_ready: true,
+            outputs_ready: true,
+            shell_ready: false,
+            clients_accepted: 0,
+            input_events_seen: 0,
+            last_udev_event: None,
+            limitations: vec![
+                "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
+                "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
+                frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
+                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
+            ],
+        },
+    };
+    runtime.persist()?;
+
+    if probe_only {
+        println!("{}", serde_json::to_string_pretty(&runtime.readiness)?);
+        return Ok(());
+    }
+
+    loop {
+        event_loop.dispatch(Some(Duration::from_millis(16)), &mut runtime)?;
+        if let Err(error) = frame::try_queue(&mut runtime) {
+            eprintln!("prime-compositor frame queue failed: {error}");
+            runtime.invalidate_frame_loop("FRAME_ERROR", frame::FRAME_ERROR_LIMITATION);
+            runtime.persist_best_effort();
+        }
+    }
+}
+
+fn install_session_notifier(
+    loop_handle: &smithay::reexports::calloop::LoopHandle<'_, Runtime>,
+    notifier: LibSeatSessionNotifier,
+    mut libinput_context: Libinput,
+) -> Result<(), Box<dyn Error>> {
+    loop_handle
+        .insert_source(notifier, move |event, _, runtime| {
+            match event {
+                SessionEvent::PauseSession => {
+                    libinput_context.suspend();
+                    runtime.output_manager.pause();
+                    runtime.readiness.session_active = false;
+                    runtime.readiness.input_delivery_ready = false;
+                    runtime.require_graphics_revalidation("SESSION_PAUSED");
+                }
+                SessionEvent::ActivateSession => {
+                    if libinput_context.resume().is_err() {
+                        eprintln!("prime-compositor could not resume libinput");
+                        runtime.readiness.session_active = false;
+                        runtime.readiness.input_delivery_ready = false;
+                        runtime.require_graphics_revalidation("SESSION_RESUME_FAILED");
+                    } else {
+                        runtime.readiness.session_active = true;
+                        runtime.readiness.input_delivery_ready = true;
+                        runtime.require_graphics_revalidation("RENDERER_REVALIDATION_REQUIRED");
+                    }
+                }
+            }
+            runtime.persist_best_effort();
+        })
+        .map_err(|error| Box::new(error) as Box<dyn Error>)?;
+    Ok(())
+}
+
+fn parse_args() -> Result<bool, Box<dyn Error>> {
+    let mut probe_only = false;
+    for arg in env::args().skip(1) {
+        match arg.as_str() {
+            "--probe" => probe_only = true,
+            "--help" | "-h" => {
+                println!("Usage: prime-compositor [--probe]");
+                process::exit(0);
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("unknown argument: {arg}"),
+                )
+                .into());
+            }
+        }
+    }
+    Ok(probe_only)
+}
+
+fn now_rfc3339() -> Result<String, time::error::Format> {
+    OffsetDateTime::now_utc().format(&Rfc3339)
+}
+
+fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Box<dyn Error>> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "compositor readiness path has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+
+    let temp = parent.join(format!(
+        ".readiness.{}.{}.tmp",
+        process::id(),
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
+    let bytes = serde_json::to_vec_pretty(value)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .open(&temp)?;
+    if let Err(error) = (|| -> Result<(), Box<dyn Error>> {
+        file.write_all(&bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))?;
+        fs::rename(&temp, path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })() {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+    Ok(())
+}

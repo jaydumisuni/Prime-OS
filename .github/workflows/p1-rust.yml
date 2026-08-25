@@ -1,0 +1,31 @@
+name: Prime P1 Rust
+
+# Hosted GitHub Actions are intentionally not an execution authority for Prime.
+# The canonical P1 proof runs locally through tools/prove-p1-local.sh on Kratos.
+# This workflow is retained only as an optional self-hosted adapter.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: [self-hosted, linux, x64, kratos]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert Rust toolchain identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          test "$(rustc --version | awk '{print $2}')" = "1.97.1"
+      - name: Require pinned dependency graph
+        run: cargo metadata --locked --no-deps --format-version 1 >/dev/null
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked --workspace

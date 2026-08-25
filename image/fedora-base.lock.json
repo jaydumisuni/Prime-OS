@@ -1,0 +1,16 @@
+{
+  "schema": "prime.image-base-lock.v1",
+  "source_tag": "quay.io/fedora/fedora-bootc:44-x86_64",
+  "source_manifest_digest": "sha256:9dbd80ffc9fd873db097ea719f5a51c370f85568cca232c23052aae11774a36f",
+  "source_image_id": "sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb",
+  "pinned_reference": "ghcr.io/jaydumisuni/prime-fedora-base@sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341",
+  "registry_repository": "ghcr.io/jaydumisuni/prime-fedora-base",
+  "os": "linux",
+  "architecture": "amd64",
+  "manifest_digest": "sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341",
+  "resolved_at": "2026-08-19T22:53:12Z",
+  "resolver_workflow_run": 32310600465,
+  "supersedes_manifest_digest": "sha256:22e13c6a08efc0ad90466b15d5921b3ee0a1ba02ae1546d8733e110c8230a781",
+  "verification": "A hosted construction runner pulled Quay Fedora 44 x86_64 at source digest sha256:9dbd80ffc9fd873db097ea719f5a51c370f85568cca232c23052aae11774a36f with image ID sha256:c5231d09e81d63ffd7a25e25895169b93e21193ef63eae0500ac55317a2b8acb, pushed that exact image into Prime-owned GHCR, then removed and re-pulled the mirror. The GHCR mirror resolved to sha256:487539bd9b2618f15ce3e86375dfb8ec694af30481bb699f8fc74c0947c20341 with the same image ID.",
+  "retention_limitation": "Prime now controls the accepted Fedora base namespace in GHCR. Proof workflows must retain read access to this immutable digest; no later moving Quay tag is accepted as equivalent without a new input-integrity campaign."
+}

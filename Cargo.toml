@@ -1,0 +1,43 @@
+[workspace]
+members = [
+    "crates/prime-contracts",
+    "crates/prime-hardware",
+    "crates/prime-storage",
+    "crates/primed",
+    "crates/prime-compositor",
+    "crates/prime-shell",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2.189"
+prime-contracts = { path = "crates/prime-contracts" }
+prime-hardware = { path = "crates/prime-hardware" }
+prime-storage = { path = "crates/prime-storage" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+smithay = { version = "=0.7.0", default-features = false, features = [
+    "backend_drm",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_udev",
+    "backend_session_libseat",
+    "desktop",
+    "renderer_gl",
+    "wayland_frontend",
+] }
+smithay-client-toolkit = { version = "=0.20.0", default-features = false }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+wayland-client = "=0.31.15"
