@@ -1,4 +1,4 @@
-name: Prime P1 compositor runtime-dir evidence
+name: Prime P1 compositor XDG correction proof
 
 on:
   push:
@@ -9,17 +9,17 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  prove:
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 6
+    timeout-minutes: 7
     env:
       BASE: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
-      STATE: /var/tmp/prime-p1-compositor-runtime-dir
+      STATE: /var/tmp/prime-p1-compositor-xdg-proof
       NBD: /dev/nbd1
       OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
       OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - name: Build runtime-directory evidence overlay
+      - name: Build one-variable correction overlay
         shell: bash
         run: |
           set -euo pipefail
@@ -31,9 +31,9 @@ jobs:
           cleanup
           rm -rf "$STATE"; mkdir -p "$STATE/root"
           test -f "$BASE"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$BASE")" "$STATE/evidence.qcow2"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$BASE")" "$STATE/proof.qcow2"
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/evidence.qcow2"
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/proof.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ROOT"
@@ -43,41 +43,76 @@ jobs:
           DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
           test -n "$DEPLOY_ETC"
           sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/prime-compositor.service.d"
-          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-runtime-dir-evidence.conf" >/dev/null
+          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-xdg-proof.conf" >/dev/null
           [Service]
-          Restart=no
           StandardOutput=journal+console
           StandardError=journal+console
-          ExecStartPre=/bin/sh -c 'echo PRIME_XDG_PRE=${XDG_RUNTIME_DIR:-UNSET}; id; stat -c "PRIME_RUNTIME_STAT=%U:%G:%a:%n" /run/prime-compositor; touch /run/prime-compositor/.prime-write-probe 2>&1; rc=$?; echo PRIME_RUNTIME_WRITE_RC=$rc; rm -f /run/prime-compositor/.prime-write-probe; exit 0'
+          ExecStartPre=/bin/sh -c 'echo PRIME_PAM_XDG=${XDG_RUNTIME_DIR:-UNSET}; if test -d "${XDG_RUNTIME_DIR:-}"; then ls -ldn "$XDG_RUNTIME_DIR"; touch "$XDG_RUNTIME_DIR/.prime-xdg-probe" 2>&1; rc=$?; rm -f "$XDG_RUNTIME_DIR/.prime-xdg-probe"; else rc=2; fi; echo PRIME_PAM_XDG_WRITE_RC=$rc; exit 0'
           ExecStart=
-          ExecStart=/bin/sh -c 'echo PRIME_XDG_MAIN=${XDG_RUNTIME_DIR:-UNSET}; id; stat -c "PRIME_RUNTIME_MAIN_STAT=%U:%G:%a:%n" /run/prime-compositor; exec /usr/libexec/prime/prime-compositor'
+          ExecStart=/bin/sh -c 'echo PRIME_XDG_BEFORE_RESTORE=${XDG_RUNTIME_DIR:-UNSET}; export XDG_RUNTIME_DIR=/run/prime-compositor; echo PRIME_XDG_AFTER_RESTORE=$XDG_RUNTIME_DIR; exec /usr/libexec/prime/prime-compositor'
           EOF
           sudo -n sync
-          echo RUNTIME_DIR_DROPIN_BEGIN
-          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-runtime-dir-evidence.conf"
-          echo RUNTIME_DIR_DROPIN_END
+          echo XDG_CORRECTION_DROPIN_BEGIN
+          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-xdg-proof.conf"
+          echo XDG_CORRECTION_DROPIN_END
           cleanup
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
 
-      - name: Boot corrected EFI path and capture post-PAM runtime environment
+      - name: Boot corrected EFI path and prove compositor survives XDG restoration
         shell: bash
         run: |
           set -euo pipefail
           set +e
-          timeout --signal=TERM 105s qemu-system-x86_64 \
+          timeout --signal=TERM 135s qemu-system-x86_64 \
             -machine q35,accel=tcg -cpu max -smp 2 -m 3072 \
             -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
             -drive if=pflash,format=raw,file="$STATE/vars.fd" \
-            -drive file="$STATE/evidence.qcow2",if=virtio,format=qcow2 \
+            -drive file="$STATE/proof.qcow2",if=virtio,format=qcow2 \
             -display none -serial "file:$STATE/serial.log" -monitor none -net none -no-reboot
           RC=$?
           set -e
           test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
-          echo RUNTIME_DIR_SERIAL_BEGIN
-          grep -E 'PRIME_XDG_|PRIME_RUNTIME_|prime-compositor initialized output|Error: PermissionDenied' "$STATE/serial.log" | tail -n 200 || true
-          echo RUNTIME_DIR_SERIAL_END
-          grep -q 'PRIME_XDG_PRE=' "$STATE/serial.log"
-          grep -q 'PRIME_XDG_MAIN=' "$STATE/serial.log"
-          grep -q 'PRIME_RUNTIME_WRITE_RC=' "$STATE/serial.log"
-          grep -q 'Error: PermissionDenied' "$STATE/serial.log"
-          echo COMPOSITOR_RUNTIME_ENV_CAPTURED=PASS
+          echo XDG_CORRECTION_SERIAL_BEGIN
+          grep -E 'PRIME_PAM_XDG|PRIME_XDG_|prime-compositor initialized output|Error:|prime-compositor.service: Main process exited|prime-shell|SHELL_READY|primed: host=' "$STATE/serial.log" | tail -n 1200 || true
+          echo XDG_CORRECTION_SERIAL_END
+          grep -q 'PRIME_PAM_XDG=/run/user/976' "$STATE/serial.log"
+          grep -q 'PRIME_XDG_BEFORE_RESTORE=/run/user/976' "$STATE/serial.log"
+          grep -q 'PRIME_XDG_AFTER_RESTORE=/run/prime-compositor' "$STATE/serial.log"
+          grep -q 'prime-compositor initialized output' "$STATE/serial.log"
+          ! grep -q 'Error: PermissionDenied' "$STATE/serial.log"
+          grep -q 'primed: host=' "$STATE/serial.log"
+          echo COMPOSITOR_XDG_PERMISSION_DENIAL_CLOSED=PASS
+
+      - name: Recover compositor and first-light state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
+            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          mkdir -p "$STATE/replay-root"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/proof.qcow2")" "$STATE/replay.qcow2"
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
+          sleep 2; sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ROOT"
+          set +e; sudo -n e2fsck -fy "$ROOT"; FSCK_RC=$?; set -e
+          test $((FSCK_RC & 12)) -eq 0
+          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
+          PRIME="$STATE/replay-root/state/os/default/var/lib/prime"
+          echo PRIME_XDG_POSTBOOT_TREE_BEGIN
+          sudo -n find "$PRIME" -maxdepth 5 -type f -printf '%P\n' 2>/dev/null | sort || true
+          echo PRIME_XDG_POSTBOOT_TREE_END
+          if sudo -n test -f "$PRIME/first-light/mechanical.json"; then
+            echo FIRST_LIGHT_MECHANICAL_BEGIN
+            sudo -n cat "$PRIME/first-light/mechanical.json"
+            echo FIRST_LIGHT_MECHANICAL_END
+          else
+            echo FIRST_LIGHT_MECHANICAL_MISSING
+          fi
+          echo COMPOSITOR_RUNTIME_READINESS_FROM_SERIAL_BEGIN
+          grep -E 'prime-compositor|prime-shell|SHELL_READY|frame|Wayland' "$STATE/serial.log" | tail -n 1200 || true
+          echo COMPOSITOR_RUNTIME_READINESS_FROM_SERIAL_END
