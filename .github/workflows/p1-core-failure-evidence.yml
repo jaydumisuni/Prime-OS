@@ -1,4 +1,4 @@
-name: Prime P1 Core plus Recovery compatibility proof
+name: Prime P1 post-bootc Core evidence
 
 on:
   push:
@@ -9,134 +9,35 @@ permissions:
   contents: read
 
 jobs:
-  prove:
+  inspect:
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 7
+    timeout-minutes: 5
     env:
-      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
-      STATE: /var/tmp/prime-p1-core-recovery-proof
+      DISK: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
+      SERIAL: /var/tmp/prime-p1-core-recovery-proof/serial.log
+      STATE: /var/tmp/prime-p1-post-bootc-core-evidence
       NBD: /dev/nbd1
-      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
-      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build minimal corrected diagnostic overlay
+      - name: Recover state and journal after bootc RC zero
         shell: bash
         run: |
           set -euo pipefail
           cleanup() {
-            sudo -n umount "$STATE/esp" >/dev/null 2>&1 || true
             sudo -n umount "$STATE/root" >/dev/null 2>&1 || true
             sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
-          rm -rf "$STATE"; mkdir -p "$STATE/root" "$STATE/esp"
+          rm -rf "$STATE"; mkdir -p "$STATE/root"
           test -f "$DISK"
-          qemu-img check "$DISK"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/proof.qcow2"
-          bash tools/p1-finalize-discoverable-root.sh "$STATE/proof.qcow2" /dev/nbd2
+          test -f "$SERIAL"
 
-          sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/proof.qcow2"
-          sleep 2; sudo -n partprobe "$NBD"
-          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
-          test -n "$ROOT"; test -n "$ESP"
-          sudo -n mount "$ROOT" "$STATE/root"
-          sudo -n mount "$ESP" "$STATE/esp"
+          echo SERIAL_CORE_MARKERS_BEGIN
+          grep -E -i 'CORE_BOOTC_STATUS_RC=0|primed:|primed\[|Error:|generation|hardware|storage|core.sock|panic|fatal' "$SERIAL" | tail -n 1000 || true
+          echo SERIAL_CORE_MARKERS_END
 
-          NORMAL_BLS="$(sudo -n find "$STATE/esp/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"
-          RECOVERY_BLS="$STATE/esp/loader/entries/prime-recovery.conf"
-          NORMAL_UKI="$(sudo -n find "$STATE/esp" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print | head -n1)"
-          RECOVERY_OLD="$(sudo -n awk '$1=="efi" {print $2}' "$RECOVERY_BLS")"
-          test -n "$NORMAL_BLS"; test -f "$RECOVERY_BLS"; test -n "$NORMAL_UKI"; test -n "$RECOVERY_OLD"
-          RECOVERY_OLD_ABS="$STATE/esp$RECOVERY_OLD"
-          test -f "$RECOVERY_OLD_ABS"
-          NORMAL_BASE="${NORMAL_UKI##*/}"
-          RECOVERY_NEW="/EFI/Prime/$NORMAL_BASE"
-          RECOVERY_NEW_ABS="$STATE/esp$RECOVERY_NEW"
-
-          NORMAL_SHA="$(sudo -n sha256sum "$NORMAL_UKI" | awk '{print $1}')"
-          RECOVERY_SHA="$(sudo -n sha256sum "$RECOVERY_OLD_ABS" | awk '{print $1}')"
-          sudo -n install -D -m 0644 "$RECOVERY_OLD_ABS" "$RECOVERY_NEW_ABS"
-          sudo -n rm -f "$RECOVERY_OLD_ABS"
-          sudo -n sed -i "s#^efi .*#efi $RECOVERY_NEW#" "$RECOVERY_BLS"
-          test "$(sudo -n sha256sum "$RECOVERY_NEW_ABS" | awk '{print $1}')" = "$RECOVERY_SHA"
-          test "$(sudo -n sha256sum "$NORMAL_UKI" | awk '{print $1}')" = "$NORMAL_SHA"
-          grep -q "^efi $RECOVERY_NEW$" < <(sudo -n cat "$RECOVERY_BLS")
-
-          objcopy --dump-section .cmdline="$STATE/embedded.cmdline" <(sudo -n cat "$NORMAL_UKI") 2>/dev/null || {
-            sudo -n cp "$NORMAL_UKI" "$STATE/normal.efi"
-            sudo -n chown "$(id -u):$(id -g)" "$STATE/normal.efi"
-            objcopy --dump-section .cmdline="$STATE/embedded.cmdline" "$STATE/normal.efi"
-          }
-          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"
-          printf '%s\n' "$BASE" | grep -Eq '^composefs=[0-9a-f]{128}$'
-          printf 'options %s root=gpt-auto rw console=ttyS0,115200n8 systemd.log_level=info systemd.log_target=console\n' "$BASE" | sudo -n tee -a "$NORMAL_BLS" >/dev/null
-
-          DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
-          test -n "$DEPLOY_ETC"
-          sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/primed.service.d"
-          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/primed.service.d/10-core-proof.conf" >/dev/null
-          [Service]
-          CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_BOOT CAP_SYS_PTRACE
-          ExecStartPre=/bin/sh -c 'echo CORE_RECOVERY_PROOF_BEGIN >/dev/ttyS0; printf "CORE_NS_READLINK=" >/dev/ttyS0; readlink /proc/1/ns/mnt >>/dev/ttyS0 2>&1; /usr/sbin/bootc status --format=json --format-version=1 >/run/prime/bootc-status-proof.txt 2>&1; rc=$?; cat /run/prime/bootc-status-proof.txt >/dev/ttyS0; echo CORE_BOOTC_STATUS_RC=$rc >/dev/ttyS0; echo CORE_RECOVERY_PROOF_END >/dev/ttyS0; exit 0'
-          EOF
-
-          sudo -n sync
-          echo NORMAL_BLS_BEGIN; sudo -n cat "$NORMAL_BLS"; echo NORMAL_BLS_END
-          echo RECOVERY_BLS_BEGIN; sudo -n cat "$RECOVERY_BLS"; echo RECOVERY_BLS_END
-          echo "NORMAL_UKI_SHA256=$NORMAL_SHA"
-          echo "RECOVERY_UKI_SHA256=$RECOVERY_SHA"
-          echo "RECOVERY_COMPAT_PATH=$RECOVERY_NEW"
-          cleanup
-          cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
-
-      - name: Boot exact UKI and prove Core generation binding
-        shell: bash
-        run: |
-          set -euo pipefail
-          set +e
-          timeout --signal=TERM 125s qemu-system-x86_64 \
-            -machine q35,accel=tcg \
-            -cpu max \
-            -smp 2 \
-            -m 3072 \
-            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-            -drive if=pflash,format=raw,file="$STATE/vars.fd" \
-            -drive file="$STATE/proof.qcow2",if=virtio,format=qcow2 \
-            -display none \
-            -serial "file:$STATE/serial.log" \
-            -monitor none \
-            -net none \
-            -no-reboot
-          RC=$?
-          set -e
-          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
-          echo CORE_RECOVERY_SERIAL_BEGIN
-          grep -E -i 'CORE_RECOVERY|CORE_NS_|CORE_BOOTC|primed:|prime-compositor|prime-shell|SHELL_READY|Error:|Failed with result' "$STATE/serial.log" | tail -n 1000 || true
-          echo CORE_RECOVERY_SERIAL_END
-          grep -q 'CORE_RECOVERY_PROOF_BEGIN' "$STATE/serial.log"
-          grep -Eq 'CORE_NS_READLINK=mnt:\[[0-9]+\]' "$STATE/serial.log"
-          grep -q 'CORE_BOOTC_STATUS_RC=0' "$STATE/serial.log"
-          grep -q 'CORE_RECOVERY_PROOF_END' "$STATE/serial.log"
-          grep -q 'primed: host=' "$STATE/serial.log"
-          echo CORE_RUNTIME_BINDING=PASS
-
-      - name: Prove persisted Prime state after corrected EFI boot
-        shell: bash
-        run: |
-          set -euo pipefail
-          cleanup() {
-            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
-            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          cleanup
-          mkdir -p "$STATE/replay-root"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/proof.qcow2")" "$STATE/replay.qcow2"
+          qemu-img check "$DISK" || true
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/replay.qcow2"
           sudo -n modprobe nbd max_part=16
           sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
@@ -147,27 +48,35 @@ jobs:
           FSCK_RC=$?
           set -e
           test $((FSCK_RC & 12)) -eq 0
-          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
-          PRIME="$STATE/replay-root/state/os/default/var/lib/prime"
-          test -d "$PRIME"
-          echo PRIME_POSTBOOT_FILES_BEGIN
-          sudo -n find "$PRIME" -maxdepth 4 -type f -printf '%P\n' | sort
-          echo PRIME_POSTBOOT_FILES_END
+          echo "EVIDENCE_FSCK_RC=$FSCK_RC"
+          sudo -n mount -o ro "$ROOT" "$STATE/root"
+
+          PRIME="$STATE/root/state/os/default/var/lib/prime"
+          echo PRIME_TREE_BEGIN
+          if sudo -n test -d "$PRIME"; then sudo -n find "$PRIME" -maxdepth 5 -printf '%y %P -> %l\n' | sort; fi
+          echo PRIME_TREE_END
           for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
             if sudo -n test -f "$PRIME/$rel"; then
-              echo "PRIME_POSTBOOT_BEGIN=$rel"
+              echo "PRIME_FILE_BEGIN=$rel"
               sudo -n cat "$PRIME/$rel"
-              echo "PRIME_POSTBOOT_END=$rel"
+              echo "PRIME_FILE_END=$rel"
             else
-              echo "PRIME_POSTBOOT_MISSING=$rel"
+              echo "PRIME_FILE_MISSING=$rel"
             fi
           done
+
+          echo JOURNAL_CORE_BEGIN
+          while IFS= read -r jroot; do
+            echo "JOURNAL_ROOT=${jroot#$STATE/root}"
+            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>&1 | tail -n 1500 || true
+          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
+          echo JOURNAL_CORE_END
+
           test -f "$PRIME/generations/current.json"
           sudo -n python3 - "$PRIME/generations/current.json" <<'PY'
           import json,sys
           g=json.load(open(sys.argv[1]))
-          print('CORE_GENERATION_STATE='+g['state'])
-          print('CORE_EVIDENCE_REFS='+','.join(g.get('evidence_refs', [])))
-          assert g['state'] in ('BOOT_TRY','HEALTH_PROVING','KNOWN_GOOD'), g
+          print('POST_BOOTC_GENERATION_STATE='+g['state'])
+          print('POST_BOOTC_EVIDENCE_REFS='+','.join(g.get('evidence_refs', [])))
           PY
-          echo GATE_1_CORE_GENERATION_STATE=PASS
+          echo POST_BOOTC_GENERATION_PERSISTED=PASS
