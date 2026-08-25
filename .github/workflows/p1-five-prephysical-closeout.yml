@@ -37,17 +37,13 @@ jobs:
           test -n "$ROOT_UUID"; echo "$ROOT_UUID" > "$STATE/root.uuid"
           sudo -n mount -o ro "$ESP" "$STATE/mnt"
           UKI="$(sudo -n find "$STATE/mnt" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
-          test -n "$UKI"
-          echo "${UKI#$STATE/mnt}" > "$STATE/uki.rel"
-          sudo -n cp "$UKI" "$STATE/original.efi"
-          sudo -n chown "$(id -u):$(id -g)" "$STATE/original.efi"
-          objcopy --dump-section .linux="$STATE/kernel" "$STATE/original.efi"
+          test -n "$UKI"; echo "${UKI#$STATE/mnt}" > "$STATE/uki.rel"
+          sudo -n cp "$UKI" "$STATE/original.efi"; sudo -n chown "$(id -u):$(id -g)" "$STATE/original.efi"
           objcopy --dump-section .initrd="$STATE/initrd" "$STATE/original.efi"
           objcopy --dump-section .cmdline="$STATE/cmdline" "$STATE/original.efi"
           echo "ORIGINAL_CMDLINE=$(tr -d '\000' < "$STATE/cmdline")"
           if lsinitrd "$STATE/initrd" 2>/dev/null | grep -q 'systemd-gpt-auto-generator'; then echo INITRD_GPT_AUTO_GENERATOR=1; else echo INITRD_GPT_AUTO_GENERATOR=0; fi
-          sudo -n umount "$STATE/mnt"
-          sudo -n qemu-nbd --disconnect "$NBD"
+          sudo -n umount "$STATE/mnt"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 2
 
       - name: EFI test A — explicit gpt-auto through systemd-boot UKI
         shell: bash
@@ -65,7 +61,7 @@ jobs:
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
           mkdir -p "$STATE/esp-a"; sudo -n mount "$ESP" "$STATE/esp-a"
           REL="$(cat "$STATE/uki.rel")"; sudo -n install -m 0644 "$STATE/diag.efi" "$STATE/esp-a$REL"; sudo -n sync
-          sudo -n umount "$STATE/esp-a"; sudo -n qemu-nbd --disconnect "$NBD"
+          sudo -n umount "$STATE/esp-a"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 3
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars-a.fd"
           set +e
           timeout --signal=TERM 100s qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 3072 \
@@ -73,7 +69,7 @@ jobs:
             -drive file="$STATE/gpt-auto.qcow2",if=virtio,format=qcow2 -display none -serial "file:$STATE/a.log" -monitor none -net none -no-reboot
           RC=$?; set -e; test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
           echo TEST_A_MARKERS_BEGIN
-          grep -E -i 'Linux version|Kernel command line|gpt-auto|sysroot|bootc-root|switching root|emergency|failed|panic' "$STATE/a.log" | tail -n 160 || true
+          grep -E -i 'Linux version|Kernel command line|gpt-auto|sysroot|bootc-root|switching root|emergency|failed|panic' "$STATE/a.log" | tail -n 180 || true
           echo TEST_A_MARKERS_END
           if grep -q 'Switching root' "$STATE/a.log"; then echo EFI_GPT_AUTO_ROOT=PASS; else echo EFI_GPT_AUTO_ROOT=FAIL; fi
 
@@ -92,7 +88,7 @@ jobs:
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
           mkdir -p "$STATE/esp-b"; sudo -n mount "$ESP" "$STATE/esp-b"
           REL="$(cat "$STATE/uki.rel")"; sudo -n install -m 0644 "$STATE/diag-b.efi" "$STATE/esp-b$REL"; sudo -n sync
-          sudo -n umount "$STATE/esp-b"; sudo -n qemu-nbd --disconnect "$NBD"
+          sudo -n umount "$STATE/esp-b"; sudo -n qemu-nbd --disconnect "$NBD"; sleep 3
           cp "$OVMF_VARS_TEMPLATE" "$STATE/vars-b.fd"
           set +e
           timeout --signal=TERM 100s qemu-system-x86_64 -machine q35,accel=tcg -cpu max -smp 2 -m 3072 \
@@ -100,7 +96,7 @@ jobs:
             -drive file="$STATE/root-uuid.qcow2",if=virtio,format=qcow2 -display none -serial "file:$STATE/b.log" -monitor none -net none -no-reboot
           RC=$?; set -e; test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
           echo TEST_B_MARKERS_BEGIN
-          grep -E -i 'Linux version|Kernel command line|root=UUID|sysroot|bootc-root|switching root|primed|prime-compositor|prime-shell|SHELL_READY|emergency|failed|panic' "$STATE/b.log" | tail -n 220 || true
+          grep -E -i 'Linux version|Kernel command line|root=UUID|sysroot|bootc-root|switching root|primed|prime-compositor|prime-shell|SHELL_READY|emergency|failed|panic' "$STATE/b.log" | tail -n 240 || true
           echo TEST_B_MARKERS_END
           grep -q 'Linux version' "$STATE/b.log" || { echo EFI_SYSTEMD_BOOT_UKI_EXECUTION=FAIL; exit 1; }
           grep -q 'Switching root' "$STATE/b.log" || { echo EFI_ROOT_UUID_HANDOFF=FAIL; exit 1; }
