@@ -1,0 +1,248 @@
+name: Prime P1 eight-boundary First-Light diagnostic
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+    types: [reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  eight-boundaries:
+    if: github.event.pull_request.number == 85
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 12
+    env:
+      EXPECTED_CANDIDATE: 0398835ff01c9139be1c32f41530e4d1af12175b
+      RUN_DIR: /var/tmp/prime-p1-local-proof/run
+      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      STATE: /var/tmp/prime-p1-eight-boundaries
+      NBD: /dev/nbd1
+      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
+      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
+
+    steps:
+      - name: Boundary 1 — QCOW2
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$STATE"
+          mkdir -p "$STATE/mnt/esp" "$STATE/mnt/root"
+          test -f "$DISK"
+          qemu-img check "$DISK"
+          qemu-img info "$DISK"
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          lsblk -o NAME,TYPE,FSTYPE,SIZE,LABEL,UUID,PARTTYPE "$NBD" | tee "$STATE/b1-lsblk.txt"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ESP"
+          test -n "$ROOT"
+          ROOT_UUID="$(lsblk -nrpo UUID "$ROOT" | head -n1)"
+          test -n "$ROOT_UUID"
+          printf '%s\n' "$ESP" > "$STATE/esp.dev"
+          printf '%s\n' "$ROOT" > "$STATE/root.dev"
+          printf '%s\n' "$ROOT_UUID" > "$STATE/root.uuid"
+          sudo -n qemu-nbd --disconnect "$NBD"
+          echo BOUNDARY_1_QCOW2=PASS
+
+      - name: Boundary 2 — OVMF
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -r "$OVMF_CODE"
+          test -r "$OVMF_VARS_TEMPLATE"
+          rm -f "$STATE/ovmf-overlay.qcow2" "$STATE/ovmf-vars.fd" "$STATE/ovmf-serial.log"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/ovmf-overlay.qcow2"
+          cp "$OVMF_VARS_TEMPLATE" "$STATE/ovmf-vars.fd"
+          set +e
+          timeout --signal=TERM 60s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$STATE/ovmf-vars.fd" \
+            -drive file="$STATE/ovmf-overlay.qcow2",if=virtio,format=qcow2 \
+            -display none \
+            -serial "file:$STATE/ovmf-serial.log" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
+          cat "$STATE/ovmf-serial.log" || true
+          grep -q 'BdsDxe: starting Boot' "$STATE/ovmf-serial.log"
+          echo BOUNDARY_2_OVMF=PASS
+
+      - name: Boundary 3 — Prime UKI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          test -n "$ESP"
+          sudo -n mount -o ro "$ESP" "$STATE/mnt/esp"
+          UKI="$(sudo -n find "$STATE/mnt/esp" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
+          test -n "$UKI"
+          sudo -n cp "$UKI" "$STATE/prime-normal.efi"
+          sudo -n chown "$(id -u):$(id -g)" "$STATE/prime-normal.efi"
+          sha256sum "$STATE/prime-normal.efi" | tee "$STATE/uki.sha256"
+          objcopy --dump-section .linux="$STATE/prime-normal.linux" "$STATE/prime-normal.efi"
+          objcopy --dump-section .initrd="$STATE/prime-normal.initrd" "$STATE/prime-normal.efi"
+          objcopy --dump-section .cmdline="$STATE/prime-normal.cmdline" "$STATE/prime-normal.efi"
+          CMDLINE="$(tr -d '\000' < "$STATE/prime-normal.cmdline")"
+          echo "UKI_CMDLINE=$CMDLINE"
+          printf '%s\n' "$CMDLINE" > "$STATE/base.cmdline"
+          printf '%s\n' "$CMDLINE" | grep -Eq '^composefs=[0-9a-f]{128}$'
+          test -s "$STATE/prime-normal.linux"
+          test -s "$STATE/prime-normal.initrd"
+          sudo -n umount "$STATE/mnt/esp"
+          sudo -n qemu-nbd --disconnect "$NBD"
+          echo BOUNDARY_3_UKI=PASS
+
+      - name: Boundary 4 — bootc composefs root
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT_UUID="$(cat "$STATE/root.uuid")"
+          BASE_CMDLINE="$(cat "$STATE/base.cmdline")"
+          rm -f "$STATE/root-overlay.qcow2" "$STATE/root-serial.log"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/root-overlay.qcow2"
+          DIAG_CMDLINE="$BASE_CMDLINE root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200n8 rd.debug systemd.log_level=info systemd.log_target=console"
+          echo "ROOT_DIAG_CMDLINE=$DIAG_CMDLINE"
+          set +e
+          timeout --signal=TERM 150s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive file="$STATE/root-overlay.qcow2",if=virtio,format=qcow2 \
+            -kernel "$STATE/prime-normal.linux" \
+            -initrd "$STATE/prime-normal.initrd" \
+            -append "$DIAG_CMDLINE" \
+            -display none \
+            -serial "file:$STATE/root-serial.log" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
+          grep -E -i 'bootc|composefs|ostree|sysroot|switch-root|switching root|emergency|failed|failure|panic' "$STATE/root-serial.log" | tail -n 240 || true
+          if grep -Eqi 'switching root|switch-root|initrd-switch-root|Mounted .*sysroot|Reached target .*Initrd Root File System' "$STATE/root-serial.log"; then
+            echo PASS > "$STATE/b4"
+            echo BOUNDARY_4_BOOTC_COMPOSEFS_ROOT=PASS
+          else
+            echo FAIL > "$STATE/b4"
+            echo BOUNDARY_4_BOOTC_COMPOSEFS_ROOT=FAIL
+          fi
+
+      - name: Boundary 5 — systemd
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eqi 'Startup finished in|Reached target .*Multi-User|Reached target .*Graphical|Started .*primed|Starting .*primed' "$STATE/root-serial.log"; then
+            echo PASS > "$STATE/b5"
+            echo BOUNDARY_5_SYSTEMD=PASS
+          else
+            echo FAIL > "$STATE/b5"
+            echo BOUNDARY_5_SYSTEMD=FAIL
+          fi
+          grep -E -i 'systemd\[1\]|multi-user|graphical.target|primed.service' "$STATE/root-serial.log" | tail -n 160 || true
+
+      - name: Boundary 6 — Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE/mnt/runtime"
+          sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/root-overlay.qcow2"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ROOT"
+          sudo -n mount -o ro "$ROOT" "$STATE/mnt/runtime"
+          FOUND=0
+          for p in "$STATE/mnt/runtime/state/os/default/var/lib/prime" "$STATE/mnt/runtime/var/lib/prime"; do
+            if sudo -n test -f "$p/hardware/current.json"; then
+              FOUND=1
+              echo "PRIME_STATE_PATH=${p#$STATE/mnt/runtime}"
+              sudo -n find "$p" -maxdepth 3 -type f -printf 'PRIME_FILE=%P\n' | sort | head -n 100 || true
+            fi
+          done
+          sudo -n umount "$STATE/mnt/runtime"
+          sudo -n qemu-nbd --disconnect "$NBD"
+          if test "$FOUND" -eq 1 || grep -Eqi 'Started .*primed|primed.service:.*(Started|active|success)' "$STATE/root-serial.log"; then
+            echo PASS > "$STATE/b6"
+            echo BOUNDARY_6_CORE=PASS
+          else
+            echo FAIL > "$STATE/b6"
+            echo BOUNDARY_6_CORE=FAIL
+          fi
+
+      - name: Boundary 7 — Shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eqi 'prime-shell.service:.*(Started|active|success)|Started .*Prime.*Shell|Starting .*Prime.*Shell' "$STATE/root-serial.log"; then
+            echo PASS > "$STATE/b7"
+            echo BOUNDARY_7_SHELL=PASS
+          else
+            echo FAIL > "$STATE/b7"
+            echo BOUNDARY_7_SHELL=FAIL
+          fi
+          grep -E -i 'prime-compositor|prime-shell|SHELL_READY|Wayland' "$STATE/root-serial.log" | tail -n 200 || true
+
+      - name: Boundary 8 — SHELL_READY
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE/mnt/final"
+          sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/root-overlay.qcow2"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ROOT"
+          sudo -n mount -o ro "$ROOT" "$STATE/mnt/final"
+          WITNESS=""
+          for f in "$STATE/mnt/final/state/os/default/var/lib/prime/first-light/mechanical.json" "$STATE/mnt/final/var/lib/prime/first-light/mechanical.json"; do
+            if sudo -n test -f "$f"; then WITNESS="$f"; break; fi
+          done
+          B8=FAIL
+          if test -n "$WITNESS"; then
+            sudo -n cat "$WITNESS" | tee "$STATE/mechanical.json"
+            if sudo -n python3 - "$WITNESS" <<'PY'
+          import json, sys
+          d=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert d.get('schema') == 'prime.first-light-mechanical.v1'
+          assert d.get('status') == 'SHELL_READY'
+          assert d.get('shell_ready') is True
+          assert d.get('core_socket_group_nonzero') is True
+          assert int(d.get('clients_accepted', 0)) >= 1
+          assert int(d.get('mapped_surface_frames_submitted', 0)) >= 1
+          PY
+            then B8=PASS; fi
+          fi
+          sudo -n umount "$STATE/mnt/final"
+          sudo -n qemu-nbd --disconnect "$NBD"
+          echo "BOUNDARY_1_QCOW2=PASS"
+          echo "BOUNDARY_2_OVMF=PASS"
+          echo "BOUNDARY_3_UKI=PASS"
+          echo "BOUNDARY_4_BOOTC_COMPOSEFS_ROOT=$(cat "$STATE/b4")"
+          echo "BOUNDARY_5_SYSTEMD=$(cat "$STATE/b5")"
+          echo "BOUNDARY_6_CORE=$(cat "$STATE/b6")"
+          echo "BOUNDARY_7_SHELL=$(cat "$STATE/b7")"
+          echo "BOUNDARY_8_SHELL_READY=$B8"
+          test "$B8" = PASS
+          echo PRIME_P1_EIGHT_BOUNDARIES=PASS
