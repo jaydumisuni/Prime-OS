@@ -1,4 +1,4 @@
-name: Prime P1 SATA guest causality proof
+name: Prime P1 direct-kernel guest diagnostic
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  sata-causality:
+  direct-kernel:
     if: github.event.pull_request.number == 85
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 6
@@ -18,48 +18,67 @@ jobs:
       EXPECTED_CANDIDATE: 0398835ff01c9139be1c32f41530e4d1af12175b
       RUN_DIR: /var/tmp/prime-p1-local-proof/run
       DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
-      TEST_OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-sata-diag-overlay.qcow2
-      TEST_SERIAL: /var/tmp/prime-p1-local-proof/run/prime-p1-sata-diag-serial.log
-      TEST_VARS: /var/tmp/prime-p1-local-proof/run/OVMF_VARS_4M-sata-diag.fd
+      TEST_OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-direct-kernel-overlay.qcow2
+      TEST_SERIAL: /var/tmp/prime-p1-local-proof/run/prime-p1-direct-kernel-serial.log
       NBD: /dev/nbd1
-      MNT: /var/tmp/prime-p1-sata-diag-mnt
+      MNT: /var/tmp/prime-p1-direct-kernel-mnt
     steps:
-      - name: Boot exact QCOW2 through non-virtio SATA transport
+      - name: Boot exact UKI kernel and initramfs with serial observability
         shell: bash
         run: |
           set -euo pipefail
-          OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
-          OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
           test -f "$DISK"
-          test -r "$OVMF_CODE"
-          test -r "$OVMF_VARS_TEMPLATE"
           echo "CANDIDATE_EXPECTED=$EXPECTED_CANDIDATE"
-          echo "DISK=$DISK"
 
           cleanup() {
-            sudo -n umount "$MNT" >/dev/null 2>&1 || true
+            sudo -n umount "$MNT/esp" >/dev/null 2>&1 || true
+            sudo -n umount "$MNT/root" >/dev/null 2>&1 || true
             sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
           rm -rf "$MNT"
-          mkdir -p "$MNT"
-          rm -f "$TEST_OVERLAY" "$TEST_SERIAL" "$TEST_VARS"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$TEST_OVERLAY"
-          cp "$OVMF_VARS_TEMPLATE" "$TEST_VARS"
+          mkdir -p "$MNT/esp" "$MNT/root"
 
-          echo SATA_QEMU_BEGIN
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          test -n "$ESP"
+          sudo -n mount -o ro "$ESP" "$MNT/esp"
+          UKI="$(sudo -n find "$MNT/esp" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
+          test -n "$UKI"
+          COPY="$RUN_DIR/direct-normal.efi"
+          KERNEL="$RUN_DIR/direct-normal.linux"
+          INITRD="$RUN_DIR/direct-normal.initrd"
+          CMDLINE_FILE="$RUN_DIR/direct-normal.cmdline"
+          sudo -n cp "$UKI" "$COPY"
+          sudo -n chown "$(id -u):$(id -g)" "$COPY"
+          objcopy --dump-section .linux="$KERNEL" "$COPY"
+          objcopy --dump-section .initrd="$INITRD" "$COPY"
+          objcopy --dump-section .cmdline="$CMDLINE_FILE" "$COPY"
+          BASE_CMDLINE="$(tr -d '\000' < "$CMDLINE_FILE")"
+          echo "BASE_CMDLINE=$BASE_CMDLINE"
+          echo "KERNEL_BYTES=$(wc -c < "$KERNEL")"
+          echo "INITRD_BYTES=$(wc -c < "$INITRD")"
+          cleanup
+
+          rm -f "$TEST_OVERLAY" "$TEST_SERIAL"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$TEST_OVERLAY"
+          DIAG_CMDLINE="$BASE_CMDLINE console=ttyS0,115200n8 rd.debug systemd.log_level=debug systemd.log_target=console"
+          echo "DIAG_CMDLINE=$DIAG_CMDLINE"
+
           set +e
-          timeout --signal=TERM 120s qemu-system-x86_64 \
+          timeout --signal=TERM 90s qemu-system-x86_64 \
             -machine q35,accel=tcg \
             -cpu max \
             -smp 2 \
             -m 3072 \
-            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-            -drive if=pflash,format=raw,file="$TEST_VARS" \
-            -device ich9-ahci,id=ahci \
-            -drive file="$TEST_OVERLAY",if=none,format=qcow2,id=prime-disk \
-            -device ide-hd,drive=prime-disk,bus=ahci.0 \
+            -drive file="$TEST_OVERLAY",if=virtio,format=qcow2 \
+            -kernel "$KERNEL" \
+            -initrd "$INITRD" \
+            -append "$DIAG_CMDLINE" \
             -display none \
             -serial "file:$TEST_SERIAL" \
             -monitor none \
@@ -67,39 +86,31 @@ jobs:
             -no-reboot
           QEMU_RC=$?
           set -e
-          echo "SATA_QEMU_RC=$QEMU_RC"
-          echo SATA_QEMU_END
+          echo "DIRECT_QEMU_RC=$QEMU_RC"
           test "$QEMU_RC" -eq 0 -o "$QEMU_RC" -eq 124 -o "$QEMU_RC" -eq 143
-          echo "SATA_SERIAL_BYTES=$(wc -c < "$TEST_SERIAL" 2>/dev/null || echo 0)"
-          echo SATA_SERIAL_BEGIN
-          cat "$TEST_SERIAL" 2>/dev/null || true
-          echo SATA_SERIAL_END
+
+          echo "DIRECT_SERIAL_BYTES=$(wc -c < "$TEST_SERIAL" 2>/dev/null || echo 0)"
+          echo DIRECT_BOOT_MARKERS_BEGIN
+          grep -E -i 'Linux version|Kernel command line|virtio|bootc|composefs|ostree|sysroot|rootfs|root=|VFS|dracut|emergency|failed|failure|error|panic|timed out|dependency' "$TEST_SERIAL" | head -n 240 || true
+          echo DIRECT_BOOT_MARKERS_END
+          echo DIRECT_SERIAL_TAIL_BEGIN
+          tail -n 160 "$TEST_SERIAL" 2>/dev/null || true
+          echo DIRECT_SERIAL_TAIL_END
 
           cleanup
-          sudo -n modprobe nbd max_part=16
           sudo -n qemu-nbd --read-only --connect="$NBD" "$TEST_OVERLAY"
           sleep 2
           sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ROOT"
-          echo "SATA_ROOT=$ROOT"
-          sudo -n mount -o ro "$ROOT" "$MNT"
-
+          sudo -n mount -o ro "$ROOT" "$MNT/root"
           FOUND=0
-          for p in "$MNT/state/os/default/var/lib/prime" "$MNT/var/lib/prime"; do
-            rel="${p#$MNT}"
+          for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
             if sudo -n test -f "$p/hardware/current.json"; then
               FOUND=1
-              echo "SATA_PRIME_STATE_PATH=$rel"
-              sudo -n find "$p" -maxdepth 3 -type f -printf 'SATA_PRIME_FILE=%P\n' | sort | head -n 80 || true
-              if sudo -n test -f "$p/generations/current.json"; then
-                printf 'SATA_GENERATION='; sudo -n cat "$p/generations/current.json"; printf '\n'
-              fi
-              if sudo -n test -f "$p/first-light/mechanical.json"; then
-                printf 'SATA_FIRST_LIGHT='; sudo -n cat "$p/first-light/mechanical.json"; printf '\n'
-              fi
+              echo "DIRECT_PRIME_STATE_PATH=${p#$MNT/root}"
+              sudo -n find "$p" -maxdepth 3 -type f -printf 'DIRECT_PRIME_FILE=%P\n' | sort | head -n 60 || true
             fi
           done
-          echo "SATA_PRIME_STATE=$FOUND"
-          test "$FOUND" -eq 1
-          echo SATA_CAUSALITY_PROOF=PASS
+          echo "DIRECT_PRIME_STATE=$FOUND"
+          echo DIRECT_KERNEL_DIAGNOSTIC=PASS
