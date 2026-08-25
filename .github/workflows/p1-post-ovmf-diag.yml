@@ -1,0 +1,120 @@
+name: Prime P1 post-OVMF guest diagnostic v2
+
+on:
+  pull_request:
+    branches:
+      - adapter/p1-image-builder-mount-probe
+    types: [reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.pull_request.number == 85
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 10
+    env:
+      RUN_DIR: /var/tmp/prime-p1-local-proof/run
+      OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-boot-overlay.qcow2
+      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      SERIAL: /var/tmp/prime-p1-local-proof/run/prime-serial.log
+      VARS: /var/tmp/prime-p1-local-proof/run/OVMF_VARS_4M.fd
+      NBD: /dev/nbd1
+      MNT: /var/tmp/prime-p1-post-ovmf-diag
+    steps:
+      - name: Inspect serial and overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$DISK"
+          test -f "$OVERLAY"
+          test -f "$VARS"
+
+          echo '=== artifact metadata ==='
+          qemu-img info "$DISK"
+          qemu-img info "$OVERLAY"
+          if test -f "$SERIAL"; then
+            wc -c "$SERIAL"
+            echo '--- serial head ---'
+            sed -n '1,240p' "$SERIAL" || true
+            echo '--- serial tail ---'
+            tail -n 240 "$SERIAL" || true
+          else
+            echo SERIAL_LOG_MISSING
+          fi
+          echo '=== OVMF vars strings ==='
+          strings -a "$VARS" | grep -E -i 'Boot(Order|Current|Next)|systemd|Linux|Prime|bootc|UEFI|QEMU|EFI' | tail -n 240 || true
+
+          cleanup() {
+            sudo -n umount "$MNT/esp" >/dev/null 2>&1 || true
+            sudo -n umount "$MNT/boot" >/dev/null 2>&1 || true
+            sudo -n umount "$MNT/root" >/dev/null 2>&1 || true
+            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          rm -rf "$MNT"
+          mkdir -p "$MNT/esp" "$MNT/boot" "$MNT/root"
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --read-only --connect="$NBD" "$OVERLAY"
+          sleep 2
+          sudo -n partprobe "$NBD"
+          lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD"
+
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          XBOOT="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
+          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+          test -n "$ESP"
+          test -n "$ROOT"
+          sudo -n mount -o ro "$ESP" "$MNT/esp"
+          if test -n "$XBOOT"; then sudo -n mount -o ro "$XBOOT" "$MNT/boot"; fi
+          sudo -n mount -o ro "$ROOT" "$MNT/root"
+
+          echo '=== ESP / BLS ==='
+          sudo -n find "$MNT/esp" -maxdepth 5 -type f -printf '%P\n' | sort
+          if sudo -n test -f "$MNT/esp/loader/loader.conf"; then
+            echo '--- loader.conf'
+            sudo -n cat "$MNT/esp/loader/loader.conf"
+          fi
+          for f in "$MNT/esp"/loader/entries/*.conf; do
+            sudo -n test -f "$f" || continue
+            echo "--- ${f#$MNT/esp/}"
+            sudo -n cat "$f"
+          done
+
+          echo '=== root state candidates ==='
+          for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
+            if sudo -n test -e "$p"; then
+              echo "--- ${p#$MNT/root/}"
+              sudo -n find "$p" -maxdepth 6 -printf '%y %P -> %l\n' | sort | head -n 800 || true
+            else
+              echo "MISSING ${p#$MNT/root/}"
+            fi
+          done
+
+          echo '=== bootc/ostree layout ==='
+          sudo -n find "$MNT/root" -maxdepth 5 \
+            \( -path '*/bootc*' -o -path '*/ostree*' -o -path '*/state/os/default*' \) \
+            -printf '%y %P -> %l\n' | sort | head -n 1000 || true
+
+          echo '=== journal candidates ==='
+          sudo -n find "$MNT/root" -type f -path '*/var/log/journal/*/*.journal' -printf '%p\n' | head -n 80 || true
+
+          echo '=== installed normal UKI inspect ==='
+          UKI="$(sudo -n find "$MNT/esp/EFI/Linux/bootc" -maxdepth 1 -type f -name '*.efi' -print -quit)"
+          test -n "$UKI"
+          COPY="$RUN_DIR/post-ovmf-normal.efi"
+          sudo -n cp "$UKI" "$COPY"
+          sudo -n chown "$(id -u):$(id -g)" "$COPY"
+          sudo -n podman run --rm --security-opt label=disable -v "$COPY:/tmp/normal.efi:ro" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            ukify --json=short inspect /tmp/normal.efi > /tmp/inspect.json
+            python3 - <<"PY"
+import json
+x=json.load(open("/tmp/inspect.json"))
+print("CMDLINE=" + x[".cmdline"]["text"].strip())
+print("OSREL=" + x[".osrel"]["text"].replace("\n", " | "))
+PY
+          '
+          rm -f "$COPY"
+          echo POST_OVMF_GUEST_DIAGNOSTIC_V2=PROVEN
