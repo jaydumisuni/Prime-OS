@@ -392,20 +392,23 @@ printf '%s\n' "$MOUNT_ESP$RECOVERY_REL" | tee "$RUN_DIR/prime-recovery-uki-files
 cleanup_nbd
 
 log "Boot normal QCOW2 through OVMF/QEMU"
-rm -f "$OVERLAY" "$SERIAL_LOG"
+OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+OVMF_VARS="$RUN_DIR/OVMF_VARS_4M.fd"
+rm -f "$OVERLAY" "$SERIAL_LOG" "$OVMF_VARS"
 qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$OVERLAY"
-OVMF=""
-for candidate in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd; do
-  if [[ -f "$candidate" ]]; then OVMF="$candidate"; break; fi
-done
-[[ -n "$OVMF" ]] || fail "OVMF_CODE firmware not found"
+[[ -r "$OVMF_CODE" ]] || fail "OVMF CODE firmware not readable"
+[[ -r "$OVMF_VARS_TEMPLATE" ]] || fail "OVMF VARS template not readable"
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+[[ -w "$OVMF_VARS" ]] || fail "disposable OVMF VARS is not writable"
 set +e
 timeout --signal=TERM 120s qemu-system-x86_64 \
   -machine q35,accel=tcg \
   -cpu max \
   -smp 2 \
   -m 3072 \
-  -bios "$OVMF" \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive if=pflash,format=raw,file="$OVMF_VARS" \
   -drive file="$OVERLAY",if=virtio,format=qcow2 \
   -display none \
   -serial "file:$SERIAL_LOG" \
