@@ -18,7 +18,7 @@ jobs:
       STATE: /var/tmp/prime-p1-core-evidence
       NBD: /dev/nbd1
     steps:
-      - name: Inspect Core serial and persisted state
+      - name: Recover Core failure after safe journal replay
         shell: bash
         run: |
           set -euo pipefail
@@ -36,16 +36,26 @@ jobs:
           echo CORE_SERIAL_EVIDENCE_END
 
           test -f "$DISK"
+          qemu-img check "$DISK"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/replayed.qcow2"
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --read-only --connect="$NBD" "$DISK"
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/replayed.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ROOT"
-          sudo -n mount -o ro,noload "$ROOT" "$STATE/root"
 
+          set +e
+          sudo -n e2fsck -fy "$ROOT"
+          FSCK_RC=$?
+          set -e
+          test $((FSCK_RC & 12)) -eq 0
+          echo "EVIDENCE_FSCK_RC=$FSCK_RC"
+
+          sudo -n mount -o ro "$ROOT" "$STATE/root"
           echo PRIME_STATE_SCAN_BEGIN
-          sudo -n find "$STATE/root" -maxdepth 12 -path '*/var/lib/prime/*' -type f -printf '%p\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 200 || true
+          sudo -n find "$STATE/root" -maxdepth 14 -path '*/var/lib/prime/*' -type f -printf '%p\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 300 || true
           echo PRIME_STATE_SCAN_END
+
           for base in "$STATE/root/state/os/default/var/lib/prime" "$STATE/root/var/lib/prime"; do
             if sudo -n test -d "$base"; then
               echo "PRIME_BASE=${base#$STATE/root}"
@@ -61,13 +71,17 @@ jobs:
             fi
           done
 
+          echo JOURNAL_FILES_BEGIN
+          sudo -n find "$STATE/root" -type f -path '*/var/log/journal/*/*.journal*' -printf '%p %s\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 200 || true
+          echo JOURNAL_FILES_END
+
           echo JOURNAL_SCAN_BEGIN
           while IFS= read -r jroot; do
             echo "JOURNAL_ROOT=${jroot#$STATE/root}"
-            sudo -n journalctl --directory="$jroot" --no-pager -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>/dev/null | tail -n 700 || true
+            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>&1 | tail -n 900 || true
           done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
           echo JOURNAL_SCAN_END
 
           echo BOOTC_STATE_FILES_BEGIN
-          sudo -n find "$STATE/root" -maxdepth 8 \( -path '*/bootc*' -o -path '*/ostree*' \) -print 2>/dev/null | sed "s#$STATE/root##" | head -n 200 || true
+          sudo -n find "$STATE/root" -maxdepth 10 \( -path '*/bootc*' -o -path '*/ostree*' \) -print 2>/dev/null | sed "s#$STATE/root##" | head -n 300 || true
           echo BOOTC_STATE_FILES_END
