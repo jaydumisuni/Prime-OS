@@ -344,11 +344,19 @@ RUN --mount=type=bind,from=sealed-rootfs,target=/target,ro \
     test "$(find /out -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1
 
 FROM sealed-rootfs AS final
+ARG PRIME_COMPOSEFS_DIGEST
 COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
 
 RUN set -eux; \
-    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \
-    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \
+    case "${PRIME_COMPOSEFS_DIGEST}" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac; \
+    recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' -print -quit)"; \
+    test -n "${recovery}"; \
+    install -d -m 0755 /boot/EFI/Prime; \
+    mv "${recovery}" "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \
+    chmod 0644 "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 1; \
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 0; \
+    test -s "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \
     test ! -e /kernel; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
