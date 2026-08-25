@@ -1,4 +1,4 @@
-name: Prime P1 reversible bwrap complain-window proof
+name: Prime P1 recovery UKI split composer
 
 on:
   pull_request:
@@ -7,90 +7,174 @@ on:
     types: [reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  prove-complain-window:
-    runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 8
-    env:
-      IMAGE_BUILDER: ghcr.io/osbuild/image-builder-cli@sha256:dcce024476c13edfe5a1e45a4a492435a3b5eae9ed8a09765f7f75b3912e708b
-      POLICY: /etc/apparmor.d/bwrap-userns-restrict
-      EXPECTED_POLICY_SHA256: d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990
+  compose-recovery-split:
+    if: github.event.pull_request.number == 85
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Freeze exact host policy and prove complain support
+      - uses: actions/checkout@v4
+        with:
+          ref: proof/p1-first-light-final
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply bounded recovery UKI split
         shell: bash
         run: |
           set -euo pipefail
-          test -c /dev/fuse
-          actual="$(sha256sum "$POLICY" | awk '{print $1}')"
-          test "$actual" = "$EXPECTED_POLICY_SHA256"
-          apparmor_parser --help 2>&1 | grep -E -- '(^|[[:space:]])-C([,[:space:]]|.*[Cc]omplain)' >/dev/null
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$'
-          echo "ORIGINAL_POLICY_SHA256=$actual"
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Run pinned builder in reversible bwrap complain window
+          container = Path('image/Containerfile')
+          s = container.read_text()
+          old = '''FROM sealed-rootfs AS final
+          COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
+
+          RUN set -eux; \\
+              test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 2; \\
+              test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \\
+          '''
+          new = '''FROM sealed-rootfs AS final
+          ARG PRIME_COMPOSEFS_DIGEST
+          COPY --from=uki-tools /out/*.efi /boot/EFI/Linux/
+
+          RUN set -eux; \\
+              case "${PRIME_COMPOSEFS_DIGEST}" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac; \\
+              recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' -print -quit)"; \\
+              test -n "${recovery}"; \\
+              install -d -m 0755 /boot/EFI/Prime; \\
+              mv "${recovery}" "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \\
+              chmod 0644 "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \\
+              test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.efi' | wc -l)" -eq 1; \\
+              test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 0; \\
+              test -s "/boot/EFI/Prime/prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi"; \\
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'Containerfile final UKI anchor count={s.count(old)}')
+          container.write_text(s.replace(old, new, 1))
+
+          proof = Path('tools/prove-p1-local.sh')
+          s = proof.read_text()
+
+          old_recovery = 'recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"'
+          new_recovery = 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"'
+          if s.count(old_recovery) != 2:
+              raise SystemExit(f'recovery source anchor count={s.count(old_recovery)}')
+          s = s.replace(old_recovery, new_recovery)
+
+          old_count = 'test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 1'
+          if s.count(old_count) != 2:
+              raise SystemExit(f'recovery count anchor count={s.count(old_count)}')
+          s = s.replace(old_count, 'test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 0')
+
+          old_all_count = 'test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 2'
+          if s.count(old_all_count) != 1:
+              raise SystemExit(f'all UKI count anchor count={s.count(old_all_count)}')
+          s = s.replace(old_all_count, 'test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 1', 1)
+
+          old_n = 'test -n "$recovery"'
+          if s.count(old_n) != 2:
+              raise SystemExit(f'recovery existence anchor count={s.count(old_n)}')
+          s = s.replace(old_n, 'test -s "$recovery"')
+
+          start_marker = 'log "Inspect GPT, ESP and normal/recovery UKI placement"\n'
+          end_marker = 'log "Boot normal QCOW2 through OVMF/QEMU"\n'
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+          install_block = r'''log "Install and inspect bootc-normal / Prime-recovery UKI split"
+          cleanup_nbd
+          sudo -n modprobe nbd max_part=16
+          sudo -n qemu-nbd --connect="$NBD_DEV" "$DISK"
+          sleep 2
+          sudo -n partprobe "$NBD_DEV"
+          sudo -n sgdisk -p "$NBD_DEV" | tee "$RUN_DIR/gpt.txt"
+          lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD_DEV" | tee "$RUN_DIR/lsblk.txt"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          [[ -n "$ESP" ]] || fail "ESP not found"
+          sudo -n mount "$ESP" "$MOUNT_ESP"
+          sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files-before-recovery.txt"
+          [[ -f "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI" || -f "$MOUNT_ESP/EFI/systemd/systemd-bootx64.efi" ]] || fail "systemd-boot fallback/loader binary not found on ESP"
+          XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
+          if [[ -n "$XBOOTLDR" ]]; then
+            sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
+            sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
+          fi
+
+          mapfile -t BOOTC_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/*.efi' -print | sort)
+          [[ "${#BOOTC_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-managed normal UKI, found ${#BOOTC_UKIS[@]}"
+
+          SOURCE_HASHES="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
+            recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
+            test -s "$normal"; test -s "$recovery"
+            printf "NORMAL %s\n" "$(sha256sum "$normal" | awk "{print \\$1}")"
+            printf "RECOVERY %s\n" "$(sha256sum "$recovery" | awk "{print \\$1}")"
+          ')"
+          SOURCE_NORMAL_SHA="$(printf '%s\n' "$SOURCE_HASHES" | awk '$1=="NORMAL" {print $2}')"
+          SOURCE_RECOVERY_SHA="$(printf '%s\n' "$SOURCE_HASHES" | awk '$1=="RECOVERY" {print $2}')"
+          [[ -n "$SOURCE_NORMAL_SHA" && -n "$SOURCE_RECOVERY_SHA" ]] || fail "source UKI hashes missing"
+          INSTALLED_NORMAL_SHA="$(sudo -n sha256sum "${BOOTC_UKIS[0]}" | awk '{print $1}')"
+          [[ "$INSTALLED_NORMAL_SHA" == "$SOURCE_NORMAL_SHA" ]] || fail "bootc-installed UKI is not the normal Prime UKI"
+
+          mapfile -t NORMAL_BLS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/loader/entries/bootc_prime-0.1-*.conf' -print | sort)
+          [[ "${#NORMAL_BLS[@]}" -eq 1 ]] || fail "expected one bootc normal BLS entry, found ${#NORMAL_BLS[@]}"
+          ! sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/loader/entries/bootc_prime-0.0-*.conf' -print | grep -q . || fail "bootc installed recovery metadata instead of normal"
+
+          RECOVERY_NAME="prime-recovery-${CANONICAL_DIGEST}.efi"
+          RECOVERY_REL="/EFI/Prime/${RECOVERY_NAME}"
+          RECOVERY_COPY="$RUN_DIR/$RECOVERY_NAME"
+          rm -f "$RECOVERY_COPY"
+          "${PODMAN[@]}" run --rm --security-opt label=disable -e EXPECTED_DIGEST="$CANONICAL_DIGEST" -v "$RUN_DIR:/proof" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+            cp "/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi" "/proof/prime-recovery-${EXPECTED_DIGEST}.efi"
+          '
+          sudo -n chown "$(id -u):$(id -g)" "$RECOVERY_COPY"
+          [[ "$(sha256sum "$RECOVERY_COPY" | awk '{print $1}')" == "$SOURCE_RECOVERY_SHA" ]] || fail "recovery extraction identity mismatch"
+
+          sudo -n install -D -m 0644 "$RECOVERY_COPY" "$MOUNT_ESP$RECOVERY_REL"
+          sudo -n install -d -m 0755 "$MOUNT_ESP/loader/entries"
+          BLS_COPY="$RUN_DIR/prime-recovery.conf"
+          cat > "$BLS_COPY" <<EOF
+          title Prime OS Recovery
+          version 0.0
+          sort-key zzz-prime-recovery
+          efi $RECOVERY_REL
+          EOF
+          sudo -n install -m 0644 "$BLS_COPY" "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+          sudo -n sync
+
+          [[ "$(sudo -n sha256sum "$MOUNT_ESP$RECOVERY_REL" | awk '{print $1}')" == "$SOURCE_RECOVERY_SHA" ]] || fail "installed recovery UKI identity mismatch"
+          sudo -n grep -Fx 'title Prime OS Recovery' "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+          sudo -n grep -Fx 'version 0.0' "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+          sudo -n grep -Fx "efi $RECOVERY_REL" "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+          [[ "$(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/*.efi' | wc -l)" -eq 1 ]] || fail "bootc UKI namespace changed during recovery install"
+          sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files-after-recovery.txt"
+          printf '%s\n' "${BOOTC_UKIS[@]}" | tee "$RUN_DIR/prime-normal-uki-files.txt"
+          printf '%s\n' "$MOUNT_ESP$RECOVERY_REL" | tee "$RUN_DIR/prime-recovery-uki-files.txt"
+          cleanup_nbd
+
+          '''
+          s = s[:start] + install_block + s[end:]
+          proof.write_text(s)
+
+          print('RECOVERY_SPLIT_COMPOSE=PASS')
+          PY
+
+          git diff --check
+          grep -F 'prime-recovery-${PRIME_COMPOSEFS_DIGEST}.efi' image/Containerfile >/dev/null
+          grep -F 'expected exactly one bootc-managed normal UKI' tools/prove-p1-local.sh >/dev/null
+          grep -F 'EFI/Prime' tools/prove-p1-local.sh >/dev/null
+          git diff -- image/Containerfile tools/prove-p1-local.sh
+
+      - name: Publish exact proof candidate
         shell: bash
         run: |
-          set -u
-          out=/var/tmp/prime-p1-bwrap-complain-proof
-          restore_policy() {
-            sudo -n apparmor_parser -r "$POLICY" >/dev/null 2>&1 || true
-          }
-          trap restore_policy EXIT INT TERM
-
-          sudo -n apparmor_parser -r -C "$POLICY"
-          echo '=== temporary bwrap mode ==='
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \((complain|enforce)\)$'
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(complain\)$' | wc -l | grep -Fx 2
-
-          sudo -n rm -rf "$out"
-          sudo -n mkdir -p "$out"
-          sudo -n chown "$(id -u):$(id -g)" "$out"
-          START="$(date '+%Y-%m-%d %H:%M:%S')"
-
-          set +e
-          timeout --signal=TERM 75s sudo -n podman run --rm \
-            --privileged \
-            --security-opt label=disable \
-            --device /dev/fuse:/dev/fuse \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            -v "$out:/output" \
-            "$IMAGE_BUILDER" \
-            --output-dir /output \
-            build \
-            --bootc-ref localhost/prime-os:p1 \
-            --bootc-default-fs ext4 \
-            --progress verbose \
-            qcow2 2>&1 | tee "$out/probe.log"
-          rc=${PIPESTATUS[0]}
-          set -e
-          echo "IMAGE_BUILDER_RC=$rc"
-
-          echo '=== relevant stage evidence ==='
-          grep -E 'org.osbuild.container-deploy|org.osbuild.bootc.install-to-filesystem|Listing device|mount: /run/osbuild/containers/storage|overlay.*not supported over tmpfs|fuse: device /dev/fuse not found|starting -Pipeline|Pipeline image|org.osbuild\.|Duration:|Failed|Success' "$out/probe.log" | tail -n 320 || true
-          echo '=== bwrap AppArmor audit in complain window ==='
-          sudo -n journalctl -k --since "$START" --no-pager 2>/dev/null | grep -Ei 'apparmor=.*(unpriv_bwrap|bwrap)' | tail -n 120 || true
-
-          old_mount=0
-          old_overlay=0
-          old_lsblk=0
-          grep -Fq 'mount: /run/osbuild/containers/storage: permission denied' "$out/probe.log" && old_mount=1
-          grep -Fq "'overlay' is not supported over tmpfs" "$out/probe.log" && old_overlay=1
-          grep -Fq 'Listing device /dev/loop' "$out/probe.log" && old_lsblk=1
-          echo "OLD_APPARMOR_MOUNT_FAILURE=$old_mount"
-          echo "OLD_FUSE_OVERLAY_FAILURE=$old_overlay"
-          echo "OLD_LSBLK_DEVICE_FAILURE=$old_lsblk"
-
-          restore_policy
-          trap - EXIT INT TERM
-          restored="$(sha256sum "$POLICY" | awk '{print $1}')"
-          echo "RESTORED_POLICY_SHA256=$restored"
-          test "$restored" = "$EXPECTED_POLICY_SHA256"
-          sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap) \(enforce\)$' | wc -l | grep -Fx 2
-
-          test "$old_mount" -eq 0
-          test "$old_overlay" -eq 0
-          test "$old_lsblk" -eq 0
-          test "$rc" -eq 0 -o "$rc" -eq 124 -o "$rc" -eq 143
-          echo BWRAP_COMPLAIN_WINDOW=PROVEN
+          set -euo pipefail
+          git config user.name 'THE TECH GUY'
+          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
+          git add image/Containerfile tools/prove-p1-local.sh
+          git diff --cached --quiet && { echo 'No recovery split delta produced'; exit 1; }
+          git commit -m 'fix(p1): split bootc normal and Prime recovery UKIs'
+          git push origin HEAD:proof/p1-first-light-final
