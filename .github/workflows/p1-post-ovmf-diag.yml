@@ -1,4 +1,4 @@
-name: Prime P1 post-OVMF guest diagnostic v2
+name: Prime P1 compact guest boot evidence
 
 on:
   pull_request:
@@ -15,36 +15,30 @@ jobs:
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 10
     env:
+      EXPECTED_CANDIDATE: 0398835ff01c9139be1c32f41530e4d1af12175b
       RUN_DIR: /var/tmp/prime-p1-local-proof/run
       OVERLAY: /var/tmp/prime-p1-local-proof/run/prime-p1-boot-overlay.qcow2
-      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
       SERIAL: /var/tmp/prime-p1-local-proof/run/prime-serial.log
-      VARS: /var/tmp/prime-p1-local-proof/run/OVMF_VARS_4M.fd
       NBD: /dev/nbd1
-      MNT: /var/tmp/prime-p1-post-ovmf-diag
+      MNT: /var/tmp/prime-p1-compact-guest-diag
     steps:
-      - name: Inspect serial and overlay
+      - name: Emit decisive preserved-guest markers
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$DISK"
           test -f "$OVERLAY"
-          test -f "$VARS"
+          echo "CANDIDATE_EXPECTED=$EXPECTED_CANDIDATE"
+          echo "OVERLAY=$OVERLAY"
+          qemu-img info "$OVERLAY" | grep -E '^(file format|virtual size|backing file|backing file format):' || true
 
-          echo '=== artifact metadata ==='
-          qemu-img info "$DISK"
-          qemu-img info "$OVERLAY"
           if test -f "$SERIAL"; then
-            wc -c "$SERIAL"
-            echo '--- serial head ---'
-            sed -n '1,240p' "$SERIAL" || true
-            echo '--- serial tail ---'
-            tail -n 240 "$SERIAL" || true
+            echo "SERIAL_BYTES=$(wc -c < "$SERIAL")"
+            echo 'SERIAL_MARKERS_BEGIN'
+            grep -E -i 'error|failed|failure|panic|VFS|dracut|emergency|root|composefs|bootc|initrd|mount|systemd|virtio' "$SERIAL" | head -n 80 || true
+            echo 'SERIAL_MARKERS_END'
           else
-            echo SERIAL_LOG_MISSING
+            echo 'SERIAL_MISSING=1'
           fi
-          echo '=== OVMF vars strings ==='
-          strings -a "$VARS" | grep -E -i 'Boot(Order|Current|Next)|systemd|Linux|Prime|bootc|UEFI|QEMU|EFI' | tail -n 240 || true
 
           cleanup() {
             sudo -n umount "$MNT/esp" >/dev/null 2>&1 || true
@@ -60,61 +54,83 @@ jobs:
           sudo -n qemu-nbd --read-only --connect="$NBD" "$OVERLAY"
           sleep 2
           sudo -n partprobe "$NBD"
-          lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD"
 
           ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
           XBOOT="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ESP"
           test -n "$ROOT"
+          echo "ESP=$ESP"
+          echo "XBOOT=${XBOOT:-NONE}"
+          echo "ROOT=$ROOT"
+          lsblk -no NAME,FSTYPE,LABEL,UUID,PARTLABEL "$ROOT" | sed 's/^/ROOT_IDENTITY=/'
+
           sudo -n mount -o ro "$ESP" "$MNT/esp"
-          if test -n "$XBOOT"; then sudo -n mount -o ro "$XBOOT" "$MNT/boot"; fi
+          test -z "$XBOOT" || sudo -n mount -o ro "$XBOOT" "$MNT/boot"
           sudo -n mount -o ro "$ROOT" "$MNT/root"
 
-          echo '=== ESP / BLS ==='
-          sudo -n find "$MNT/esp" -maxdepth 5 -type f -printf '%P\n' | sort
-          if sudo -n test -f "$MNT/esp/loader/loader.conf"; then
-            echo '--- loader.conf'
-            sudo -n cat "$MNT/esp/loader/loader.conf"
-          fi
-          for f in "$MNT/esp"/loader/entries/*.conf; do
-            sudo -n test -f "$f" || continue
-            echo "--- ${f#$MNT/esp/}"
-            sudo -n cat "$f"
+          echo 'BLS_BEGIN'
+          for root in "$MNT/esp" "$MNT/boot"; do
+            for f in "$root"/loader/entries/*.conf; do
+              sudo -n test -f "$f" || continue
+              printf 'BLS_FILE=%s\n' "${f#$MNT/}"
+              sudo -n grep -E '^(title|version|efi|linux|options|sort-key)' "$f" || true
+            done
           done
+          echo 'BLS_END'
 
-          echo '=== root state candidates ==='
-          for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
-            if sudo -n test -e "$p"; then
-              echo "--- ${p#$MNT/root/}"
-              sudo -n find "$p" -maxdepth 6 -printf '%y %P -> %l\n' | sort | head -n 800 || true
+          UKI="$(sudo -n find "$MNT/esp/EFI/Linux/bootc" "$MNT/boot/EFI/Linux/bootc" -maxdepth 1 -type f -name '*.efi' -print 2>/dev/null | head -n1)"
+          test -n "$UKI"
+          COPY="$RUN_DIR/compact-normal.efi"
+          INITRD="$RUN_DIR/compact-normal.initrd"
+          LISTING="$RUN_DIR/compact-normal.lsinitrd"
+          sudo -n cp "$UKI" "$COPY"
+          sudo -n chown "$(id -u):$(id -g)" "$COPY"
+          echo "NORMAL_UKI=${UKI#$MNT/}"
+          echo "NORMAL_UKI_SHA256=$(sha256sum "$COPY" | awk '{print $1}')"
+
+          if command -v objcopy >/dev/null 2>&1; then
+            rm -f "$RUN_DIR/compact-normal.cmdline" "$INITRD"
+            objcopy --dump-section .cmdline="$RUN_DIR/compact-normal.cmdline" "$COPY"
+            objcopy --dump-section .initrd="$INITRD" "$COPY"
+            printf 'CMDLINE='
+            tr -d '\000' < "$RUN_DIR/compact-normal.cmdline"
+            printf '\n'
+            echo "INITRD_BYTES=$(wc -c < "$INITRD")"
+          else
+            echo OBJCOPY_MISSING=1
+          fi
+
+          : > "$LISTING"
+          if test -s "$INITRD" && command -v lsinitrd >/dev/null 2>&1; then
+            lsinitrd "$INITRD" > "$LISTING" 2>&1 || true
+          elif test -s "$INITRD"; then
+            strings -a "$INITRD" > "$LISTING" || true
+          fi
+
+          for token in 'bootc' 'composefs' 'ostree' 'systemd' 'virtio_blk' 'virtio_pci' 'ext4' 'systemd-veritysetup' 'rootfs'; do
+            key="$(printf '%s' "$token" | tr '[:lower:]-' '[:upper:]_')"
+            if grep -E -i -q "$token" "$LISTING"; then
+              echo "INITRD_HAS_${key}=1"
             else
-              echo "MISSING ${p#$MNT/root/}"
+              echo "INITRD_HAS_${key}=0"
+            fi
+          done
+          echo 'INITRD_ROOT_MARKERS_BEGIN'
+          grep -E -i 'bootc|composefs|ostree|rootfs|sysroot|verity|virtio(_|-)(blk|pci)|ext4' "$LISTING" | head -n 80 || true
+          echo 'INITRD_ROOT_MARKERS_END'
+
+          for p in "$MNT/root/state/os/default/var/lib/prime" "$MNT/root/var/lib/prime"; do
+            rel="${p#$MNT/root}"
+            if sudo -n test -e "$p"; then
+              echo "PRIME_STATE_EXISTS[$rel]=1"
+              sudo -n find "$p" -maxdepth 3 -type f -printf 'PRIME_FILE=%P\n' | sort | head -n 40 || true
+            else
+              echo "PRIME_STATE_EXISTS[$rel]=0"
             fi
           done
 
-          echo '=== bootc/ostree layout ==='
-          sudo -n find "$MNT/root" -maxdepth 5 \
-            \( -path '*/bootc*' -o -path '*/ostree*' -o -path '*/state/os/default*' \) \
-            -printf '%y %P -> %l\n' | sort | head -n 1000 || true
-
-          echo '=== journal candidates ==='
-          sudo -n find "$MNT/root" -type f -path '*/var/log/journal/*/*.journal' -printf '%p\n' | head -n 80 || true
-
-          echo '=== installed normal UKI inspect ==='
-          UKI="$(sudo -n find "$MNT/esp/EFI/Linux/bootc" -maxdepth 1 -type f -name '*.efi' -print -quit)"
-          test -n "$UKI"
-          COPY="$RUN_DIR/post-ovmf-normal.efi"
-          sudo -n cp "$UKI" "$COPY"
-          sudo -n chown "$(id -u):$(id -g)" "$COPY"
-          sudo -n podman run --rm --security-opt label=disable -v "$COPY:/tmp/normal.efi:ro" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
-            ukify --json=short inspect /tmp/normal.efi > /tmp/inspect.json
-            python3 - <<"PY"
-import json
-x=json.load(open("/tmp/inspect.json"))
-print("CMDLINE=" + x[".cmdline"]["text"].strip())
-print("OSREL=" + x[".osrel"]["text"].replace("\n", " | "))
-PY
-          '
-          rm -f "$COPY"
-          echo POST_OVMF_GUEST_DIAGNOSTIC_V2=PROVEN
+          echo 'ROOT_BOOT_LAYOUT_BEGIN'
+          sudo -n find "$MNT/root" -maxdepth 4 \( -path '*/bootc*' -o -path '*/ostree*' -o -path '*/state/os/default*' \) -printf '%y %P -> %l\n' | sort | head -n 80 || true
+          echo 'ROOT_BOOT_LAYOUT_END'
+          echo COMPACT_GUEST_BOOT_EVIDENCE=PASS
