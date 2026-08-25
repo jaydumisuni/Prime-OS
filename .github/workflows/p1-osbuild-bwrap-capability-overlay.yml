@@ -1,4 +1,4 @@
-name: Prime P1 KRATOS OVMF invocation probe
+name: Prime P1 OVMF pflash composer
 
 on:
   pull_request:
@@ -7,98 +7,103 @@ on:
     types: [reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  probe-ovmf:
+  compose-ovmf-pflash:
     if: github.event.pull_request.number == 85
-    runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 8
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Recover exact OVMF host evidence
+      - uses: actions/checkout@v4
+        with:
+          ref: proof/p1-first-light-final
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply proven KRATOS OVMF pflash invocation
         shell: bash
         run: |
           set -euo pipefail
-          command -v qemu-system-x86_64
-          qemu-system-x86_64 --version
-          echo '=== candidate firmware files ==='
-          sudo -n find /usr/share/OVMF /usr/share/edk2 /usr/share/qemu \
-            -maxdepth 4 \( -type f -o -type l \) \
-            \( -iname 'OVMF*.fd' -o -iname '*OVMF*' -o -iname '*CODE*.fd' -o -iname '*VARS*.fd' \) \
-            -printf '%p -> %l\n' 2>/dev/null | sort || true
+          python3 - <<'PY'
+          from pathlib import Path
 
-          echo '=== package ownership ==='
-          if command -v dpkg-query >/dev/null 2>&1; then
-            dpkg-query -W -f='${Package} ${Version}\n' ovmf qemu-system-x86 qemu-system-common 2>/dev/null || true
-            dpkg -S '/usr/share/OVMF/*' 2>/dev/null | head -n 80 || true
-          fi
-          if command -v rpm >/dev/null 2>&1; then
-            rpm -qa | grep -Ei '(^|-)ovmf|edk2|qemu' | sort || true
-          fi
-
-          echo '=== metadata/readability ==='
-          mapfile -t files < <(sudo -n find /usr/share/OVMF /usr/share/edk2 /usr/share/qemu \
-            -maxdepth 4 \( -type f -o -type l \) \
-            \( -iname 'OVMF*.fd' -o -iname '*CODE*.fd' -o -iname '*VARS*.fd' \) \
-            -print 2>/dev/null | sort -u)
-          for f in "${files[@]}"; do
-            echo "--- $f"
-            ls -l "$f" || true
-            readlink -f "$f" || true
-            stat -Lc 'mode=%A size=%s owner=%U:%G' "$f" || true
-            if [[ -r "$f" ]]; then
-              head -c 1 "$f" >/dev/null && echo READABLE=yes || echo READABLE=no
-            else
-              echo READABLE=no
-            fi
+          p = Path('tools/prove-p1-local.sh')
+          s = p.read_text()
+          old = '''log "Boot normal QCOW2 through OVMF/QEMU"
+          rm -f "$OVERLAY" "$SERIAL_LOG"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$OVERLAY"
+          OVMF=""
+          for candidate in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd; do
+            if [[ -f "$candidate" ]]; then OVMF="$candidate"; break; fi
           done
+          [[ -n "$OVMF" ]] || fail "OVMF_CODE firmware not found"
+          set +e
+          timeout --signal=TERM 120s qemu-system-x86_64 \\
+            -machine q35,accel=tcg \\
+            -cpu max \\
+            -smp 2 \\
+            -m 3072 \\
+            -bios "$OVMF" \\
+            -drive file="$OVERLAY",if=virtio,format=qcow2 \\
+            -display none \\
+            -serial "file:$SERIAL_LOG" \\
+            -monitor none \\
+            -net none \\
+            -no-reboot
+          QEMU_RC=$?
+          set -e
+          [[ "$QEMU_RC" -eq 0 || "$QEMU_RC" -eq 124 || "$QEMU_RC" -eq 143 ]] || fail "QEMU exited unexpectedly: $QEMU_RC"
+          '''
+          new = '''log "Boot normal QCOW2 through OVMF/QEMU"
+          OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+          OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+          OVMF_VARS="$RUN_DIR/OVMF_VARS_4M.fd"
+          rm -f "$OVERLAY" "$SERIAL_LOG" "$OVMF_VARS"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$OVERLAY"
+          [[ -r "$OVMF_CODE" ]] || fail "OVMF CODE firmware not readable"
+          [[ -r "$OVMF_VARS_TEMPLATE" ]] || fail "OVMF VARS template not readable"
+          cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+          [[ -w "$OVMF_VARS" ]] || fail "disposable OVMF VARS is not writable"
+          set +e
+          timeout --signal=TERM 120s qemu-system-x86_64 \\
+            -machine q35,accel=tcg \\
+            -cpu max \\
+            -smp 2 \\
+            -m 3072 \\
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \\
+            -drive if=pflash,format=raw,file="$OVMF_VARS" \\
+            -drive file="$OVERLAY",if=virtio,format=qcow2 \\
+            -display none \\
+            -serial "file:$SERIAL_LOG" \\
+            -monitor none \\
+            -net none \\
+            -no-reboot
+          QEMU_RC=$?
+          set -e
+          [[ "$QEMU_RC" -eq 0 || "$QEMU_RC" -eq 124 || "$QEMU_RC" -eq 143 ]] || fail "QEMU exited unexpectedly: $QEMU_RC"
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'OVMF boot anchor count={s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          print('OVMF_PFLASH_TRANSPLANT=PASS')
+          PY
 
-          echo '=== qemu -bios load probes ==='
-          bios_ok=''
-          for f in "${files[@]}"; do
-            [[ "$f" == *CODE*.fd || "$f" == *OVMF.fd ]] || continue
-            set +e
-            timeout --signal=TERM --kill-after=1s 2s qemu-system-x86_64 \
-              -machine q35,accel=tcg -nodefaults -display none -serial none -monitor none \
-              -bios "$f" -S >/tmp/ovmf-bios.out 2>&1
-            rc=$?
-            set -e
-            printf 'BIOS_PROBE path=%s rc=%s output=%s\n' "$f" "$rc" "$(tr '\n' ' ' </tmp/ovmf-bios.out | head -c 300)"
-            if [[ "$rc" -eq 124 || "$rc" -eq 143 ]]; then bios_ok="$f"; fi
-          done
+          git diff --check
+          grep -Fx 'OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd' tools/prove-p1-local.sh
+          grep -Fx 'OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd' tools/prove-p1-local.sh
+          grep -F 'if=pflash,format=raw,readonly=on,file="$OVMF_CODE"' tools/prove-p1-local.sh
+          grep -F 'if=pflash,format=raw,file="$OVMF_VARS"' tools/prove-p1-local.sh
+          ! grep -F -- '-bios "$OVMF"' tools/prove-p1-local.sh >/dev/null
+          git diff -- tools/prove-p1-local.sh
 
-          echo '=== qemu pflash pair probes ==='
-          pair_ok=''
-          code_ok=''
-          vars_ok=''
-          for code in "${files[@]}"; do
-            [[ "$code" == *CODE*.fd ]] || continue
-            base="$(basename "$code")"
-            vars="${code/CODE/VARS}"
-            [[ -f "$vars" ]] || continue
-            tmp="$(mktemp /var/tmp/prime-ovmf-vars.XXXXXX.fd)"
-            cp "$vars" "$tmp"
-            set +e
-            timeout --signal=TERM --kill-after=1s 2s qemu-system-x86_64 \
-              -machine q35,accel=tcg -nodefaults -display none -serial none -monitor none \
-              -drive if=pflash,format=raw,readonly=on,file="$code" \
-              -drive if=pflash,format=raw,file="$tmp" \
-              -S >/tmp/ovmf-pflash.out 2>&1
-            rc=$?
-            set -e
-            rm -f "$tmp"
-            printf 'PFLASH_PROBE code=%s vars=%s rc=%s output=%s\n' "$code" "$vars" "$rc" "$(tr '\n' ' ' </tmp/ovmf-pflash.out | head -c 300)"
-            if [[ "$rc" -eq 124 || "$rc" -eq 143 ]]; then
-              pair_ok=yes
-              code_ok="$code"
-              vars_ok="$vars"
-              break
-            fi
-          done
-
-          echo "OVMF_BIOS_OK=${bios_ok:-none}"
-          echo "OVMF_PFLASH_PAIR_OK=${pair_ok:-no}"
-          echo "OVMF_PFLASH_CODE=${code_ok:-none}"
-          echo "OVMF_PFLASH_VARS=${vars_ok:-none}"
-          [[ -n "$bios_ok" || "$pair_ok" == yes ]]
-          echo KRATOS_OVMF_INVOCATION_PROBE=PROVEN
+      - name: Publish exact proof candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'THE TECH GUY'
+          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
+          git add tools/prove-p1-local.sh
+          git diff --cached --quiet && { echo 'No OVMF pflash delta produced'; exit 1; }
+          git commit -m 'fix(p1): use proven KRATOS OVMF pflash pair'
+          git push origin HEAD:proof/p1-first-light-final
