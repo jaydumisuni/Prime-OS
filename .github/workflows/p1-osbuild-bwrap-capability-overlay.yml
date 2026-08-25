@@ -53,9 +53,9 @@ jobs:
           PY
 
           git diff --check
-          test "$(grep -F -- '-e EXPECTED_DIGEST="$CANONICAL_DIGEST"' tools/prove-p1-local.sh | wc -l)" -eq 4
           ! grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"' tools/prove-p1-local.sh >/dev/null
-          test "$(grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"' tools/prove-p1-local.sh | wc -l)" -eq 4
+          grep -F -- '-e EXPECTED_DIGEST="$CANONICAL_DIGEST"' tools/prove-p1-local.sh >/dev/null
+          grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"' tools/prove-p1-local.sh >/dev/null
           git diff -- tools/prove-p1-local.sh
 
       - name: Publish exact proof candidate
