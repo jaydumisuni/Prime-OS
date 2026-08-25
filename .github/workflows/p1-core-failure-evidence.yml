@@ -1,4 +1,4 @@
-name: Prime P1 compositor XDG correction proof
+name: Prime P1 post-XDG gate evidence
 
 on:
   push:
@@ -9,17 +9,16 @@ permissions:
   contents: read
 
 jobs:
-  prove:
+  recover:
     runs-on: [self-hosted, linux, x64, kratos]
-    timeout-minutes: 7
+    timeout-minutes: 5
     env:
-      BASE: /var/tmp/prime-p1-core-recovery-proof/proof.qcow2
-      STATE: /var/tmp/prime-p1-compositor-xdg-proof
+      DISK: /var/tmp/prime-p1-compositor-xdg-proof/proof.qcow2
+      SERIAL: /var/tmp/prime-p1-compositor-xdg-proof/serial.log
+      STATE: /var/tmp/prime-p1-post-xdg-evidence
       NBD: /dev/nbd1
-      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
-      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - name: Build one-variable correction overlay
+      - name: Replay post-XDG boot state and classify gates
         shell: bash
         run: |
           set -euo pipefail
@@ -30,89 +29,61 @@ jobs:
           trap cleanup EXIT
           cleanup
           rm -rf "$STATE"; mkdir -p "$STATE/root"
-          test -f "$BASE"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$BASE")" "$STATE/proof.qcow2"
+          test -f "$DISK"; test -f "$SERIAL"
+
+          echo POST_XDG_SERIAL_BEGIN
+          grep -E -i 'PRIME_PAM_XDG|PRIME_XDG_|primed:|prime-compositor|prime-shell|SHELL_READY|Wayland|frame|Error:|Failed with result|Main process exited' "$SERIAL" | tail -n 1800 || true
+          echo POST_XDG_SERIAL_END
+
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/replay.qcow2"
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/proof.qcow2"
-          sleep 2; sudo -n partprobe "$NBD"
-          ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          test -n "$ROOT"
-          set +e; sudo -n e2fsck -fy "$ROOT"; FSCK_RC=$?; set -e
-          test $((FSCK_RC & 12)) -eq 0
-          sudo -n mount "$ROOT" "$STATE/root"
-          DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
-          test -n "$DEPLOY_ETC"
-          sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/prime-compositor.service.d"
-          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-xdg-proof.conf" >/dev/null
-          [Service]
-          StandardOutput=journal+console
-          StandardError=journal+console
-          ExecStartPre=/bin/sh -c 'echo PRIME_PAM_XDG=${XDG_RUNTIME_DIR:-UNSET}; if test -d "${XDG_RUNTIME_DIR:-}"; then ls -ldn "$XDG_RUNTIME_DIR"; touch "$XDG_RUNTIME_DIR/.prime-xdg-probe" 2>&1; rc=$?; rm -f "$XDG_RUNTIME_DIR/.prime-xdg-probe"; else rc=2; fi; echo PRIME_PAM_XDG_WRITE_RC=$rc; exit 0'
-          ExecStart=
-          ExecStart=/bin/sh -c 'echo PRIME_XDG_BEFORE_RESTORE=${XDG_RUNTIME_DIR:-UNSET}; export XDG_RUNTIME_DIR=/run/prime-compositor; echo PRIME_XDG_AFTER_RESTORE=$XDG_RUNTIME_DIR; exec /usr/libexec/prime/prime-compositor'
-          EOF
-          sudo -n sync
-          echo XDG_CORRECTION_DROPIN_BEGIN
-          sudo -n cat "$DEPLOY_ETC/systemd/system/prime-compositor.service.d/10-xdg-proof.conf"
-          echo XDG_CORRECTION_DROPIN_END
-          cleanup
-          cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
-
-      - name: Boot corrected EFI path and prove compositor survives XDG restoration
-        shell: bash
-        run: |
-          set -euo pipefail
-          set +e
-          timeout --signal=TERM 135s qemu-system-x86_64 \
-            -machine q35,accel=tcg -cpu max -smp 2 -m 3072 \
-            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-            -drive if=pflash,format=raw,file="$STATE/vars.fd" \
-            -drive file="$STATE/proof.qcow2",if=virtio,format=qcow2 \
-            -display none -serial "file:$STATE/serial.log" -monitor none -net none -no-reboot
-          RC=$?
-          set -e
-          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
-          echo XDG_CORRECTION_SERIAL_BEGIN
-          grep -E 'PRIME_PAM_XDG|PRIME_XDG_|prime-compositor initialized output|Error:|prime-compositor.service: Main process exited|prime-shell|SHELL_READY|primed: host=' "$STATE/serial.log" | tail -n 1200 || true
-          echo XDG_CORRECTION_SERIAL_END
-          grep -q 'PRIME_PAM_XDG=/run/user/976' "$STATE/serial.log"
-          grep -q 'PRIME_XDG_BEFORE_RESTORE=/run/user/976' "$STATE/serial.log"
-          grep -q 'PRIME_XDG_AFTER_RESTORE=/run/prime-compositor' "$STATE/serial.log"
-          grep -q 'prime-compositor initialized output' "$STATE/serial.log"
-          ! grep -q 'Error: PermissionDenied' "$STATE/serial.log"
-          grep -q 'primed: host=' "$STATE/serial.log"
-          echo COMPOSITOR_XDG_PERMISSION_DENIAL_CLOSED=PASS
-
-      - name: Recover compositor and first-light state
-        shell: bash
-        run: |
-          set -euo pipefail
-          cleanup() {
-            sudo -n umount "$STATE/replay-root" >/dev/null 2>&1 || true
-            sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          cleanup
-          mkdir -p "$STATE/replay-root"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$STATE/proof.qcow2")" "$STATE/replay.qcow2"
           sudo -n qemu-nbd --connect="$NBD" "$STATE/replay.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
           test -n "$ROOT"
           set +e; sudo -n e2fsck -fy "$ROOT"; FSCK_RC=$?; set -e
           test $((FSCK_RC & 12)) -eq 0
-          sudo -n mount -o ro "$ROOT" "$STATE/replay-root"
-          PRIME="$STATE/replay-root/state/os/default/var/lib/prime"
-          echo PRIME_XDG_POSTBOOT_TREE_BEGIN
-          sudo -n find "$PRIME" -maxdepth 5 -type f -printf '%P\n' 2>/dev/null | sort || true
-          echo PRIME_XDG_POSTBOOT_TREE_END
-          if sudo -n test -f "$PRIME/first-light/mechanical.json"; then
-            echo FIRST_LIGHT_MECHANICAL_BEGIN
-            sudo -n cat "$PRIME/first-light/mechanical.json"
-            echo FIRST_LIGHT_MECHANICAL_END
-          else
-            echo FIRST_LIGHT_MECHANICAL_MISSING
+          sudo -n mount -o ro "$ROOT" "$STATE/root"
+          PRIME="$STATE/root/state/os/default/var/lib/prime"
+
+          echo PRIME_POST_XDG_FILES_BEGIN
+          sudo -n find "$PRIME" -maxdepth 6 -type f -printf '%P\n' 2>/dev/null | sort || true
+          echo PRIME_POST_XDG_FILES_END
+          for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
+            if sudo -n test -f "$PRIME/$rel"; then
+              echo "PRIME_POST_XDG_BEGIN=$rel"
+              sudo -n cat "$PRIME/$rel"
+              echo "PRIME_POST_XDG_END=$rel"
+            else
+              echo "PRIME_POST_XDG_MISSING=$rel"
+            fi
+          done
+
+          echo POST_XDG_JOURNAL_BEGIN
+          while IFS= read -r jroot; do
+            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise \
+              -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>&1 | tail -n 1800 || true
+          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
+          echo POST_XDG_JOURNAL_END
+
+          if sudo -n test -f "$PRIME/generations/current.json"; then
+            sudo -n python3 - "$PRIME/generations/current.json" <<'PY'
+          import json,sys
+          g=json.load(open(sys.argv[1]))
+          print('POST_XDG_GENERATION_STATE='+g['state'])
+          print('POST_XDG_EVIDENCE_REFS='+','.join(g.get('evidence_refs', [])))
+          PY
           fi
-          echo COMPOSITOR_RUNTIME_READINESS_FROM_SERIAL_BEGIN
-          grep -E 'prime-compositor|prime-shell|SHELL_READY|frame|Wayland' "$STATE/serial.log" | tail -n 1200 || true
-          echo COMPOSITOR_RUNTIME_READINESS_FROM_SERIAL_END
+          if sudo -n test -f "$PRIME/first-light/mechanical.json"; then
+            sudo -n python3 - "$PRIME/first-light/mechanical.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          print('POST_XDG_FIRST_LIGHT_STATUS='+str(d.get('status')))
+          print('POST_XDG_SHELL_READY='+str(d.get('shell_ready')))
+          print('POST_XDG_FRAME_LOOP_READY='+str(d.get('frame_loop_ready')))
+          print('POST_XDG_WAYLAND_LISTENER_READY='+str(d.get('wayland_listener_ready')))
+          print('POST_XDG_CLIENTS_ACCEPTED='+str(d.get('clients_accepted')))
+          print('POST_XDG_MAPPED_FRAMES='+str(d.get('mapped_surface_frames_submitted')))
+          PY
+          fi
+          echo POST_XDG_GATE_EVIDENCE_RECOVERED=PASS
