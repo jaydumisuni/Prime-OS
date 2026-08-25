@@ -1,4 +1,4 @@
-name: Prime P1 Core failure evidence
+name: Prime P1 bootc status failure evidence
 
 on:
   push:
@@ -9,79 +9,93 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  bootc-status:
     runs-on: [self-hosted, linux, x64, kratos]
     timeout-minutes: 5
     env:
-      DISK: /var/tmp/prime-p1-bls-root-probe/root-uuid.qcow2
-      SERIAL: /var/tmp/prime-p1-bls-root-probe/b.log
-      STATE: /var/tmp/prime-p1-core-evidence
+      DISK: /var/tmp/prime-p1-local-proof/run/output/bootc-prime-0.1-qcow2-x86_64.qcow2
+      STATE: /var/tmp/prime-p1-bootc-status-diag
       NBD: /dev/nbd1
+      OVMF_CODE: /usr/share/OVMF/OVMF_CODE_4M.fd
+      OVMF_VARS_TEMPLATE: /usr/share/OVMF/OVMF_VARS_4M.fd
     steps:
-      - name: Recover Core failure after safe journal replay
+      - uses: actions/checkout@v4
+
+      - name: Build byte-preserving bootc diagnostic overlay
         shell: bash
         run: |
           set -euo pipefail
           cleanup() {
+            sudo -n umount "$STATE/esp" >/dev/null 2>&1 || true
             sudo -n umount "$STATE/root" >/dev/null 2>&1 || true
             sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           cleanup
-          rm -rf "$STATE"; mkdir -p "$STATE/root"
-
-          echo CORE_SERIAL_EVIDENCE_BEGIN
-          test -f "$SERIAL"
-          grep -E -i 'primed:|Error:|bootc|generation|hardware|storage|core.sock|Main process exited|Failed with result|panic|fatal' "$SERIAL" | tail -n 500 || true
-          echo CORE_SERIAL_EVIDENCE_END
-
+          rm -rf "$STATE"; mkdir -p "$STATE/root" "$STATE/esp"
           test -f "$DISK"
           qemu-img check "$DISK"
-          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/replayed.qcow2"
+          qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$STATE/bootc-diag.qcow2"
+          bash tools/p1-finalize-discoverable-root.sh "$STATE/bootc-diag.qcow2" /dev/nbd2
+
           sudo -n modprobe nbd max_part=16
-          sudo -n qemu-nbd --connect="$NBD" "$STATE/replayed.qcow2"
+          sudo -n qemu-nbd --connect="$NBD" "$STATE/bootc-diag.qcow2"
           sleep 2; sudo -n partprobe "$NBD"
           ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
-          test -n "$ROOT"
+          ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+          test -n "$ROOT"; test -n "$ESP"
+          sudo -n mount "$ROOT" "$STATE/root"
+          sudo -n mount "$ESP" "$STATE/esp"
 
+          DEPLOY_ETC="$(sudo -n find "$STATE/root/state/deploy" -mindepth 2 -maxdepth 2 -type d -name etc -print | head -n1)"
+          test -n "$DEPLOY_ETC"
+          sudo -n mkdir -p "$DEPLOY_ETC/systemd/system/primed.service.d"
+          cat <<'EOF' | sudo -n tee "$DEPLOY_ETC/systemd/system/primed.service.d/10-bootc-status-diag.conf" >/dev/null
+          [Service]
+          ExecStartPre=/bin/sh -c 'echo BOOTC_STATUS_DIAG_BEGIN >/dev/ttyS0; /usr/sbin/bootc status --format=json --format-version=1 >/run/prime/bootc-status-diag.txt 2>&1; rc=$?; cat /run/prime/bootc-status-diag.txt >/dev/ttyS0; echo BOOTC_STATUS_DIAG_RC=$rc >/dev/ttyS0; echo BOOTC_STATUS_DIAG_END >/dev/ttyS0; exit 0'
+          EOF
+
+          UKI="$(sudo -n find "$STATE/esp" -type f -path '*/EFI/Linux/bootc/*.efi' -print | head -n1)"
+          BLS="$(sudo -n find "$STATE/esp/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"
+          test -n "$UKI"; test -n "$BLS"
+          sudo -n cp "$UKI" "$STATE/exact.efi"
+          sudo -n chown "$(id -u):$(id -g)" "$STATE/exact.efi"
+          sha256sum "$STATE/exact.efi" | tee "$STATE/uki.sha256"
+          objcopy --dump-section .cmdline="$STATE/embedded.cmdline" "$STATE/exact.efi"
+          BASE="$(tr -d '\000' < "$STATE/embedded.cmdline")"
+          printf '%s\n' "$BASE" | grep -Eq '^composefs=[0-9a-f]{128}$'
+          printf 'options %s root=gpt-auto rw console=ttyS0,115200n8 systemd.log_level=info systemd.log_target=console\n' "$BASE" | sudo -n tee -a "$BLS" >/dev/null
+          sudo -n sync
+          test "$(sudo -n sha256sum "$UKI" | awk '{print $1}')" = "$(awk '{print $1}' "$STATE/uki.sha256")"
+          echo BOOTC_DIAG_BLS_BEGIN; sudo -n cat "$BLS"; echo BOOTC_DIAG_BLS_END
+          echo BOOTC_DIAG_DROPIN_BEGIN; sudo -n cat "$DEPLOY_ETC/systemd/system/primed.service.d/10-bootc-status-diag.conf"; echo BOOTC_DIAG_DROPIN_END
+          cleanup
+          cp "$OVMF_VARS_TEMPLATE" "$STATE/vars.fd"
+
+      - name: Boot exact UKI and capture bootc status stderr
+        shell: bash
+        run: |
+          set -euo pipefail
           set +e
-          sudo -n e2fsck -fy "$ROOT"
-          FSCK_RC=$?
+          timeout --signal=TERM 110s qemu-system-x86_64 \
+            -machine q35,accel=tcg \
+            -cpu max \
+            -smp 2 \
+            -m 3072 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$STATE/vars.fd" \
+            -drive file="$STATE/bootc-diag.qcow2",if=virtio,format=qcow2 \
+            -display none \
+            -serial "file:$STATE/serial.log" \
+            -monitor none \
+            -net none \
+            -no-reboot
+          RC=$?
           set -e
-          test $((FSCK_RC & 12)) -eq 0
-          echo "EVIDENCE_FSCK_RC=$FSCK_RC"
-
-          sudo -n mount -o ro "$ROOT" "$STATE/root"
-          echo PRIME_STATE_SCAN_BEGIN
-          sudo -n find "$STATE/root" -maxdepth 14 -path '*/var/lib/prime/*' -type f -printf '%p\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 300 || true
-          echo PRIME_STATE_SCAN_END
-
-          for base in "$STATE/root/state/os/default/var/lib/prime" "$STATE/root/var/lib/prime"; do
-            if sudo -n test -d "$base"; then
-              echo "PRIME_BASE=${base#$STATE/root}"
-              for rel in identity/host.json generations/current.json hardware/current.json storage/current.json first-light/mechanical.json; do
-                if sudo -n test -f "$base/$rel"; then
-                  echo "PRIME_FILE_BEGIN=$rel"
-                  sudo -n cat "$base/$rel"
-                  echo "PRIME_FILE_END=$rel"
-                else
-                  echo "PRIME_FILE_MISSING=$rel"
-                fi
-              done
-            fi
-          done
-
-          echo JOURNAL_FILES_BEGIN
-          sudo -n find "$STATE/root" -type f -path '*/var/log/journal/*/*.journal*' -printf '%p %s\n' 2>/dev/null | sed "s#$STATE/root##" | sort | head -n 200 || true
-          echo JOURNAL_FILES_END
-
-          echo JOURNAL_SCAN_BEGIN
-          while IFS= read -r jroot; do
-            echo "JOURNAL_ROOT=${jroot#$STATE/root}"
-            sudo -n journalctl --directory="$jroot" --no-pager -o short-precise -u primed.service -u prime-compositor.service -u prime-shell.service -u prime-first-light-witness.service 2>&1 | tail -n 900 || true
-          done < <(sudo -n find "$STATE/root" -type d -path '*/var/log/journal' -print 2>/dev/null | head -n 8)
-          echo JOURNAL_SCAN_END
-
-          echo BOOTC_STATE_FILES_BEGIN
-          sudo -n find "$STATE/root" -maxdepth 10 \( -path '*/bootc*' -o -path '*/ostree*' \) -print 2>/dev/null | sed "s#$STATE/root##" | head -n 300 || true
-          echo BOOTC_STATE_FILES_END
+          test "$RC" -eq 0 -o "$RC" -eq 124 -o "$RC" -eq 143
+          echo BOOTC_STATUS_SERIAL_EVIDENCE_BEGIN
+          grep -E -i 'BOOTC_STATUS_DIAG|bootc|primed|Error:|failed|incompatible|deployment|composefs|ostree' "$STATE/serial.log" | tail -n 600 || true
+          echo BOOTC_STATUS_SERIAL_EVIDENCE_END
+          grep -q 'BOOTC_STATUS_DIAG_BEGIN' "$STATE/serial.log"
+          grep -q 'BOOTC_STATUS_DIAG_RC=' "$STATE/serial.log"
+          grep -q 'BOOTC_STATUS_DIAG_END' "$STATE/serial.log"
