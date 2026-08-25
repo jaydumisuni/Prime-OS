@@ -1,4 +1,4 @@
-name: Prime P1 recovery source hash composer
+name: Prime P1 KRATOS OVMF invocation probe
 
 on:
   pull_request:
@@ -7,54 +7,98 @@ on:
     types: [reopened]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  fix-recovery-source-hash:
+  probe-ovmf:
     if: github.event.pull_request.number == 85
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: [self-hosted, linux, x64, kratos]
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: proof/p1-first-light-final
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Fix container-side source hash extraction
+      - name: Recover exact OVMF host evidence
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('tools/prove-p1-local.sh')
-          s = p.read_text()
-          old = 'sha256sum "$normal" | awk "{print \\\\$1}"'
-          new = 'sha256sum "$normal" | cut -d" " -f1'
-          if s.count(old) != 1:
-              raise SystemExit(f'normal source hash anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
-          old = 'sha256sum "$recovery" | awk "{print \\\\$1}"'
-          new = 'sha256sum "$recovery" | cut -d" " -f1'
-          if s.count(old) != 1:
-              raise SystemExit(f'recovery source hash anchor count={s.count(old)}')
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-          print('RECOVERY_SOURCE_HASH_FIX=PASS')
-          PY
-          git diff --check
-          ! grep -F 'awk "{print \\$1}"' tools/prove-p1-local.sh >/dev/null
-          grep -F 'sha256sum "$normal" | cut -d" " -f1' tools/prove-p1-local.sh >/dev/null
-          grep -F 'sha256sum "$recovery" | cut -d" " -f1' tools/prove-p1-local.sh >/dev/null
-          git diff -- tools/prove-p1-local.sh
+          command -v qemu-system-x86_64
+          qemu-system-x86_64 --version
+          echo '=== candidate firmware files ==='
+          sudo -n find /usr/share/OVMF /usr/share/edk2 /usr/share/qemu \
+            -maxdepth 4 \( -type f -o -type l \) \
+            \( -iname 'OVMF*.fd' -o -iname '*OVMF*' -o -iname '*CODE*.fd' -o -iname '*VARS*.fd' \) \
+            -printf '%p -> %l\n' 2>/dev/null | sort || true
 
-      - name: Publish exact proof candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'THE TECH GUY'
-          git config user.email '65334711+jaydumisuni@users.noreply.github.com'
-          git add tools/prove-p1-local.sh
-          git diff --cached --quiet && { echo 'No source hash delta produced'; exit 1; }
-          git commit -m 'fix(p1): make recovery source hash extraction shell-safe'
-          git push origin HEAD:proof/p1-first-light-final
+          echo '=== package ownership ==='
+          if command -v dpkg-query >/dev/null 2>&1; then
+            dpkg-query -W -f='${Package} ${Version}\n' ovmf qemu-system-x86 qemu-system-common 2>/dev/null || true
+            dpkg -S '/usr/share/OVMF/*' 2>/dev/null | head -n 80 || true
+          fi
+          if command -v rpm >/dev/null 2>&1; then
+            rpm -qa | grep -Ei '(^|-)ovmf|edk2|qemu' | sort || true
+          fi
+
+          echo '=== metadata/readability ==='
+          mapfile -t files < <(sudo -n find /usr/share/OVMF /usr/share/edk2 /usr/share/qemu \
+            -maxdepth 4 \( -type f -o -type l \) \
+            \( -iname 'OVMF*.fd' -o -iname '*CODE*.fd' -o -iname '*VARS*.fd' \) \
+            -print 2>/dev/null | sort -u)
+          for f in "${files[@]}"; do
+            echo "--- $f"
+            ls -l "$f" || true
+            readlink -f "$f" || true
+            stat -Lc 'mode=%A size=%s owner=%U:%G' "$f" || true
+            if [[ -r "$f" ]]; then
+              head -c 1 "$f" >/dev/null && echo READABLE=yes || echo READABLE=no
+            else
+              echo READABLE=no
+            fi
+          done
+
+          echo '=== qemu -bios load probes ==='
+          bios_ok=''
+          for f in "${files[@]}"; do
+            [[ "$f" == *CODE*.fd || "$f" == *OVMF.fd ]] || continue
+            set +e
+            timeout --signal=TERM --kill-after=1s 2s qemu-system-x86_64 \
+              -machine q35,accel=tcg -nodefaults -display none -serial none -monitor none \
+              -bios "$f" -S >/tmp/ovmf-bios.out 2>&1
+            rc=$?
+            set -e
+            printf 'BIOS_PROBE path=%s rc=%s output=%s\n' "$f" "$rc" "$(tr '\n' ' ' </tmp/ovmf-bios.out | head -c 300)"
+            if [[ "$rc" -eq 124 || "$rc" -eq 143 ]]; then bios_ok="$f"; fi
+          done
+
+          echo '=== qemu pflash pair probes ==='
+          pair_ok=''
+          code_ok=''
+          vars_ok=''
+          for code in "${files[@]}"; do
+            [[ "$code" == *CODE*.fd ]] || continue
+            base="$(basename "$code")"
+            vars="${code/CODE/VARS}"
+            [[ -f "$vars" ]] || continue
+            tmp="$(mktemp /var/tmp/prime-ovmf-vars.XXXXXX.fd)"
+            cp "$vars" "$tmp"
+            set +e
+            timeout --signal=TERM --kill-after=1s 2s qemu-system-x86_64 \
+              -machine q35,accel=tcg -nodefaults -display none -serial none -monitor none \
+              -drive if=pflash,format=raw,readonly=on,file="$code" \
+              -drive if=pflash,format=raw,file="$tmp" \
+              -S >/tmp/ovmf-pflash.out 2>&1
+            rc=$?
+            set -e
+            rm -f "$tmp"
+            printf 'PFLASH_PROBE code=%s vars=%s rc=%s output=%s\n' "$code" "$vars" "$rc" "$(tr '\n' ' ' </tmp/ovmf-pflash.out | head -c 300)"
+            if [[ "$rc" -eq 124 || "$rc" -eq 143 ]]; then
+              pair_ok=yes
+              code_ok="$code"
+              vars_ok="$vars"
+              break
+            fi
+          done
+
+          echo "OVMF_BIOS_OK=${bios_ok:-none}"
+          echo "OVMF_PFLASH_PAIR_OK=${pair_ok:-no}"
+          echo "OVMF_PFLASH_CODE=${code_ok:-none}"
+          echo "OVMF_PFLASH_VARS=${vars_ok:-none}"
+          [[ -n "$bios_ok" || "$pair_ok" == yes ]]
+          echo KRATOS_OVMF_INVOCATION_PROBE=PROVEN
