@@ -30,31 +30,32 @@ jobs:
           p = Path('tools/prove-p1-local.sh')
           s = p.read_text()
 
-          old1 = '"${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\\n  normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"\\n  recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"'
-          new1 = '"${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\\n  normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"\\n  recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"'
-          if s.count(old1) != 1:
-              raise SystemExit(f'UKI digest env anchor count={s.count(old1)}')
-          s = s.replace(old1, new1, 1)
+          old = 'UKI_DIGESTS="$("${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          new = 'UKI_DIGESTS="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          if s.count(old) != 1:
+              raise SystemExit(f'UKI digest command anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
 
-          old2 = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\\n'
-          new2 = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  -e EXPECTED_DIGEST="$CANONICAL_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\\n'
-          if s.count(old2) != 1:
-              raise SystemExit(f'image inspect env anchor count={s.count(old2)}')
-          s = s.replace(old2, new2, 1)
+          old = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          new = '  -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \\\n  -e EXPECTED_DIGEST="$CANONICAL_DIGEST" \\\n  --entrypoint /bin/bash localhost/prime-os:p1 -ceu \'\n'
+          if s.count(old) != 1:
+              raise SystemExit(f'image inspect env anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
 
-          old3 = '    recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"'
-          new3 = '    recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"'
-          if s.count(old3) != 1:
-              raise SystemExit(f'image inspect recovery anchor count={s.count(old3)}')
-          s = s.replace(old3, new3, 1)
+          old = 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"'
+          new = 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"'
+          if s.count(old) != 2:
+              raise SystemExit(f'recovery digest literal count={s.count(old)}')
+          s = s.replace(old, new)
 
           p.write_text(s)
           print('RECOVERY_DIGEST_ENV_FIX=PASS')
           PY
 
           git diff --check
-          grep -F -- '-e EXPECTED_DIGEST="$CANONICAL_DIGEST"' tools/prove-p1-local.sh | wc -l | grep -Fx 3 >/dev/null
+          test "$(grep -F -- '-e EXPECTED_DIGEST="$CANONICAL_DIGEST"' tools/prove-p1-local.sh | wc -l)" -eq 4
           ! grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${CANONICAL_DIGEST}.efi"' tools/prove-p1-local.sh >/dev/null
+          test "$(grep -F 'recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"' tools/prove-p1-local.sh | wc -l)" -eq 4
           git diff -- tools/prove-p1-local.sh
 
       - name: Publish exact proof candidate
