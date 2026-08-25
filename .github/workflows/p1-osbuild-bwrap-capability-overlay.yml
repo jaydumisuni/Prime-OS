@@ -4,7 +4,7 @@ on:
   pull_request:
     branches:
       - adapter/p1-image-builder-mount-probe
-    types: [reopened]
+    types: [reopened, synchronize]
 
 permissions:
   contents: read
@@ -35,7 +35,6 @@ jobs:
           qemu-img info "$DISK"
           qemu-img info "$OVERLAY"
           stat -c 'serial size=%s' "$SERIAL" 2>/dev/null || true
-          stat -c 'vars size=%s sha256=%n' "$VARS" || true
           sha256sum "$VARS" /usr/share/OVMF/OVMF_VARS_4M.fd
 
           echo '=== serial evidence ==='
