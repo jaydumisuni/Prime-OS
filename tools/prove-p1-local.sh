@@ -16,6 +16,12 @@ MOUNT_XBOOTLDR="$RUN_DIR/mnt-xbootldr"
 MOUNT_ROOT="$RUN_DIR/mnt-root"
 NBD_DEV="${PRIME_P1_NBD_DEVICE:-/dev/nbd0}"
 
+BWRAP_POLICY="/etc/apparmor.d/bwrap-userns-restrict"
+LSBLK_POLICY="/etc/apparmor.d/lsblk"
+EXPECTED_BWRAP_POLICY_SHA256="d61facde27707b9c47ffe47921b7273e788784484cb5530eb819e6daac1f1990"
+EXPECTED_LSBLK_POLICY_SHA256="6b3097d4b9fc10c34bc593c5fed2c95af86d619eb68fa7611f98b55cec841569"
+APPARMOR_WINDOW_OPEN=0
+
 mkdir -p "$RUN_DIR" "$OUTPUT_DIR" "$MOUNT_ESP" "$MOUNT_XBOOTLDR" "$MOUNT_ROOT"
 
 log() { printf '\n==> %s\n' "$*"; }
@@ -28,11 +34,24 @@ cleanup_nbd() {
   sudo -n umount "$MOUNT_ROOT" 2>/dev/null || true
   sudo -n qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
 }
-trap cleanup_nbd EXIT
+
+restore_apparmor_profiles() {
+  if [[ "${APPARMOR_WINDOW_OPEN:-0}" -eq 1 ]]; then
+    sudo -n apparmor_parser -r "$BWRAP_POLICY" >/dev/null 2>&1 || true
+    sudo -n apparmor_parser -r "$LSBLK_POLICY" >/dev/null 2>&1 || true
+    APPARMOR_WINDOW_OPEN=0
+  fi
+}
+
+cleanup() {
+  restore_apparmor_profiles
+  cleanup_nbd
+}
+trap cleanup EXIT
 
 log "P1 local proof preflight"
 [[ "$(uname -m)" == "x86_64" ]] || fail "P1 proof requires x86_64"
-for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum objcopy; do need "$tool"; done
+for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum objcopy apparmor_parser; do need "$tool"; done
 sudo -n true || fail "non-interactive sudo is required for rootful Podman/NBD proof"
 [[ -e /dev/fuse ]] || fail "/dev/fuse is unavailable"
 [[ -f image/fedora-base.lock.json ]] || fail "missing Fedora base lock"
@@ -42,6 +61,11 @@ sudo -n true || fail "non-interactive sudo is required for rootful Podman/NBD pr
 [[ -f image/scripts/prepare-uki-cmdlines.py ]] || fail "missing UKI command-line helper"
 [[ -f image/scripts/check-uki-contract.py ]] || fail "missing UKI contract checker"
 [[ -x /usr/bin/env ]] || fail "invalid host environment"
+[[ -f "$BWRAP_POLICY" ]] || fail "missing canonical bwrap AppArmor policy"
+[[ -f "$LSBLK_POLICY" ]] || fail "missing canonical lsblk AppArmor policy"
+[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy drift"
+[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy drift"
+sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(enforce\)$' | wc -l | grep -Fx 3 >/dev/null || fail "expected bwrap/unpriv_bwrap/lsblk AppArmor profiles in enforce mode"
 
 SOURCE_REVISION="$(git rev-parse HEAD)"
 CREATED_AT="$(git show -s --format=%cI HEAD)"
@@ -227,31 +251,67 @@ log "Inspect final Prime image and recovery contract"
 log "Prove pinned image-builder sees unified Prime image"
 "${PODMAN[@]}" pull "$BUILDER_REF"
 "${PODMAN[@]}" run --rm "$BUILDER_REF" version
+BUILDER_RUN_ARGS=(
+  --privileged
+  --security-opt label=disable
+  --device /dev/fuse:/dev/fuse
+)
+
+log "Prove pinned image-builder nested mount authority"
 "${PODMAN[@]}" run --rm \
-  --privileged \
-  --security-opt label=disable \
+  "${BUILDER_RUN_ARGS[@]}" \
+  -v /var/lib/containers/storage:/var/lib/containers/storage \
+  --entrypoint /bin/bash \
+  "$BUILDER_REF" -ceu '
+    test "$(id -u)" -eq 0
+    mkdir -p /run/osbuild/containers/storage
+    trap "umount --lazy /run/osbuild/containers/storage >/dev/null 2>&1 || true" EXIT
+    mount --make-private -o rbind,rw,0755 /var/lib/containers/storage /run/osbuild/containers/storage
+    findmnt -n /run/osbuild/containers/storage >/dev/null
+  '
+
+"${PODMAN[@]}" run --rm \
+  "${BUILDER_RUN_ARGS[@]}" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   "$BUILDER_REF" \
   bootc inspect --ref localhost/prime-os:p1 --format json > "$RUN_DIR/prime-image-builder-inspect.json"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["UnifiedKernel"] is True,d; assert d["Arch"]=="amd64",d; assert d["Bootloader"]=="systemd",d; o=d["OSInfo"]["OSRelease"]; assert o["ID"]=="prime",d; assert o["VersionID"]=="0.1",d' "$RUN_DIR/prime-image-builder-inspect.json"
 
 log "Build Prime QCOW2"
+[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy drift before QCOW2 build"
+[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy drift before QCOW2 build"
+sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(enforce\)$' | wc -l | grep -Fx 3 >/dev/null || fail "AppArmor profiles not enforced before QCOW2 build"
+
+APPARMOR_WINDOW_OPEN=1
+sudo -n apparmor_parser -r -C "$BWRAP_POLICY"
+sudo -n apparmor_parser -r -C "$LSBLK_POLICY"
+sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(complain\)$' | wc -l | grep -Fx 3 >/dev/null || fail "bounded AppArmor complain window did not open"
+
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
-"${PODMAN[@]}" run --rm \
-  --privileged \
-  --security-opt label=disable \
+set +e
+timeout --signal=TERM --kill-after=10s 1200s "${PODMAN[@]}" run --rm \
+  "${BUILDER_RUN_ARGS[@]}" \
   -v /var/lib/containers/storage:/var/lib/containers/storage \
   -v "$OUTPUT_DIR:/output" \
   "$BUILDER_REF" \
   --output-dir /output \
   build \
   --bootc-ref localhost/prime-os:p1 \
+  --bootc-build-ref "$BASE_IMAGE" \
   --bootc-default-fs ext4 \
   --with-manifest \
   --with-buildlog \
   --progress verbose \
   qcow2
+BUILDER_RC=$?
+set -e
+
+restore_apparmor_profiles
+[[ "$(sha256sum "$BWRAP_POLICY" | awk '{print $1}')" == "$EXPECTED_BWRAP_POLICY_SHA256" ]] || fail "bwrap AppArmor policy changed during QCOW2 build"
+[[ "$(sha256sum "$LSBLK_POLICY" | awk '{print $1}')" == "$EXPECTED_LSBLK_POLICY_SHA256" ]] || fail "lsblk AppArmor policy changed during QCOW2 build"
+sudo -n cat /sys/kernel/security/apparmor/profiles | grep -E '^(unpriv_bwrap|bwrap|lsblk) \(enforce\)$' | wc -l | grep -Fx 3 >/dev/null || fail "AppArmor profiles were not restored to enforce mode"
+[[ "$BUILDER_RC" -eq 0 ]] || fail "bounded rootful image-builder QCOW2 build failed: $BUILDER_RC"
 mapfile -t DISKS < <(find "$OUTPUT_DIR" -type f -name '*.qcow2' -print)
 [[ "${#DISKS[@]}" -eq 1 ]] || fail "expected exactly one QCOW2, found ${#DISKS[@]}"
 DISK="${DISKS[0]}"
