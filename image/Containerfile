@@ -265,7 +265,11 @@ FROM split AS sealed-rootfs
 RUN set -eux; \
     rm -rf /kernel; \
     test ! -e /kernel; \
-    ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .
+    ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
+    ! rpm -q bootupd >/dev/null 2>&1; \
+    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \
+    test ! -e /usr/share/rpm/rpmdb.sqlite-wal
 
 FROM rootfs AS uki-tools
 ARG PRIME_COMPOSEFS_DIGEST
@@ -347,7 +351,6 @@ RUN set -eux; \
     test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name '*.recovery.efi' | wc -l)" -eq 1; \
     test ! -e /kernel; \
     ! find /usr/lib/modules -type f \( -name vmlinuz -o -name initramfs.img \) -print -quit | grep -q .; \
-    ! rpm -q bootupd >/dev/null 2>&1; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
     test -f /usr/lib/bootc/install/10-prime.toml; \
     bootc install print-configuration | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c.get("bootloader") == "systemd", c'; \
@@ -366,6 +369,5 @@ RUN set -eux; \
     test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test -f /usr/lib/systemd/system/prime-recovery.target; \
     test -f /usr/lib/systemd/system/prime-recovery.service; \
-    rm -f /usr/share/rpm/rpmdb.sqlite-shm /usr/share/rpm/rpmdb.sqlite-wal; \
     test ! -e /usr/share/rpm/rpmdb.sqlite-shm; \
     test ! -e /usr/share/rpm/rpmdb.sqlite-wal
