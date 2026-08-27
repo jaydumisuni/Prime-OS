@@ -155,13 +155,13 @@ FINAL_DIGEST="$("${PODMAN[@]}" run --rm \
   bootc container compute-composefs-digest-from-storage localhost/prime-os:p1 | tail -n1)"
 case "$FINAL_DIGEST" in ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????) ;; *) fail "invalid final image storage digest: $FINAL_DIGEST" ;; esac
 [[ "$FINAL_DIGEST" == "$CANONICAL_DIGEST" ]] || fail "final image Composefs digest does not match sealed rootfs digest"
-UKI_DIGESTS="$("${PODMAN[@]}" run --rm --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+UKI_DIGESTS="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
   normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
-  recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
+  recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
   test -n "$normal"
-  test -n "$recovery"
+  test -s "$recovery"
   test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" | wc -l)" -eq 1
-  test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 1
+  test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 0
   grep -aoE "composefs=[0-9a-f]{128}" "$normal" | head -n1 | cut -d= -f2
   grep -aoE "composefs=[0-9a-f]{128}" "$recovery" | head -n1 | cut -d= -f2
 ')"
@@ -179,6 +179,7 @@ log "Inspect final Prime image and recovery contract"
   -e EXPECTED_CREATED_AT="$CREATED_AT" \
   -e EXPECTED_GENERATION_ID="$GENERATION_ID" \
   -e EXPECTED_BASE_DIGEST="$BASE_DIGEST" \
+  -e EXPECTED_DIGEST="$CANONICAL_DIGEST" \
   --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
     test -x /usr/libexec/prime/primed
     test -x /usr/libexec/prime/prime-recovery
@@ -232,11 +233,11 @@ log "Inspect final Prime image and recovery contract"
     test -L /etc/systemd/system/graphical.target.wants/prime-shell.service
     test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service
     normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" ! -name "*.recovery.efi" -print -quit)"
-    recovery="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" -print -quit)"
+    recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
     test -n "$normal"
-    test -n "$recovery"
-    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 2
-    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 1
+    test -s "$recovery"
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" | wc -l)" -eq 1
+    test "$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.recovery.efi" | wc -l)" -eq 0
     ukify --json=short inspect "$normal" > /tmp/prime-normal-uki.json
     ukify --json=short inspect "$recovery" > /tmp/prime-recovery-uki.json
     python3 -c '\''import json; n=json.load(open("/tmp/prime-normal-uki.json")); r=json.load(open("/tmp/prime-recovery-uki.json")); nc=n[".cmdline"]["text"]; rc=r[".cmdline"]["text"]; assert "prime.recovery=1" not in nc; assert "systemd.unit=prime-recovery.target" not in nc; assert "prime.recovery=1" in rc; assert "systemd.unit=prime-recovery.target" in rc; assert "Prime OS P1 First Light" in n[".osrel"]["text"]; assert "Prime OS Recovery" in r[".osrel"]["text"]'\''
@@ -318,6 +319,77 @@ mapfile -t DISKS < <(find "$OUTPUT_DIR" -type f -name '*.qcow2' -print)
 DISK="${DISKS[0]}"
 qemu-img info "$DISK" | tee "$RUN_DIR/qemu-img-info.txt"
 qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check.txt"
+
+log "Install and inspect bootc-normal / Prime-recovery UKI split"
+cleanup_nbd
+sudo -n modprobe nbd max_part=16
+sudo -n qemu-nbd --connect="$NBD_DEV" "$DISK"
+sleep 2
+sudo -n partprobe "$NBD_DEV"
+sudo -n sgdisk -p "$NBD_DEV" | tee "$RUN_DIR/gpt.txt"
+lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD_DEV" | tee "$RUN_DIR/lsblk.txt"
+ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+[[ -n "$ESP" ]] || fail "ESP not found"
+sudo -n mount "$ESP" "$MOUNT_ESP"
+sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files-before-recovery.txt"
+[[ -f "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI" || -f "$MOUNT_ESP/EFI/systemd/systemd-bootx64.efi" ]] || fail "systemd-boot fallback/loader binary not found on ESP"
+XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
+if [[ -n "$XBOOTLDR" ]]; then
+  sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
+  sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
+fi
+
+mapfile -t BOOTC_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/*.efi' -print | sort)
+[[ "${#BOOTC_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-managed normal UKI, found ${#BOOTC_UKIS[@]}"
+
+SOURCE_HASHES="$("${PODMAN[@]}" run --rm -e EXPECTED_DIGEST="$CANONICAL_DIGEST" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+  normal="$(find /boot/EFI/Linux -maxdepth 1 -type f -name "*.efi" -print -quit)"
+  recovery="/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi"
+  test -s "$normal"; test -s "$recovery"
+  printf "NORMAL %s\n" "$(sha256sum "$normal" | cut -d" " -f1)"
+  printf "RECOVERY %s\n" "$(sha256sum "$recovery" | cut -d" " -f1)"
+')"
+SOURCE_NORMAL_SHA="$(printf '%s\n' "$SOURCE_HASHES" | awk '$1=="NORMAL" {print $2}')"
+SOURCE_RECOVERY_SHA="$(printf '%s\n' "$SOURCE_HASHES" | awk '$1=="RECOVERY" {print $2}')"
+[[ -n "$SOURCE_NORMAL_SHA" && -n "$SOURCE_RECOVERY_SHA" ]] || fail "source UKI hashes missing"
+INSTALLED_NORMAL_SHA="$(sudo -n sha256sum "${BOOTC_UKIS[0]}" | awk '{print $1}')"
+[[ "$INSTALLED_NORMAL_SHA" == "$SOURCE_NORMAL_SHA" ]] || fail "bootc-installed UKI is not the normal Prime UKI"
+
+mapfile -t NORMAL_BLS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/loader/entries/bootc_prime-0.1-*.conf' -print | sort)
+[[ "${#NORMAL_BLS[@]}" -eq 1 ]] || fail "expected one bootc normal BLS entry, found ${#NORMAL_BLS[@]}"
+! sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/loader/entries/bootc_prime-0.0-*.conf' -print | grep -q . || fail "bootc installed recovery metadata instead of normal"
+
+RECOVERY_NAME="prime-recovery-${CANONICAL_DIGEST}.efi"
+RECOVERY_REL="/EFI/Prime/${RECOVERY_NAME}"
+RECOVERY_COPY="$RUN_DIR/$RECOVERY_NAME"
+rm -f "$RECOVERY_COPY"
+"${PODMAN[@]}" run --rm --security-opt label=disable -e EXPECTED_DIGEST="$CANONICAL_DIGEST" -v "$RUN_DIR:/proof" --entrypoint /bin/bash localhost/prime-os:p1 -ceu '
+  cp "/boot/EFI/Prime/prime-recovery-${EXPECTED_DIGEST}.efi" "/proof/prime-recovery-${EXPECTED_DIGEST}.efi"
+'
+sudo -n chown "$(id -u):$(id -g)" "$RECOVERY_COPY"
+[[ "$(sha256sum "$RECOVERY_COPY" | awk '{print $1}')" == "$SOURCE_RECOVERY_SHA" ]] || fail "recovery extraction identity mismatch"
+
+sudo -n install -D -m 0644 "$RECOVERY_COPY" "$MOUNT_ESP$RECOVERY_REL"
+sudo -n install -d -m 0755 "$MOUNT_ESP/loader/entries"
+BLS_COPY="$RUN_DIR/prime-recovery.conf"
+cat > "$BLS_COPY" <<EOF
+title Prime OS Recovery
+version 0.0
+sort-key zzz-prime-recovery
+efi $RECOVERY_REL
+EOF
+sudo -n install -m 0644 "$BLS_COPY" "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+sudo -n sync
+
+[[ "$(sudo -n sha256sum "$MOUNT_ESP$RECOVERY_REL" | awk '{print $1}')" == "$SOURCE_RECOVERY_SHA" ]] || fail "installed recovery UKI identity mismatch"
+sudo -n grep -Fx 'title Prime OS Recovery' "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+sudo -n grep -Fx 'version 0.0' "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+sudo -n grep -Fx "efi $RECOVERY_REL" "$MOUNT_ESP/loader/entries/prime-recovery.conf"
+[[ "$(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/*.efi' | wc -l)" -eq 1 ]] || fail "bootc UKI namespace changed during recovery install"
+sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files-after-recovery.txt"
+printf '%s\n' "${BOOTC_UKIS[@]}" | tee "$RUN_DIR/prime-normal-uki-files.txt"
+printf '%s\n' "$MOUNT_ESP$RECOVERY_REL" | tee "$RUN_DIR/prime-recovery-uki-files.txt"
+cleanup_nbd
 
 log "Finalize Discoverable Root and boot-entry contracts"
 bash tools/p1-finalize-discoverable-root.sh "$DISK" /dev/nbd2
@@ -445,20 +517,23 @@ printf '%s\n' "${INSTALLED_NORMAL_UKIS[@]}" "${INSTALLED_RECOVERY_UKIS[@]}" | te
 cleanup_nbd
 
 log "Boot normal QCOW2 through OVMF/QEMU"
-rm -f "$OVERLAY" "$SERIAL_LOG"
+OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
+OVMF_VARS="$RUN_DIR/OVMF_VARS_4M.fd"
+rm -f "$OVERLAY" "$SERIAL_LOG" "$OVMF_VARS"
 qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$OVERLAY"
-OVMF=""
-for candidate in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd; do
-  if [[ -f "$candidate" ]]; then OVMF="$candidate"; break; fi
-done
-[[ -n "$OVMF" ]] || fail "OVMF_CODE firmware not found"
+[[ -r "$OVMF_CODE" ]] || fail "OVMF CODE firmware not readable"
+[[ -r "$OVMF_VARS_TEMPLATE" ]] || fail "OVMF VARS template not readable"
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+[[ -w "$OVMF_VARS" ]] || fail "disposable OVMF VARS is not writable"
 set +e
 timeout --signal=TERM 120s qemu-system-x86_64 \
   -machine q35,accel=tcg \
   -cpu max \
   -smp 2 \
   -m 3072 \
-  -bios "$OVMF" \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive if=pflash,format=raw,file="$OVMF_VARS" \
   -drive file="$OVERLAY",if=virtio,format=qcow2 \
   -display none \
   -serial "file:$SERIAL_LOG" \
