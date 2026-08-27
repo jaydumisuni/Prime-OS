@@ -32,7 +32,7 @@ trap cleanup_nbd EXIT
 
 log "P1 local proof preflight"
 [[ "$(uname -m)" == "x86_64" ]] || fail "P1 proof requires x86_64"
-for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum; do need "$tool"; done
+for tool in git python3 rustc cargo podman skopeo qemu-img qemu-system-x86_64 qemu-nbd sgdisk lsblk findmnt timeout sha256sum objcopy; do need "$tool"; done
 sudo -n true || fail "non-interactive sudo is required for rootful Podman/NBD proof"
 [[ -e /dev/fuse ]] || fail "/dev/fuse is unavailable"
 [[ -f image/fedora-base.lock.json ]] || fail "missing Fedora base lock"
@@ -258,6 +258,100 @@ DISK="${DISKS[0]}"
 qemu-img info "$DISK" | tee "$RUN_DIR/qemu-img-info.txt"
 qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check.txt"
 
+log "Finalize Discoverable Root and boot-entry contracts"
+bash tools/p1-finalize-discoverable-root.sh "$DISK" /dev/nbd2
+
+(
+PROMOTE_NBD="/dev/nbd2"
+PROMOTE_MNT="$RUN_DIR/mnt-promote-esp"
+ROOT_X86_64_GUID="4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
+mkdir -p "$PROMOTE_MNT"
+promote_cleanup() {
+  sudo -n umount "$PROMOTE_MNT" >/dev/null 2>&1 || true
+  sudo -n qemu-nbd --disconnect "$PROMOTE_NBD" >/dev/null 2>&1 || true
+}
+promote_cleanup
+trap promote_cleanup EXIT
+sudo -n modprobe nbd max_part=16
+sudo -n qemu-nbd --connect="$PROMOTE_NBD" "$DISK"
+sleep 2
+sudo -n partprobe "$PROMOTE_NBD"
+
+PROMOTE_ROOT="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$PROMOTE_NBD" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
+[[ -n "$PROMOTE_ROOT" ]] || fail "promotion root partition not found"
+PROMOTE_ROOT_TYPE="$(lsblk -nrpo PARTTYPE "$PROMOTE_ROOT" | tr '[:upper:]' '[:lower:]')"
+[[ "$PROMOTE_ROOT_TYPE" == "$ROOT_X86_64_GUID" ]] || fail "Discoverable Root finalization did not persist: $PROMOTE_ROOT_TYPE"
+
+PROMOTE_ESP="$(lsblk -nrpo NAME,PARTTYPE "$PROMOTE_NBD" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
+[[ -n "$PROMOTE_ESP" ]] || fail "promotion ESP not found"
+sudo -n mount "$PROMOTE_ESP" "$PROMOTE_MNT"
+
+NORMAL_BLS="$(sudo -n find "$PROMOTE_MNT/loader/entries" -maxdepth 1 -type f -name 'bootc_prime-0.1-*.conf' -print | head -n1)"
+RECOVERY_BLS="$PROMOTE_MNT/loader/entries/prime-recovery.conf"
+NORMAL_UKI="$(sudo -n find "$PROMOTE_MNT" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print | head -n1)"
+[[ -n "$NORMAL_BLS" ]] || fail "normal bootc BLS not found"
+sudo -n test -f "$RECOVERY_BLS" || fail "Prime Recovery BLS not found"
+[[ -n "$NORMAL_UKI" ]] || fail "normal bootc UKI not found"
+
+NORMAL_SHA_BEFORE="$(sudo -n sha256sum "$NORMAL_UKI" | awk '{print $1}')"
+sudo -n cp "$NORMAL_UKI" "$RUN_DIR/prime-normal-promote.efi"
+sudo -n chown "$(id -u):$(id -g)" "$RUN_DIR/prime-normal-promote.efi"
+objcopy --dump-section .cmdline="$RUN_DIR/prime-normal-promote.cmdline" "$RUN_DIR/prime-normal-promote.efi"
+BASE_CMDLINE="$(tr -d '\000' < "$RUN_DIR/prime-normal-promote.cmdline")"
+printf '%s\n' "$BASE_CMDLINE" | grep -Eq '^composefs=[0-9a-f]{128}$' || fail "unexpected sealed normal UKI cmdline"
+
+if sudo -n grep -q '^options ' "$NORMAL_BLS"; then
+  EXISTING_OPTIONS="$(sudo -n awk '$1=="options" {$1=""; sub(/^ /,""); print; exit}' "$NORMAL_BLS")"
+  [[ "$EXISTING_OPTIONS" == "$BASE_CMDLINE root=gpt-auto rw" ]] || \
+    fail "unexpected pre-existing normal BLS options: $EXISTING_OPTIONS"
+else
+  printf 'options %s root=gpt-auto rw\n' "$BASE_CMDLINE" | sudo -n tee -a "$NORMAL_BLS" >/dev/null
+fi
+[[ "$(sudo -n sha256sum "$NORMAL_UKI" | awk '{print $1}')" == "$NORMAL_SHA_BEFORE" ]] || \
+  fail "normal UKI bytes changed while promoting BLS root locator"
+
+RECOVERY_OLD="$(sudo -n awk '$1=="efi" {print $2; exit}' "$RECOVERY_BLS")"
+[[ -n "$RECOVERY_OLD" ]] || fail "Recovery BLS efi path missing"
+RECOVERY_OLD_ABS="$PROMOTE_MNT$RECOVERY_OLD"
+sudo -n test -f "$RECOVERY_OLD_ABS" || fail "Recovery UKI missing at $RECOVERY_OLD"
+RECOVERY_SHA="$(sudo -n sha256sum "$RECOVERY_OLD_ABS" | awk '{print $1}')"
+
+NORMAL_BASE="${NORMAL_UKI##*/}"
+RECOVERY_NEW="/EFI/Prime/$NORMAL_BASE"
+RECOVERY_NEW_ABS="$PROMOTE_MNT$RECOVERY_NEW"
+
+if [[ "$RECOVERY_OLD" != "$RECOVERY_NEW" ]]; then
+  sudo -n install -D -m 0644 "$RECOVERY_OLD_ABS" "$RECOVERY_NEW_ABS"
+  if [[ "$(sudo -n sha256sum "$RECOVERY_NEW_ABS" | awk '{print $1}')" != "$RECOVERY_SHA" ]]; then
+    sudo -n rm -f "$RECOVERY_NEW_ABS" >/dev/null 2>&1 || true
+    fail "Recovery UKI identity changed during bootc-compatible rename"
+  fi
+  if ! sudo -n sed -i "s#^efi .*#efi $RECOVERY_NEW#" "$RECOVERY_BLS"; then
+    sudo -n rm -f "$RECOVERY_NEW_ABS"
+    fail "Recovery BLS update failed"
+  fi
+  if ! sudo -n grep -Fx "efi $RECOVERY_NEW" "$RECOVERY_BLS" >/dev/null; then
+    sudo -n rm -f "$RECOVERY_NEW_ABS"
+    fail "Recovery BLS does not point to bootc-compatible basename"
+  fi
+  sudo -n rm -f "$RECOVERY_OLD_ABS"
+fi
+
+sudo -n grep -Fx "efi $RECOVERY_NEW" "$RECOVERY_BLS" >/dev/null || \
+  fail "Recovery BLS does not point to bootc-compatible basename"
+[[ "${RECOVERY_NEW##*/}" == bootc_composefs-*.efi ]] || fail "Recovery basename is not bootc-compatible"
+mapfile -t LEGACY_RECOVERY_UKIS < <(sudo -n find "$PROMOTE_MNT/EFI/Prime" -maxdepth 1 -type f -name 'prime-recovery-*.efi' -print | sort)
+for legacy_recovery in "${LEGACY_RECOVERY_UKIS[@]}"; do
+  sudo -n rm -f "$legacy_recovery" || fail "legacy Recovery cleanup failed: $legacy_recovery"
+done
+if sudo -n find "$PROMOTE_MNT/EFI/Prime" -maxdepth 1 -type f -name 'prime-recovery-*.efi' -print | grep -q .; then
+  fail "legacy Recovery basename remains installed"
+fi
+
+sudo -n sync
+)
+qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check-promoted.txt"
+
 log "Inspect GPT, ESP and normal/recovery UKI placement"
 cleanup_nbd
 sudo -n modprobe nbd max_part=16
@@ -276,11 +370,17 @@ if [[ -n "$XBOOTLDR" ]]; then
   sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
   find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
 fi
-mapfile -t INSTALLED_UKIS < <(find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/*.efi' -print 2>/dev/null | sort)
-[[ "${#INSTALLED_UKIS[@]}" -eq 2 ]] || fail "expected two installed Prime UKIs, found ${#INSTALLED_UKIS[@]}"
-INSTALLED_RECOVERY_COUNT="$(printf '%s\n' "${INSTALLED_UKIS[@]}" | grep -c '\.recovery\.efi$' || true)"
-[[ "$INSTALLED_RECOVERY_COUNT" -eq 1 ]] || fail "expected exactly one installed recovery UKI"
-printf '%s\n' "${INSTALLED_UKIS[@]}" | tee "$RUN_DIR/prime-uki-files.txt"
+mapfile -t INSTALLED_NORMAL_UKIS < <(find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print 2>/dev/null | sort)
+[[ "${#INSTALLED_NORMAL_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-owned normal UKI, found ${#INSTALLED_NORMAL_UKIS[@]}"
+mapfile -t INSTALLED_RECOVERY_UKIS < <(find "$MOUNT_ESP" -type f -path '*/EFI/Prime/bootc_composefs-*.efi' -print 2>/dev/null | sort)
+[[ "${#INSTALLED_RECOVERY_UKIS[@]}" -eq 1 ]] || fail "expected exactly one Prime-owned Recovery UKI, found ${#INSTALLED_RECOVERY_UKIS[@]}"
+RECOVERY_BLS_INSTALLED="$MOUNT_ESP/loader/entries/prime-recovery.conf"
+sudo -n test -f "$RECOVERY_BLS_INSTALLED" || fail "installed Prime Recovery BLS missing"
+NORMAL_INSTALLED_BASE="${INSTALLED_NORMAL_UKIS[0]##*/}"
+RECOVERY_INSTALLED_BASE="${INSTALLED_RECOVERY_UKIS[0]##*/}"
+[[ "$RECOVERY_INSTALLED_BASE" == "$NORMAL_INSTALLED_BASE" ]] || fail "Recovery UKI basename is not bootc-compatible"
+sudo -n grep -Fx "efi /EFI/Prime/$RECOVERY_INSTALLED_BASE" "$RECOVERY_BLS_INSTALLED" >/dev/null || fail "Recovery BLS path mismatch"
+printf '%s\n' "${INSTALLED_NORMAL_UKIS[@]}" "${INSTALLED_RECOVERY_UKIS[@]}" | tee "$RUN_DIR/prime-uki-files.txt"
 cleanup_nbd
 
 log "Boot normal QCOW2 through OVMF/QEMU"

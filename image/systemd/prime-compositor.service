@@ -15,7 +15,7 @@ Environment=PRIME_COMPOSITOR_READINESS=/run/prime-compositor/readiness.json
 RuntimeDirectory=prime-compositor
 RuntimeDirectoryMode=0700
 ExecStartPre=/usr/bin/rm -f /run/prime-compositor/readiness.json
-ExecStart=/usr/libexec/prime/prime-compositor
+ExecStart=/usr/bin/env XDG_RUNTIME_DIR=/run/prime-compositor /usr/libexec/prime/prime-compositor
 Restart=on-failure
 RestartSec=1s
 StandardInput=tty
