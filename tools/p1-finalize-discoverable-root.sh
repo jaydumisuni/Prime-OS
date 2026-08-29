@@ -19,6 +19,11 @@ trap cleanup EXIT
 cleanup
 
 sudo -n modprobe nbd max_part=16
+for _ in {1..100}; do
+  [[ -b "$NBD" ]] && break
+  sleep 0.1
+done
+[[ -b "$NBD" ]] || { echo "NBD block device did not appear after modprobe: $NBD" >&2; exit 1; }
 sudo -n qemu-nbd --connect="$NBD" "$DISK"
 sleep 2
 sudo -n partprobe "$NBD"
