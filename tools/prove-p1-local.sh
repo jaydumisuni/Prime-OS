@@ -483,7 +483,17 @@ fi
 
 sudo -n sync
 )
-qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check-promoted.txt"
+promoted_check_ok=0
+promoted_check_out=""
+for _ in {1..20}; do
+  if promoted_check_out="$(qemu-img check "$DISK" 2>&1)"; then
+    promoted_check_ok=1
+    break
+  fi
+  sleep 0.25
+done
+[[ "$promoted_check_ok" -eq 1 ]] || fail "promoted QCOW2 did not become available after NBD disconnect: ${promoted_check_out:-no stderr}"
+printf '%s\n' "$promoted_check_out" | tee "$RUN_DIR/qemu-img-check-promoted.txt"
 
 log "Inspect GPT, ESP and normal/recovery UKI placement"
 cleanup_nbd
