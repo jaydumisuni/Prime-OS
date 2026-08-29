@@ -24,7 +24,17 @@ for _ in {1..100}; do
   sleep 0.1
 done
 [[ -b "$NBD" ]] || { echo "NBD block device did not appear after modprobe: $NBD" >&2; exit 1; }
-sudo -n qemu-nbd --connect="$NBD" "$DISK"
+connected=0
+connect_err=""
+for _ in {1..20}; do
+  if connect_err="$(sudo -n qemu-nbd --connect="$NBD" "$DISK" 2>&1)"; then
+    connected=1
+    break
+  fi
+  sudo -n qemu-nbd --disconnect "$NBD" >/dev/null 2>&1 || true
+  sleep 0.25
+done
+[[ "$connected" -eq 1 ]] || { echo "failed to connect QCOW2 to NBD after retries: $NBD: ${connect_err:-no stderr}" >&2; exit 1; }
 sleep 2
 sudo -n partprobe "$NBD"
 
