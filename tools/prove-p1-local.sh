@@ -506,16 +506,16 @@ lsblk -b -o NAME,SIZE,TYPE,FSTYPE,PARTTYPE,PARTLABEL "$NBD_DEV" | tee "$RUN_DIR/
 ESP="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
 [[ -n "$ESP" ]] || fail "ESP not found"
 sudo -n mount -o ro "$ESP" "$MOUNT_ESP"
-find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files.txt"
+sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files.txt"
 [[ -f "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI" || -f "$MOUNT_ESP/EFI/systemd/systemd-bootx64.efi" ]] || fail "systemd-boot fallback/loader binary not found on ESP"
 XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
 if [[ -n "$XBOOTLDR" ]]; then
   sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
-  find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
+  sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
 fi
-mapfile -t INSTALLED_NORMAL_UKIS < <(find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print 2>/dev/null | sort)
+mapfile -t INSTALLED_NORMAL_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print | sort)
 [[ "${#INSTALLED_NORMAL_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-owned normal UKI, found ${#INSTALLED_NORMAL_UKIS[@]}"
-mapfile -t INSTALLED_RECOVERY_UKIS < <(find "$MOUNT_ESP" -type f -path '*/EFI/Prime/bootc_composefs-*.efi' -print 2>/dev/null | sort)
+mapfile -t INSTALLED_RECOVERY_UKIS < <(sudo -n find "$MOUNT_ESP" -type f -path '*/EFI/Prime/bootc_composefs-*.efi' -print | sort)
 [[ "${#INSTALLED_RECOVERY_UKIS[@]}" -eq 1 ]] || fail "expected exactly one Prime-owned Recovery UKI, found ${#INSTALLED_RECOVERY_UKIS[@]}"
 RECOVERY_BLS_INSTALLED="$MOUNT_ESP/loader/entries/prime-recovery.conf"
 sudo -n test -f "$RECOVERY_BLS_INSTALLED" || fail "installed Prime Recovery BLS missing"
