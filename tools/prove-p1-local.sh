@@ -320,6 +320,10 @@ DISK="${DISKS[0]}"
 qemu-img info "$DISK" | tee "$RUN_DIR/qemu-img-info.txt"
 qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check.txt"
 
+log "Finalize firmware-readable XBOOTLDR"
+bash tools/p1-finalize-xbootldr.sh "$DISK" /dev/nbd2
+qemu-img check "$DISK" | tee "$RUN_DIR/qemu-img-check-xbootldr.txt"
+
 log "Install and inspect bootc-normal / Prime-recovery UKI split"
 cleanup_nbd
 sudo -n modprobe nbd max_part=16
@@ -334,10 +338,11 @@ sudo -n mount "$ESP" "$MOUNT_ESP"
 sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files-before-recovery.txt"
 [[ -f "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI" || -f "$MOUNT_ESP/EFI/systemd/systemd-bootx64.efi" ]] || fail "systemd-boot fallback/loader binary not found on ESP"
 XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
-if [[ -n "$XBOOTLDR" ]]; then
-  sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
-  sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
-fi
+[[ -n "$XBOOTLDR" ]] || fail "XBOOTLDR not found"
+XBOOTLDR_FSTYPE="$(lsblk -nrpo FSTYPE "$XBOOTLDR" | tr '[:upper:]' '[:lower:]')"
+[[ "$XBOOTLDR_FSTYPE" == "vfat" ]] || fail "XBOOTLDR is not firmware-readable vfat: $XBOOTLDR_FSTYPE"
+sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
+sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
 
 mapfile -t BOOTC_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/*.efi' -print | sort)
 [[ "${#BOOTC_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-managed normal UKI, found ${#BOOTC_UKIS[@]}"
@@ -509,10 +514,11 @@ sudo -n mount -o ro "$ESP" "$MOUNT_ESP"
 sudo -n find "$MOUNT_ESP" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/esp-files.txt"
 [[ -f "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI" || -f "$MOUNT_ESP/EFI/systemd/systemd-bootx64.efi" ]] || fail "systemd-boot fallback/loader binary not found on ESP"
 XBOOTLDR="$(lsblk -nrpo NAME,PARTTYPE "$NBD_DEV" | awk 'tolower($2)=="bc13c2ff-59e6-4262-a352-b275fd6f7172" {print $1; exit}')"
-if [[ -n "$XBOOTLDR" ]]; then
-  sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
-  sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
-fi
+[[ -n "$XBOOTLDR" ]] || fail "XBOOTLDR not found"
+XBOOTLDR_FSTYPE="$(lsblk -nrpo FSTYPE "$XBOOTLDR" | tr '[:upper:]' '[:lower:]')"
+[[ "$XBOOTLDR_FSTYPE" == "vfat" ]] || fail "XBOOTLDR is not firmware-readable vfat: $XBOOTLDR_FSTYPE"
+sudo -n mount -o ro "$XBOOTLDR" "$MOUNT_XBOOTLDR"
+sudo -n find "$MOUNT_XBOOTLDR" -maxdepth 5 -type f -printf '%P\n' | sort | tee "$RUN_DIR/xbootldr-files.txt"
 mapfile -t INSTALLED_NORMAL_UKIS < <(sudo -n find "$MOUNT_ESP" "$MOUNT_XBOOTLDR" -type f -path '*/EFI/Linux/bootc/bootc_composefs-*.efi' -print | sort)
 [[ "${#INSTALLED_NORMAL_UKIS[@]}" -eq 1 ]] || fail "expected exactly one bootc-owned normal UKI, found ${#INSTALLED_NORMAL_UKIS[@]}"
 mapfile -t INSTALLED_RECOVERY_UKIS < <(sudo -n find "$MOUNT_ESP" -type f -path '*/EFI/Prime/bootc_composefs-*.efi' -print | sort)
@@ -556,7 +562,9 @@ set -e
 
 log "Prove Prime Core persisted Host state and entered health proving after UEFI boot"
 cleanup_nbd
-sudo -n qemu-nbd --read-only --connect="$NBD_DEV" "$OVERLAY"
+# Keep the disposable overlay block device writable so ext4 may replay its journal;
+# the filesystem itself remains mounted read-only for evidence recovery.
+sudo -n qemu-nbd --connect="$NBD_DEV" "$OVERLAY"
 sleep 2
 sudo -n partprobe "$NBD_DEV"
 ROOT_PART="$(lsblk -b -nrpo NAME,TYPE,FSTYPE,SIZE "$NBD_DEV" | awk '$2=="part" && $3=="ext4" {print $4,$1}' | sort -nr | head -n1 | awk '{print $2}')"
