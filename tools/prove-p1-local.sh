@@ -543,7 +543,7 @@ qemu-img create -f qcow2 -F qcow2 -b "$(realpath "$DISK")" "$OVERLAY"
 cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
 [[ -w "$OVMF_VARS" ]] || fail "disposable OVMF VARS is not writable"
 set +e
-timeout --signal=TERM 120s qemu-system-x86_64 \
+timeout --signal=TERM 210s qemu-system-x86_64 \
   -machine q35,accel=tcg \
   -cpu max \
   -smp 2 \
