@@ -52,8 +52,13 @@ case "$BEFORE" in
     ;;
   ext4)
     sudo -n mount -o ro "$XBOOTLDR" "$MNT"
-    UNEXPECTED="$(sudo -n find "$MNT" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit)"
-    [[ -z "$UNEXPECTED" ]] || { echo "refusing to reformat non-empty XBOOTLDR: $UNEXPECTED" >&2; exit 1; }
+    sudo -n test ! -e "$MNT/lost+found" || sudo -n test -d "$MNT/lost+found"
+    sudo -n test ! -e "$MNT/efi" || sudo -n test -d "$MNT/efi"
+    UNEXPECTED="$(sudo -n find "$MNT" -mindepth 1 \
+      ! -path "$MNT/lost+found" \
+      ! -path "$MNT/efi" \
+      -print -quit)"
+    [[ -z "$UNEXPECTED" ]] || { echo "refusing to reformat XBOOTLDR with installed content: $UNEXPECTED" >&2; exit 1; }
     sudo -n umount "$MNT"
     sudo -n mkfs.vfat -F 32 -n XBOOTLDR "$XBOOTLDR" >/dev/null
     sudo -n sync
