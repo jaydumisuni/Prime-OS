@@ -111,6 +111,7 @@ RUN set -eux; \
         libseat-0.9.3-1.fc44 \
         libwayland-client-1.25.0-1.fc44 \
         libxkbcommon-1.13.1-2.fc44 \
+        google-noto-sans-fonts-20251201-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -123,6 +124,7 @@ RUN set -eux; \
         libseat-0.9.3-1.fc44 \
         libwayland-client-1.25.0-1.fc44 \
         libxkbcommon-1.13.1-2.fc44 \
+        google-noto-sans-fonts-20251201-2.fc44 \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
@@ -205,6 +207,7 @@ RUN set -eux; \
     rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.7-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
+    /usr/libexec/prime/prime-shell --font-probe | grep -Fx 'PRIME_SHELL_FONT_PROBE=Noto Sans'; \
     systemctl enable primed.service prime-compositor.service prime-shell.service prime-first-light-witness.service; \
     systemctl set-default graphical.target; \
     systemctl mask getty@tty1.service; \

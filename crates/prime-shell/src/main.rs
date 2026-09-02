@@ -44,9 +44,15 @@ const ORB_NAMESPACE: &str = "prime.shell.orb";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--font-probe") {
+        let text = visual::TextSystem::load_system()?;
+        println!("PRIME_SHELL_FONT_PROBE={}", text.family_name());
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("prime-shell — Prime P1 Shell interaction construction host");
-        println!("Usage: prime-shell");
+        println!("Usage: prime-shell [--font-probe]");
         println!("Persistent baseline: background + rail");
         println!("Functional surfaces: Orb applications + truthful quick controls");
         return Ok(());
