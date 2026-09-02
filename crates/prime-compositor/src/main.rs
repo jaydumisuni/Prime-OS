@@ -1,3 +1,4 @@
+mod cursor;
 mod effects;
 mod frame;
 mod input;
@@ -97,6 +98,7 @@ pub(crate) struct Runtime {
     output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
     effects: Option<effects::EffectsState>,
+    cursor: cursor::CursorState,
     frame: frame::FrameState,
     _session: LibSeatSession,
     readiness_path: PathBuf,
@@ -379,6 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_manager,
         _renderer: renderer,
         effects,
+        cursor: cursor::CursorState::new(),
         frame: frame::FrameState::new(),
         _session: session,
         readiness_path,

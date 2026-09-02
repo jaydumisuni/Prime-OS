@@ -3,7 +3,10 @@ use smithay::{
     backend::{
         drm::compositor::{FrameFlags, PrimaryPlaneElement},
         renderer::{
-            element::{render_elements, surface::WaylandSurfaceRenderElement, Element},
+            element::{
+                memory::MemoryRenderBufferRenderElement, render_elements,
+                surface::WaylandSurfaceRenderElement, Element,
+            },
             gles::{element::PixelShaderElement, GlesRenderer},
             Color32F, Renderer,
         },
@@ -25,6 +28,7 @@ render_elements! {
     Space=SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
     Glass=crate::effects::GlassBackdropElement,
     Shadow=PixelShaderElement,
+    Cursor=MemoryRenderBufferRenderElement<GlesRenderer>,
 }
 
 pub(crate) const FRAME_NOT_PROVEN_LIMITATION: &str =
@@ -117,8 +121,15 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
             )
         })
         .unwrap_or_default();
+    let cursor_element = runtime.cursor.render_element(
+        &mut runtime._renderer,
+        runtime.protocols.pointer.current_location(),
+    )?;
     let mut elements =
-        Vec::with_capacity(base_elements.len() + glass_elements.len() + shadow_elements.len());
+        Vec::with_capacity(base_elements.len() + glass_elements.len() + shadow_elements.len() + 1);
+    // Smithay consumes render elements in front-to-back order. Keep the Prime
+    // cursor first so it is never obscured by shell or application surfaces.
+    elements.push(PrimeRenderElement::Cursor(cursor_element));
     for element in base_elements {
         let matching_glass = glass_elements
             .iter()

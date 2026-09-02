@@ -266,7 +266,6 @@ impl PrimeShell {
         let width = self.rail_width;
         let height = visual::RAIL_HEIGHT;
         let theme = self.theme;
-        let text = &mut self.text;
         let active = if self.orb.is_some() {
             Some(visual::RailAction::Orb)
         } else if self.quick_controls.is_some() {
@@ -279,7 +278,6 @@ impl PrimeShell {
                 let mut canvas = visual::Canvas::new(bytes, w, h)
                     .expect("Prime rail buffer must match configured dimensions");
                 visual::paint_rail_surface(&mut canvas, &theme, active);
-                visual::paint_rail_labels(&mut canvas, text, &theme);
             })
         {
             eprintln!("prime-shell could not redraw rail: {error}");
@@ -919,7 +917,6 @@ impl LayerShellHandler for PrimeShell {
                 .map(NonZeroU32::get)
                 .unwrap_or(visual::RAIL_HEIGHT);
             let theme = self.theme;
-            let text = &mut self.text;
             let active = if self.orb.is_some() {
                 Some(visual::RailAction::Orb)
             } else if self.quick_controls.is_some() {
@@ -932,7 +929,6 @@ impl LayerShellHandler for PrimeShell {
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime rail buffer must match configured dimensions");
                     visual::paint_rail_surface(&mut canvas, &theme, active);
-                    visual::paint_rail_labels(&mut canvas, text, &theme);
                 })
             {
                 eprintln!("prime-shell could not draw rail: {error}");
@@ -1193,7 +1189,7 @@ impl PointerHandler for PrimeShell {
                 .is_some_and(|orb| &event.surface == orb.layer.wl_surface())
             {
                 if let Some(index) = self.orb.as_ref().and_then(|orb| {
-                    visual::OrbLayout::new(orb.width, orb.height).row_at(
+                    visual::OrbLayout::new(orb.width, orb.height).application_at(
                         event.position.0,
                         event.position.1,
                         self.applications.len(),

@@ -4,8 +4,10 @@ use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSyst
 
 pub(crate) const ORB_WIDTH: u32 = 520;
 pub(crate) const ORB_HEIGHT: u32 = 600;
-const ROW_PITCH: u32 = 92;
-const ROW_HEIGHT: u32 = 80;
+const CARD_COLUMNS: u32 = 2;
+const CARD_GAP: u32 = 12;
+const CARD_HEIGHT: u32 = 96;
+const CARD_ROW_GAP: u32 = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OrbLayout {
@@ -37,25 +39,23 @@ impl OrbLayout {
         }
     }
 
-    pub(crate) fn row_at(self, x: f64, y: f64, count: usize) -> Option<usize> {
-        let x = x.floor() as i32;
-        let y = y.floor() as i32;
-        if !self.apps.contains(x, y) {
-            return None;
-        }
-        let relative = u32::try_from(y.saturating_sub(self.apps.y)).ok()?;
-        let index = (relative / ROW_PITCH) as usize;
-        let in_row = relative % ROW_PITCH;
-        (index < count && in_row < ROW_HEIGHT).then_some(index)
+    pub(crate) fn card_rect(self, index: usize) -> Rect {
+        let card_width = self.apps.width.saturating_sub(CARD_GAP) / CARD_COLUMNS;
+        let column = index as u32 % CARD_COLUMNS;
+        let row = index as u32 / CARD_COLUMNS;
+        Rect::new(
+            self.apps.x + (column * (card_width + CARD_GAP)) as i32,
+            self.apps.y + (row * (CARD_HEIGHT + CARD_ROW_GAP)) as i32,
+            card_width,
+            CARD_HEIGHT,
+        )
     }
 
-    pub(crate) fn row_rect(self, index: usize) -> Rect {
-        Rect::new(
-            self.apps.x,
-            self.apps.y + (index as u32 * ROW_PITCH) as i32,
-            self.apps.width,
-            ROW_HEIGHT,
-        )
+    pub(crate) fn application_at(self, x: f64, y: f64, count: usize) -> Option<usize> {
+        (0..count.min(6)).find(|&index| {
+            self.card_rect(index)
+                .contains(x.floor() as i32, y.floor() as i32)
+        })
     }
 }
 
@@ -153,9 +153,8 @@ pub(crate) fn paint_orb_surface(
         section_style,
         theme.muted.with_alpha(alpha),
     );
-    let max_rows = (layout.apps.height / ROW_PITCH) as usize;
-    for (index, application) in applications.iter().take(max_rows).enumerate() {
-        let row = shifted(layout.row_rect(index));
+    for (index, application) in applications.iter().take(6).enumerate() {
+        let row = shifted(layout.card_rect(index));
         let selected_row = index == selected;
         canvas.fill_rounded_rect(
             row,

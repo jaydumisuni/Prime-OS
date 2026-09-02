@@ -1,6 +1,8 @@
 pub(crate) mod background;
 pub(crate) mod orb;
 pub(crate) mod primitives;
+#[cfg(test)]
+mod proof;
 pub(crate) mod quick_controls;
 pub(crate) mod rail;
 pub(crate) mod text;
@@ -13,8 +15,8 @@ pub(crate) use quick_controls::{
     paint_quick_controls_surface, QuickControlsLayout, QuickControlsView, QUICK_HEIGHT, QUICK_WIDTH,
 };
 pub(crate) use rail::{
-    paint_rail_labels, paint_rail_surface, RailAction, RailLayout, RAIL_HEIGHT, RAIL_LEFT_MARGIN,
-    RAIL_TOP_MARGIN, RAIL_WIDTH,
+    paint_rail_surface, RailAction, RailLayout, RAIL_HEIGHT, RAIL_LEFT_MARGIN, RAIL_TOP_MARGIN,
+    RAIL_WIDTH,
 };
 pub(crate) use text::{FontWeight, TextStyle, TextSystem};
 pub(crate) use theme::Theme;
@@ -183,11 +185,11 @@ mod tests {
     #[test]
     fn kratos_1080p_rail_is_vertical_and_floating() {
         let rail = RailLayout::for_output(1920, 1080);
-        assert!(rail.bounds.width <= 96);
-        assert!(rail.bounds.height > 400);
-        assert!(rail.bounds.x >= 12);
-        assert!(rail.bounds.y >= 40);
-        assert!(rail.bounds.height > rail.bounds.width * 4);
+        assert_eq!(rail.bounds.width, 72);
+        assert_eq!(rail.bounds.height, 620);
+        assert_eq!(rail.bounds.x, 28);
+        assert_eq!(rail.bounds.y, 96);
+        assert!(rail.bounds.height > rail.bounds.width * 8);
     }
 
     #[test]
@@ -233,6 +235,14 @@ mod tests {
         assert_eq!(center.a, 255);
         assert_ne!(center, Argb::from_u32(0xfff8fafc));
         assert_ne!(top, bottom);
+    }
+
+    #[test]
+    fn approved_wallpaper_is_aurora_mist_not_dense_wireframe() {
+        const {
+            assert!(background::PRIMARY_AURORA_BANDS <= 12);
+            assert!(background::SECONDARY_AURORA_BANDS <= 6);
+        }
     }
 
     #[test]
@@ -298,17 +308,26 @@ mod tests {
     }
 
     #[test]
-    fn orb_layout_maps_only_application_cards() {
+    fn orb_layout_maps_two_column_application_cards() {
         let layout = OrbLayout::new(520, 600);
+        let first = layout.card_rect(0);
+        let second = layout.card_rect(1);
+        let third = layout.card_rect(2);
         assert_eq!(
-            layout.row_at(layout.apps.x as f64 + 20.0, layout.apps.y as f64 + 20.0, 3),
+            layout.application_at(first.center_x(), first.center_y(), 3),
             Some(0)
         );
         assert_eq!(
-            layout.row_at(layout.apps.x as f64 + 20.0, layout.apps.y as f64 + 112.0, 3),
+            layout.application_at(second.center_x(), second.center_y(), 3),
             Some(1)
         );
-        assert_eq!(layout.row_at(8.0, 8.0, 3), None);
+        assert_eq!(
+            layout.application_at(third.center_x(), third.center_y(), 3),
+            Some(2)
+        );
+        assert!(second.x > first.x);
+        assert!(third.y > first.y);
+        assert_eq!(layout.application_at(8.0, 8.0, 3), None);
     }
 
     #[test]
@@ -326,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn approved_top_strip_and_rail_labels_use_production_text() {
+    fn approved_top_strip_uses_production_text_and_rail_is_icon_first() {
         let theme = Theme::prime_dark();
         let mut text = TextSystem::load_system().expect("Prime production font");
 
@@ -349,24 +368,15 @@ mod tests {
             vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
         let mut rail_canvas =
             Canvas::new(&mut rail_bytes, rail.bounds.width, rail.bounds.height).unwrap();
-        paint_rail_surface(&mut rail_canvas, &theme, None);
-        let before_rail = (0..rail.bounds.height as i32)
+        paint_rail_surface(&mut rail_canvas, &theme, Some(RailAction::Orb));
+        let bright_icon_pixels = (0..rail.bounds.height as i32)
             .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
             .filter(|&(x, y)| {
                 rail_canvas
                     .pixel(x, y)
-                    .is_some_and(|p| p.r > 205 && p.g > 205 && p.b > 205)
+                    .is_some_and(|p| p.a > 180 && p.b > 150)
             })
             .count();
-        paint_rail_labels(&mut rail_canvas, &mut text, &theme);
-        let after_rail = (0..rail.bounds.height as i32)
-            .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
-            .filter(|&(x, y)| {
-                rail_canvas
-                    .pixel(x, y)
-                    .is_some_and(|p| p.r > 205 && p.g > 205 && p.b > 205)
-            })
-            .count();
-        assert!(after_rail > before_rail);
+        assert!(bright_icon_pixels > 40);
     }
 }

@@ -1,9 +1,9 @@
-use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
+use super::{draw_icon, Argb, Canvas, Icon, Rect, Theme};
 
-pub(crate) const RAIL_WIDTH: u32 = 88;
-pub(crate) const RAIL_HEIGHT: u32 = 760;
+pub(crate) const RAIL_WIDTH: u32 = 72;
+pub(crate) const RAIL_HEIGHT: u32 = 620;
 pub(crate) const RAIL_LEFT_MARGIN: i32 = 28;
-pub(crate) const RAIL_TOP_MARGIN: i32 = 88;
+pub(crate) const RAIL_TOP_MARGIN: i32 = 96;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RailAction {
@@ -51,10 +51,10 @@ impl RailLayout {
     fn from_bounds(bounds: Rect) -> Self {
         let width = bounds.width;
         let height = bounds.height;
-        let item_width = width.saturating_sub(16).max(40);
-        let item_height = (height.saturating_sub(32) / 8).max(54);
+        let item_width = width.saturating_sub(14).max(40);
+        let item_height = (height.saturating_sub(28) / 8).max(54);
         let item_x = bounds.x + ((width.saturating_sub(item_width)) / 2) as i32;
-        let start_y = bounds.y + 12;
+        let start_y = bounds.y + 10;
         let item = |index: u32| {
             Rect::new(
                 item_x,
@@ -107,20 +107,22 @@ pub(crate) fn paint_rail_surface(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 22, theme.panel.with_alpha(154));
-    canvas.stroke_rounded_rect(body, 22, 1, theme.text.with_alpha(78));
+    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(118));
+    canvas.stroke_rounded_rect(body, 24, 1, theme.text.with_alpha(62));
+    let highlight = Rect::new(6, 5, canvas.width.saturating_sub(12), 1);
+    canvas.fill_rounded_rect(highlight, 1, theme.text.with_alpha(42));
 
     canvas.radial_glow(
         layout.orb.center_x() as f32,
         layout.orb.center_y() as f32,
-        46.0,
-        theme.violet.with_alpha(92),
+        52.0,
+        theme.violet.with_alpha(112),
     );
     canvas.radial_glow(
         layout.status.center_x() as f32,
         layout.status.center_y() as f32,
-        34.0,
-        theme.cyan.with_alpha(30),
+        38.0,
+        theme.cyan.with_alpha(34),
     );
 
     let items = [
@@ -135,13 +137,13 @@ pub(crate) fn paint_rail_surface(
     ];
     for (rect, action, icon) in items {
         if active == Some(action) {
-            canvas.fill_rounded_rect(rect, 14, theme.violet.with_alpha(34));
-            canvas.stroke_rounded_rect(rect, 14, 1, theme.cyan.with_alpha(122));
+            canvas.fill_rounded_rect(rect, 16, theme.violet.with_alpha(54));
+            canvas.stroke_rounded_rect(rect, 16, 1, theme.cyan.with_alpha(148));
         }
-        let icon_size = if action == RailAction::Orb { 34 } else { 24 };
+        let icon_size = if action == RailAction::Orb { 32 } else { 22 };
         let icon_rect = Rect::new(
             rect.center_x().round() as i32 - icon_size as i32 / 2,
-            rect.y + 9,
+            rect.center_y().round() as i32 - icon_size as i32 / 2,
             icon_size,
             icon_size,
         );
@@ -153,29 +155,5 @@ pub(crate) fn paint_rail_surface(
             theme.text.with_alpha(220)
         };
         draw_icon(canvas, icon_rect, icon, color);
-    }
-}
-
-pub(crate) fn paint_rail_labels(canvas: &mut Canvas<'_>, text: &mut TextSystem, theme: &Theme) {
-    let layout = RailLayout::for_surface(canvas.width, canvas.height);
-    let style = TextStyle {
-        size_px: 9,
-        weight: FontWeight::Semibold,
-    };
-    let items = [
-        (layout.orb, "ORB"),
-        (layout.apps, "APPS"),
-        (layout.search, "SEARCH"),
-        (layout.status, "STATUS"),
-        (layout.network, "NETWORK"),
-        (layout.audio, "AUDIO"),
-        (layout.storage, "STORAGE"),
-        (layout.health, "HEALTH"),
-    ];
-    for (rect, label) in items {
-        let metrics = text.measure(label, style);
-        let x = rect.center_x().round() as i32 - metrics.width as i32 / 2;
-        let y = rect.y + rect.height as i32 - metrics.height as i32 - 7;
-        text.draw(canvas, (x, y), label, style, theme.text.with_alpha(205));
     }
 }

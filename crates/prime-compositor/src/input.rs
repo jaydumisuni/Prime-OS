@@ -56,6 +56,9 @@ fn pointer_motion<B: InputBackend>(runtime: &mut Runtime, event: B::PointerMotio
         },
     );
     pointer.frame(runtime);
+    // The compositor owns the visible P1 pointer; every physical motion must
+    // therefore schedule a DRM frame even when no client surface changes.
+    runtime.request_frame();
 }
 
 fn pointer_button<B: InputBackend>(runtime: &mut Runtime, event: B::PointerButtonEvent) {

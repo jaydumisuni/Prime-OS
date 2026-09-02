@@ -2,6 +2,9 @@ use std::f32::consts::PI;
 
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
+pub(crate) const PRIMARY_AURORA_BANDS: usize = 10;
+pub(crate) const SECONDARY_AURORA_BANDS: usize = 4;
+
 pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
     canvas.clear();
     let width = canvas.width;
@@ -53,10 +56,10 @@ fn paint_aurora_ribbons(canvas: &mut Canvas<'_>, theme: &Theme) {
         return;
     }
 
-    let bands = 22;
+    let bands = PRIMARY_AURORA_BANDS;
     for band in 0..bands {
         let t = band as f32 / (bands - 1) as f32;
-        let alpha = (10.0 + (1.0 - (t - 0.5).abs() * 2.0) * 18.0) as u8;
+        let alpha = (4.0 + (1.0 - (t - 0.5).abs() * 2.0) * 8.0) as u8;
         let color = if band < bands / 2 {
             theme.violet.with_alpha(alpha)
         } else {
@@ -78,9 +81,9 @@ fn paint_aurora_ribbons(canvas: &mut Canvas<'_>, theme: &Theme) {
         }
     }
 
-    for band in 0..10 {
-        let t = band as f32 / 9.0;
-        let color = Argb::from_u32(0xff60a5fa).with_alpha((8.0 + 18.0 * (1.0 - t)) as u8);
+    for band in 0..SECONDARY_AURORA_BANDS {
+        let t = band as f32 / (SECONDARY_AURORA_BANDS - 1) as f32;
+        let color = Argb::from_u32(0xff60a5fa).with_alpha((4.0 + 8.0 * (1.0 - t)) as u8);
         let offset = band as f32 * height as f32 * 0.007;
         let mut previous = None;
         let step = (width / 150).max(2) as usize;
