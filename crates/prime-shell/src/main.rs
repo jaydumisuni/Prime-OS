@@ -1,7 +1,13 @@
 mod core_client;
+mod motion;
 mod visual;
 
-use std::{error::Error, io, num::NonZeroU32};
+use std::{
+    error::Error,
+    io,
+    num::NonZeroU32,
+    time::{Duration, Instant},
+};
 
 use prime_contracts::SystemPowerAction;
 
@@ -36,11 +42,6 @@ const BACKGROUND_NAMESPACE: &str = "prime.shell.background";
 const RAIL_NAMESPACE: &str = "prime.shell.rail";
 const ORB_NAMESPACE: &str = "prime.shell.orb";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
-
-const ORB_WIDTH: u32 = 360;
-const ORB_HEIGHT: u32 = 420;
-const QUICK_CONTROLS_WIDTH: u32 = 320;
-const QUICK_CONTROLS_HEIGHT: u32 = 560;
 
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
@@ -90,6 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     rail.commit();
 
     let text = visual::TextSystem::load_system()?;
+    eprintln!("PRIME_SHELL_FONT={}", text.family_name());
 
     let mut shell = PrimeShell {
         registry_state: RegistryState::new(&globals),
@@ -173,6 +175,9 @@ struct TransientSurface {
     layer: LayerSurface,
     width: u32,
     height: u32,
+    transition: Option<motion::Transition>,
+    progress: f32,
+    closing: bool,
 }
 
 struct PrimeShell {
@@ -247,6 +252,35 @@ impl PrimeShell {
         }
     }
 
+    fn redraw_rail(&mut self) {
+        if self.rail_width == 0 {
+            return;
+        }
+        let layer = self.rail.clone();
+        let width = self.rail_width;
+        let height = visual::RAIL_HEIGHT;
+        let theme = self.theme;
+        let text = &mut self.text;
+        let active = if self.orb.is_some() {
+            Some(visual::RailAction::Orb)
+        } else if self.quick_controls.is_some() {
+            Some(visual::RailAction::Status)
+        } else {
+            None
+        };
+        if let Err(error) =
+            draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
+                let mut canvas = visual::Canvas::new(bytes, w, h)
+                    .expect("Prime rail buffer must match configured dimensions");
+                visual::paint_rail_surface(&mut canvas, &theme, active);
+                visual::paint_rail_labels(&mut canvas, text, &theme);
+            })
+        {
+            eprintln!("prime-shell could not redraw rail: {error}");
+            self.exit = true;
+        }
+    }
+
     fn surface_kind(&self, surface: &wl_surface::WlSurface) -> Option<ShellSurfaceKind> {
         if surface == self.rail.wl_surface() {
             Some(ShellSurfaceKind::Rail)
@@ -272,6 +306,7 @@ impl PrimeShell {
         queue_handle: &QueueHandle<Self>,
         namespace: &'static str,
         anchor: Anchor,
+        margins: (i32, i32, i32, i32),
         width: u32,
         height: u32,
     ) -> TransientSurface {
@@ -284,6 +319,7 @@ impl PrimeShell {
             None,
         );
         layer.set_anchor(anchor);
+        layer.set_margin(margins.0, margins.1, margins.2, margins.3);
         layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
         layer.set_exclusive_zone(0);
         layer.set_size(width, height);
@@ -292,12 +328,18 @@ impl PrimeShell {
             layer,
             width,
             height,
+            transition: Some(motion::Transition::opening(
+                Duration::from_millis(200),
+                Instant::now(),
+            )),
+            progress: 0.0,
+            closing: false,
         }
     }
 
     fn toggle_orb(&mut self, queue_handle: &QueueHandle<Self>, source: InteractionSource) {
         if self.orb.is_some() {
-            self.close_transient(ShellSurfaceKind::Orb, source);
+            self.close_transient(ShellSurfaceKind::Orb, queue_handle, source);
             return;
         }
         match self.core.applications() {
@@ -321,10 +363,12 @@ impl PrimeShell {
         self.orb = Some(self.create_overlay(
             queue_handle,
             ORB_NAMESPACE,
-            Anchor::BOTTOM,
-            ORB_WIDTH,
-            ORB_HEIGHT,
+            Anchor::TOP | Anchor::LEFT,
+            (82, 0, 0, 132),
+            visual::ORB_WIDTH,
+            visual::ORB_HEIGHT,
         ));
+        self.redraw_rail();
         match source {
             InteractionSource::Pointer => eprintln!("PRIME_SHELL_ORB_OPEN=pointer"),
             InteractionSource::Keyboard => eprintln!("PRIME_SHELL_ORB_OPEN=keyboard"),
@@ -337,7 +381,7 @@ impl PrimeShell {
         source: InteractionSource,
     ) {
         if self.quick_controls.is_some() {
-            self.close_transient(ShellSurfaceKind::QuickControls, source);
+            self.close_transient(ShellSurfaceKind::QuickControls, queue_handle, source);
             return;
         }
         self.pending_power = None;
@@ -362,9 +406,11 @@ impl PrimeShell {
             queue_handle,
             QUICK_CONTROLS_NAMESPACE,
             Anchor::TOP | Anchor::RIGHT,
-            QUICK_CONTROLS_WIDTH,
-            QUICK_CONTROLS_HEIGHT,
+            (70, 28, 0, 0),
+            visual::QUICK_WIDTH,
+            visual::QUICK_HEIGHT,
         ));
+        self.redraw_rail();
         match source {
             InteractionSource::Pointer => {
                 eprintln!("PRIME_SHELL_QUICK_CONTROLS_OPEN=pointer")
@@ -410,22 +456,33 @@ impl PrimeShell {
         };
     }
 
-    fn redraw_orb(&mut self) {
+    fn redraw_orb(&mut self, queue_handle: &QueueHandle<Self>) {
         let Some(orb) = self.orb.as_ref() else {
             return;
         };
         let layer = orb.layer.clone();
         let width = orb.width;
         let height = orb.height;
+        let progress = orb.progress;
+        if orb.transition.is_some() {
+            layer
+                .wl_surface()
+                .frame(queue_handle, layer.wl_surface().clone());
+        }
+        let theme = self.theme;
+        let text = &mut self.text;
         if let Err(error) =
-            draw_visual_surface(&mut self.pool, &layer, width, height, |canvas, w, h| {
-                visual::paint_orb(
-                    canvas,
-                    w,
-                    h,
+            draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
+                let mut canvas = visual::Canvas::new(bytes, w, h)
+                    .expect("Prime Orb buffer must match configured dimensions");
+                visual::paint_orb_surface(
+                    &mut canvas,
+                    text,
+                    &theme,
                     &self.applications,
                     self.selected_application,
                     self.orb_message.as_deref(),
+                    progress,
                 );
             })
         {
@@ -434,23 +491,36 @@ impl PrimeShell {
         }
     }
 
-    fn redraw_quick_controls(&mut self) {
+    fn redraw_quick_controls(&mut self, queue_handle: &QueueHandle<Self>) {
         let Some(quick_controls) = self.quick_controls.as_ref() else {
             return;
         };
         let layer = quick_controls.layer.clone();
         let width = quick_controls.width;
         let height = quick_controls.height;
+        let progress = quick_controls.progress;
+        if quick_controls.transition.is_some() {
+            layer
+                .wl_surface()
+                .frame(queue_handle, layer.wl_surface().clone());
+        }
+        let theme = self.theme;
+        let text = &mut self.text;
         if let Err(error) =
-            draw_visual_surface(&mut self.pool, &layer, width, height, |canvas, w, h| {
-                visual::paint_quick_controls(
-                    canvas,
-                    w,
-                    h,
-                    &self.quick_lines,
-                    self.quick_power_ready,
-                    self.pending_power,
-                    self.quick_message.as_deref(),
+            draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
+                let mut canvas = visual::Canvas::new(bytes, w, h)
+                    .expect("Prime quick-controls buffer must match configured dimensions");
+                visual::paint_quick_controls_surface(
+                    &mut canvas,
+                    text,
+                    &theme,
+                    visual::QuickControlsView {
+                        lines: &self.quick_lines,
+                        power_ready: self.quick_power_ready,
+                        pending_power: self.pending_power,
+                        message: self.quick_message.as_deref(),
+                        progress,
+                    },
                 );
             })
         {
@@ -488,27 +558,47 @@ impl PrimeShell {
         }
     }
 
-    fn close_transient(&mut self, kind: ShellSurfaceKind, source: InteractionSource) {
-        let closed = match kind {
-            ShellSurfaceKind::Orb => self.orb.take().is_some(),
-            ShellSurfaceKind::QuickControls => self.quick_controls.take().is_some(),
+    fn close_transient(
+        &mut self,
+        kind: ShellSurfaceKind,
+        queue_handle: &QueueHandle<Self>,
+        source: InteractionSource,
+    ) {
+        let transition = motion::Transition::closing(Duration::from_millis(180), Instant::now());
+        let armed = match kind {
+            ShellSurfaceKind::Orb => self.orb.as_mut().is_some_and(|surface| {
+                surface.closing = true;
+                surface.transition = Some(transition);
+                true
+            }),
+            ShellSurfaceKind::QuickControls => {
+                self.quick_controls.as_mut().is_some_and(|surface| {
+                    surface.closing = true;
+                    surface.transition = Some(transition);
+                    true
+                })
+            }
             ShellSurfaceKind::Rail => false,
         };
-        if closed {
-            if kind == ShellSurfaceKind::QuickControls {
-                self.pending_power = None;
-                self.quick_message = None;
-            }
-            match source {
-                InteractionSource::Pointer => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=pointer"),
-                InteractionSource::Keyboard => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=keyboard"),
-            }
-            self.keyboard_focus = None;
+        if !armed {
+            return;
+        }
+        if kind == ShellSurfaceKind::QuickControls {
+            self.pending_power = None;
+            self.quick_message = None;
+            self.redraw_quick_controls(queue_handle);
+        } else {
+            self.redraw_orb(queue_handle);
+        }
+        match source {
+            InteractionSource::Pointer => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=pointer"),
+            InteractionSource::Keyboard => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=keyboard"),
         }
     }
 
     fn configure_transient(
         &mut self,
+        queue_handle: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: &LayerSurfaceConfigure,
     ) -> bool {
@@ -522,22 +612,32 @@ impl PrimeShell {
                     .unwrap_or(orb.height);
                 orb.width = width;
                 orb.height = height;
-                if let Err(error) = draw_visual_surface(
-                    &mut self.pool,
-                    &orb.layer,
-                    width,
-                    height,
-                    |canvas, w, h| {
-                        visual::paint_orb(
-                            canvas,
-                            w,
-                            h,
+                let progress = orb.transition.map_or(orb.progress, |transition| {
+                    transition.sample_at(Instant::now())
+                });
+                orb.progress = progress;
+                if orb.transition.is_some() {
+                    orb.layer
+                        .wl_surface()
+                        .frame(queue_handle, orb.layer.wl_surface().clone());
+                }
+                let theme = self.theme;
+                let text = &mut self.text;
+                if let Err(error) =
+                    draw_visual_surface(&mut self.pool, &orb.layer, width, height, |bytes, w, h| {
+                        let mut canvas = visual::Canvas::new(bytes, w, h)
+                            .expect("Prime Orb buffer must match configured dimensions");
+                        visual::paint_orb_surface(
+                            &mut canvas,
+                            text,
+                            &theme,
                             &self.applications,
                             self.selected_application,
                             self.orb_message.as_deref(),
+                            progress,
                         );
-                    },
-                ) {
+                    })
+                {
                     eprintln!("prime-shell could not draw Orb overlay: {error}");
                     self.exit = true;
                 }
@@ -555,20 +655,39 @@ impl PrimeShell {
                     .unwrap_or(quick_controls.height);
                 quick_controls.width = width;
                 quick_controls.height = height;
+                let progress = quick_controls
+                    .transition
+                    .map_or(quick_controls.progress, |transition| {
+                        transition.sample_at(Instant::now())
+                    });
+                quick_controls.progress = progress;
+                if quick_controls.transition.is_some() {
+                    quick_controls
+                        .layer
+                        .wl_surface()
+                        .frame(queue_handle, quick_controls.layer.wl_surface().clone());
+                }
+                let theme = self.theme;
+                let text = &mut self.text;
                 if let Err(error) = draw_visual_surface(
                     &mut self.pool,
                     &quick_controls.layer,
                     width,
                     height,
-                    |canvas, w, h| {
-                        visual::paint_quick_controls(
-                            canvas,
-                            w,
-                            h,
-                            &self.quick_lines,
-                            self.quick_power_ready,
-                            self.pending_power,
-                            self.quick_message.as_deref(),
+                    |bytes, w, h| {
+                        let mut canvas = visual::Canvas::new(bytes, w, h)
+                            .expect("Prime quick-controls buffer must match configured dimensions");
+                        visual::paint_quick_controls_surface(
+                            &mut canvas,
+                            text,
+                            &theme,
+                            visual::QuickControlsView {
+                                lines: &self.quick_lines,
+                                power_ready: self.quick_power_ready,
+                                pending_power: self.pending_power,
+                                message: self.quick_message.as_deref(),
+                                progress,
+                            },
                         )
                     },
                 ) {
@@ -605,10 +724,63 @@ impl CompositorHandler for PrimeShell {
     fn frame(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        queue_handle: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
+        let now = Instant::now();
+        if self
+            .orb
+            .as_ref()
+            .is_some_and(|overlay| surface == overlay.layer.wl_surface())
+        {
+            let mut should_close = false;
+            if let Some(overlay) = self.orb.as_mut() {
+                if let Some(transition) = overlay.transition {
+                    overlay.progress = transition.sample_at(now);
+                    if transition.is_complete_at(now) {
+                        overlay.progress = if overlay.closing { 0.0 } else { 1.0 };
+                        overlay.transition = None;
+                        should_close = overlay.closing;
+                    }
+                }
+            }
+            if should_close {
+                self.orb.take();
+                self.keyboard_focus = None;
+                self.redraw_rail();
+            } else {
+                self.redraw_orb(queue_handle);
+            }
+            return;
+        }
+
+        if self
+            .quick_controls
+            .as_ref()
+            .is_some_and(|overlay| surface == overlay.layer.wl_surface())
+        {
+            let mut should_close = false;
+            if let Some(overlay) = self.quick_controls.as_mut() {
+                if let Some(transition) = overlay.transition {
+                    overlay.progress = transition.sample_at(now);
+                    if transition.is_complete_at(now) {
+                        overlay.progress = if overlay.closing { 0.0 } else { 1.0 };
+                        overlay.transition = None;
+                        should_close = overlay.closing;
+                    }
+                }
+            }
+            if should_close {
+                self.quick_controls.take();
+                self.pending_power = None;
+                self.quick_message = None;
+                self.keyboard_focus = None;
+                self.redraw_rail();
+            } else {
+                self.redraw_quick_controls(queue_handle);
+            }
+        }
     }
 
     fn surface_enter(
@@ -695,12 +867,12 @@ impl LayerShellHandler for PrimeShell {
     fn configure(
         &mut self,
         _connection: &Connection,
-        _queue_handle: &QueueHandle<Self>,
+        queue_handle: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if self.configure_transient(layer, &configure) {
+        if self.configure_transient(queue_handle, layer, &configure) {
             return;
         }
 
@@ -879,9 +1051,17 @@ impl KeyboardHandler for PrimeShell {
     ) {
         if event.keysym == Keysym::Escape {
             if matches!(self.keyboard_focus, Some(ShellSurfaceKind::Orb)) {
-                self.close_transient(ShellSurfaceKind::Orb, InteractionSource::Keyboard);
+                self.close_transient(
+                    ShellSurfaceKind::Orb,
+                    queue_handle,
+                    InteractionSource::Keyboard,
+                );
             } else if matches!(self.keyboard_focus, Some(ShellSurfaceKind::QuickControls)) {
-                self.close_transient(ShellSurfaceKind::QuickControls, InteractionSource::Keyboard);
+                self.close_transient(
+                    ShellSurfaceKind::QuickControls,
+                    queue_handle,
+                    InteractionSource::Keyboard,
+                );
             }
             return;
         }
@@ -889,17 +1069,17 @@ impl KeyboardHandler for PrimeShell {
         if self.keyboard_focus == Some(ShellSurfaceKind::Orb) {
             if event.keysym == Keysym::Up {
                 self.move_application_selection(-1);
-                self.redraw_orb();
+                self.redraw_orb(queue_handle);
                 return;
             }
             if event.keysym == Keysym::Down {
                 self.move_application_selection(1);
-                self.redraw_orb();
+                self.redraw_orb(queue_handle);
                 return;
             }
             if event.keysym == Keysym::Return {
                 self.activate_selected_application();
-                self.redraw_orb();
+                self.redraw_orb(queue_handle);
                 return;
             }
         }
@@ -915,7 +1095,7 @@ impl KeyboardHandler for PrimeShell {
             };
             if let Some(action) = action {
                 self.stage_power_action(action);
-                self.redraw_quick_controls();
+                self.redraw_quick_controls(queue_handle);
             }
             return;
         }
@@ -1006,10 +1186,16 @@ impl PointerHandler for PrimeShell {
                 .as_ref()
                 .is_some_and(|orb| &event.surface == orb.layer.wl_surface())
             {
-                if let Some(index) = visual::orb_row_at(event.position.1, self.applications.len()) {
+                if let Some(index) = self.orb.as_ref().and_then(|orb| {
+                    visual::OrbLayout::new(orb.width, orb.height).row_at(
+                        event.position.0,
+                        event.position.1,
+                        self.applications.len(),
+                    )
+                }) {
                     self.selected_application = index;
                     self.activate_selected_application();
-                    self.redraw_orb();
+                    self.redraw_orb(queue_handle);
                 }
             } else {
                 let action = self
@@ -1017,13 +1203,17 @@ impl PointerHandler for PrimeShell {
                     .as_ref()
                     .and_then(|quick_controls| {
                         (&event.surface == quick_controls.layer.wl_surface()).then(|| {
-                            visual::quick_power_action_at(event.position.1, quick_controls.height)
+                            visual::QuickControlsLayout::new(
+                                quick_controls.width,
+                                quick_controls.height,
+                            )
+                            .power_action_at(event.position.0, event.position.1)
                         })
                     })
                     .flatten();
                 if let Some(action) = action {
                     self.stage_power_action(action);
-                    self.redraw_quick_controls();
+                    self.redraw_quick_controls(queue_handle);
                 }
             }
         }
@@ -1033,6 +1223,21 @@ impl PointerHandler for PrimeShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ease_out_cubic_is_monotonic_and_bounded() {
+        assert_eq!(motion::ease_out_cubic(0.0), 0.0);
+        assert_eq!(motion::ease_out_cubic(1.0), 1.0);
+        assert!(motion::ease_out_cubic(0.5) > 0.5);
+    }
+
+    #[test]
+    fn closing_transition_reaches_closed_state() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let transition = motion::Transition::closing(Duration::from_millis(200), now);
+        assert_eq!(transition.sample_at(now + Duration::from_millis(200)), 0.0);
+    }
 
     #[test]
     fn power_confirmation_requires_same_action_twice() {

@@ -31,6 +31,7 @@ pub(crate) struct RailLayout {
 }
 
 impl RailLayout {
+    #[cfg(test)]
     pub(crate) fn for_output(output_width: u32, output_height: u32) -> Self {
         let max_height = output_height.saturating_sub(RAIL_TOP_MARGIN as u32 + 52);
         let height = RAIL_HEIGHT.min(max_height.max(520));
