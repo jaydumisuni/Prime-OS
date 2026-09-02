@@ -1,8 +1,15 @@
+pub(crate) mod background;
 pub(crate) mod primitives;
+pub(crate) mod rail;
 pub(crate) mod text;
 pub(crate) mod theme;
 
+pub(crate) use background::{paint_settled_background, paint_top_status_strip, TopStatus};
 pub(crate) use primitives::{draw_icon, Argb, Canvas, Icon, Rect};
+pub(crate) use rail::{
+    paint_rail_labels, paint_rail_surface, RailAction, RailLayout, RAIL_HEIGHT, RAIL_LEFT_MARGIN,
+    RAIL_TOP_MARGIN, RAIL_WIDTH,
+};
 pub(crate) use text::{coverage_color, preferred_families, FontWeight, TextStyle, TextSystem};
 pub(crate) use theme::Theme;
 
@@ -739,5 +746,167 @@ mod tests {
                 .count();
             assert!(painted > 4, "{icon:?} produced no meaningful geometry");
         }
+    }
+
+    #[test]
+    fn kratos_1080p_rail_is_vertical_and_floating() {
+        let rail = RailLayout::for_output(1920, 1080);
+        assert!(rail.bounds.width <= 96);
+        assert!(rail.bounds.height > 400);
+        assert!(rail.bounds.x >= 12);
+        assert!(rail.bounds.y >= 40);
+        assert!(rail.bounds.height > rail.bounds.width * 4);
+    }
+
+    #[test]
+    fn approved_rail_entries_resolve_to_real_shell_actions() {
+        let rail = RailLayout::for_output(1920, 1080);
+        let expected = [
+            (rail.orb, RailAction::Orb),
+            (rail.apps, RailAction::Apps),
+            (rail.search, RailAction::Search),
+            (rail.status, RailAction::Status),
+            (rail.network, RailAction::Network),
+            (rail.audio, RailAction::Audio),
+            (rail.storage, RailAction::Storage),
+            (rail.health, RailAction::Health),
+        ];
+        for (rect, action) in expected {
+            assert_eq!(rail.hit(rect.center_x(), rect.center_y()), Some(action));
+        }
+    }
+
+    #[test]
+    fn rail_hit_targets_map_orb_and_status() {
+        let rail = RailLayout::for_output(1920, 1080);
+        assert_eq!(
+            rail.hit(rail.orb.center_x(), rail.orb.center_y()),
+            Some(RailAction::Orb)
+        );
+        assert_eq!(
+            rail.hit(rail.status.center_x(), rail.status.center_y()),
+            Some(RailAction::Status)
+        );
+        assert_eq!(rail.hit(960.0, 540.0), None);
+    }
+
+    #[test]
+    fn settled_background_is_prime_dark_without_permanent_white_center_mark() {
+        let mut bytes = vec![0u8; 320 * 180 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 320, 180).unwrap();
+        paint_settled_background(&mut canvas, &Theme::prime_dark());
+        let center = canvas.pixel(160, 90).unwrap();
+        let top = canvas.pixel(160, 4).unwrap();
+        let bottom = canvas.pixel(160, 175).unwrap();
+        assert_eq!(center.a, 255);
+        assert_ne!(center, Argb::from_u32(0xfff8fafc));
+        assert_ne!(top, bottom);
+    }
+
+    #[test]
+    fn wallpaper_carries_violet_and_cyan_energy_through_the_desktop_body() {
+        let mut bytes = vec![0u8; 480 * 270 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 480, 270).unwrap();
+        paint_settled_background(&mut canvas, &Theme::prime_dark());
+        let mut cyan_pixels = 0usize;
+        let mut violet_pixels = 0usize;
+        for y in 24..250 {
+            for x in 24..456 {
+                let pixel = canvas.pixel(x, y).unwrap();
+                if pixel.g > 65 && pixel.b > 90 && pixel.b > pixel.r + 20 {
+                    cyan_pixels += 1;
+                }
+                if pixel.r > 55 && pixel.b > 85 && pixel.b > pixel.g + 12 {
+                    violet_pixels += 1;
+                }
+            }
+        }
+        assert!(
+            cyan_pixels > 800,
+            "wallpaper cyan energy is too edge-only or too weak"
+        );
+        assert!(
+            violet_pixels > 800,
+            "wallpaper violet energy is too edge-only or too weak"
+        );
+    }
+
+    #[test]
+    fn rail_surface_has_transparent_corners_and_brand_lit_body() {
+        let rail = RailLayout::for_output(1920, 1080);
+        let mut bytes = vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
+        let mut canvas = Canvas::new(&mut bytes, rail.bounds.width, rail.bounds.height).unwrap();
+        paint_rail_surface(&mut canvas, &Theme::prime_dark(), Some(RailAction::Orb));
+        assert_eq!(canvas.pixel(0, 0).unwrap(), Argb::TRANSPARENT);
+        assert!(
+            canvas
+                .pixel(
+                    (rail.bounds.width / 2) as i32,
+                    (rail.bounds.height / 2) as i32
+                )
+                .unwrap()
+                .a
+                > 0
+        );
+        let lit_pixels = (0..rail.bounds.height as i32)
+            .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                canvas
+                    .pixel(x, y)
+                    .is_some_and(|pixel| pixel.b > 150 && pixel.g > 100 && pixel.a > 100)
+            })
+            .count();
+        assert!(lit_pixels > 20);
+    }
+
+    #[test]
+    fn top_status_truth_labels_are_explicit() {
+        assert_eq!(TopStatus::Online.label(), "ONLINE");
+        assert_eq!(TopStatus::Limited.label(), "LIMITED");
+    }
+
+    #[test]
+    fn approved_top_strip_and_rail_labels_use_production_text() {
+        let theme = Theme::prime_dark();
+        let mut text = TextSystem::load_system().expect("Prime production font");
+
+        let mut desktop_bytes = vec![0u8; 480 * 270 * 4];
+        let mut desktop = Canvas::new(&mut desktop_bytes, 480, 270).unwrap();
+        paint_settled_background(&mut desktop, &theme);
+        let before_top = (0..44)
+            .flat_map(|y| (0..480).map(move |x| (x, y)))
+            .filter(|&(x, y)| desktop.pixel(x, y).is_some_and(|p| p.r > 180 && p.g > 180))
+            .count();
+        paint_top_status_strip(&mut desktop, &mut text, &theme, TopStatus::Online);
+        let after_top = (0..44)
+            .flat_map(|y| (0..480).map(move |x| (x, y)))
+            .filter(|&(x, y)| desktop.pixel(x, y).is_some_and(|p| p.r > 180 && p.g > 180))
+            .count();
+        assert!(after_top > before_top);
+
+        let rail = RailLayout::for_output(1920, 1080);
+        let mut rail_bytes =
+            vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
+        let mut rail_canvas =
+            Canvas::new(&mut rail_bytes, rail.bounds.width, rail.bounds.height).unwrap();
+        paint_rail_surface(&mut rail_canvas, &theme, None);
+        let before_rail = (0..rail.bounds.height as i32)
+            .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                rail_canvas
+                    .pixel(x, y)
+                    .is_some_and(|p| p.r > 205 && p.g > 205 && p.b > 205)
+            })
+            .count();
+        paint_rail_labels(&mut rail_canvas, &mut text, &theme);
+        let after_rail = (0..rail.bounds.height as i32)
+            .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                rail_canvas
+                    .pixel(x, y)
+                    .is_some_and(|p| p.r > 205 && p.g > 205 && p.b > 205)
+            })
+            .count();
+        assert!(after_rail > before_rail);
     }
 }

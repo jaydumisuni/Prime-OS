@@ -37,15 +37,10 @@ const RAIL_NAMESPACE: &str = "prime.shell.rail";
 const ORB_NAMESPACE: &str = "prime.shell.orb";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
 
-const RAIL_HEIGHT: u32 = 48;
 const ORB_WIDTH: u32 = 360;
 const ORB_HEIGHT: u32 = 420;
 const QUICK_CONTROLS_WIDTH: u32 = 320;
 const QUICK_CONTROLS_HEIGHT: u32 = 560;
-const RAIL_TRIGGER_WIDTH: f64 = 96.0;
-
-const BACKGROUND_ARGB: u32 = 0xff11141a;
-const RAIL_ARGB: u32 = 0xff1b2028;
 
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
@@ -87,11 +82,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(RAIL_NAMESPACE),
         None,
     );
-    rail.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT);
+    rail.set_anchor(Anchor::TOP | Anchor::LEFT);
+    rail.set_margin(visual::RAIL_TOP_MARGIN, 0, 0, visual::RAIL_LEFT_MARGIN);
     rail.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
-    rail.set_exclusive_zone(i32::try_from(RAIL_HEIGHT)?);
-    rail.set_size(0, RAIL_HEIGHT);
+    rail.set_exclusive_zone(0);
+    rail.set_size(visual::RAIL_WIDTH, visual::RAIL_HEIGHT);
     rail.commit();
+
+    let text = visual::TextSystem::load_system()?;
 
     let mut shell = PrimeShell {
         registry_state: RegistryState::new(&globals),
@@ -101,6 +99,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         layer_shell,
         shm,
         pool,
+        text,
+        theme: visual::Theme::prime_dark(),
         background,
         rail,
         rail_width: 0,
@@ -183,6 +183,8 @@ struct PrimeShell {
     layer_shell: LayerShell,
     shm: Shm,
     pool: SlotPool,
+    text: visual::TextSystem,
+    theme: visual::Theme,
     background: LayerSurface,
     rail: LayerSurface,
     rail_width: u32,
@@ -714,9 +716,19 @@ impl LayerShellHandler for PrimeShell {
                 self.exit = true;
                 return;
             };
+            let status = if self.core.system_status().is_ok() {
+                visual::TopStatus::Online
+            } else {
+                visual::TopStatus::Limited
+            };
+            let theme = self.theme;
+            let text = &mut self.text;
             if let Err(error) =
-                draw_visual_surface(&mut self.pool, layer, width, height, |canvas, w, h| {
-                    visual::paint_background(canvas, w, h, BACKGROUND_ARGB);
+                draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
+                    let mut canvas = visual::Canvas::new(bytes, w, h)
+                        .expect("Prime background buffer must match configured dimensions");
+                    visual::paint_settled_background(&mut canvas, &theme);
+                    visual::paint_top_status_strip(&mut canvas, text, &theme, status);
                 })
             {
                 eprintln!("prime-shell could not draw background: {error}");
@@ -727,10 +739,22 @@ impl LayerShellHandler for PrimeShell {
         } else if layer.wl_surface() == self.rail.wl_surface() {
             let height = NonZeroU32::new(configure.new_size.1)
                 .map(NonZeroU32::get)
-                .unwrap_or(RAIL_HEIGHT);
+                .unwrap_or(visual::RAIL_HEIGHT);
+            let theme = self.theme;
+            let text = &mut self.text;
+            let active = if self.orb.is_some() {
+                Some(visual::RailAction::Orb)
+            } else if self.quick_controls.is_some() {
+                Some(visual::RailAction::Status)
+            } else {
+                None
+            };
             if let Err(error) =
-                draw_visual_surface(&mut self.pool, layer, width, height, |canvas, w, h| {
-                    visual::paint_rail(canvas, w, h, RAIL_ARGB);
+                draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
+                    let mut canvas = visual::Canvas::new(bytes, w, h)
+                        .expect("Prime rail buffer must match configured dimensions");
+                    visual::paint_rail_surface(&mut canvas, &theme, active);
+                    visual::paint_rail_labels(&mut canvas, text, &theme);
                 })
             {
                 eprintln!("prime-shell could not draw rail: {error}");
@@ -954,12 +978,28 @@ impl PointerHandler for PrimeShell {
             }
 
             if &event.surface == self.rail.wl_surface() {
-                if event.position.0 <= RAIL_TRIGGER_WIDTH {
-                    self.toggle_orb(queue_handle, InteractionSource::Pointer);
-                } else if self.rail_width > 0
-                    && event.position.0 >= f64::from(self.rail_width) - RAIL_TRIGGER_WIDTH
-                {
-                    self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
+                let layout = visual::RailLayout::for_surface(
+                    self.rail_width.max(visual::RAIL_WIDTH),
+                    visual::RAIL_HEIGHT,
+                );
+                match layout.hit(event.position.0, event.position.1) {
+                    Some(
+                        visual::RailAction::Orb
+                        | visual::RailAction::Apps
+                        | visual::RailAction::Search,
+                    ) => {
+                        self.toggle_orb(queue_handle, InteractionSource::Pointer);
+                    }
+                    Some(
+                        visual::RailAction::Status
+                        | visual::RailAction::Network
+                        | visual::RailAction::Audio
+                        | visual::RailAction::Storage
+                        | visual::RailAction::Health,
+                    ) => {
+                        self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
+                    }
+                    None => {}
                 }
             } else if self
                 .orb

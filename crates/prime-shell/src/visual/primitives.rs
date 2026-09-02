@@ -63,7 +63,7 @@ impl Argb {
         }
     }
 
-    fn with_alpha(self, alpha: u8) -> Self {
+    pub(crate) fn with_alpha(self, alpha: u8) -> Self {
         Self { a: alpha, ..self }
     }
 
@@ -181,8 +181,8 @@ impl Error for CanvasError {}
 
 pub(crate) struct Canvas<'a> {
     bytes: &'a mut [u8],
-    width: u32,
-    height: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 impl<'a> Canvas<'a> {
