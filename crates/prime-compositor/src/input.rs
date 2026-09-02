@@ -11,7 +11,7 @@ use smithay::{
     },
     reexports::wayland_server::protocol::{wl_pointer, wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
-    wayland::compositor::get_parent,
+    wayland::{compositor::get_parent, seat::WaylandFocus},
 };
 use std::convert::TryInto;
 
@@ -69,7 +69,23 @@ fn pointer_button<B: InputBackend>(runtime: &mut Runtime, event: B::PointerButto
             .protocols
             .keyboard
             .clone()
-            .set_focus(runtime, focus, serial);
+            .set_focus(runtime, focus.clone(), serial);
+        if let Some(focus) = focus {
+            let window = runtime
+                .protocols
+                .space
+                .elements()
+                .find(|window| {
+                    window
+                        .wl_surface()
+                        .is_some_and(|surface| surface.as_ref() == &focus)
+                })
+                .cloned();
+            if let Some(window) = window {
+                runtime.protocols.space.raise_element(&window, true);
+                runtime.request_frame();
+            }
+        }
     }
 
     let Ok(state) = state.try_into() else {

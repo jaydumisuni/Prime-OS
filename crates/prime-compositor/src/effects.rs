@@ -1,20 +1,48 @@
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::{
     backend::renderer::{
         element::{Element, Id, Kind, RenderElement, UnderlyingStorage},
         gles::{
-            ffi, GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
-            UniformName, UniformType,
+            element::PixelShaderElement, ffi, GlesError, GlesFrame, GlesPixelProgram, GlesRenderer,
+            GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType,
         },
         utils::{CommitCounter, OpaqueRegions},
     },
-    desktop::layer_map_for_output,
+    desktop::{layer_map_for_output, Space, Window},
     output::Output,
     utils::{Buffer, Logical, Physical, Rectangle, Scale, Size, Transform},
+    wayland::seat::WaylandFocus,
 };
 use std::{error::Error, fmt, ptr};
 
 pub(crate) const GLASS_FALLBACK_LIMITATION: &str = "Prime glass effects are in fallback mode";
 const BLUR_RADIUS: i32 = 20;
+
+const WINDOW_SHADOW_SHADER: &str = r#"
+precision mediump float;
+uniform vec2 size;
+uniform float alpha;
+uniform float strength;
+varying vec2 v_coords;
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec2 p = v_coords * size;
+    vec2 half_size = size * 0.5;
+    vec2 q = abs(p - half_size) - (half_size - vec2(30.0));
+    float dist = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - 18.0;
+    float fade = 1.0 - smoothstep(-4.0, 30.0, dist);
+    vec3 shadow_color = mix(vec3(0.015, 0.025, 0.075), vec3(0.10, 0.045, 0.22), strength * 0.35);
+    vec4 color = vec4(shadow_color, fade * strength * alpha);
+#if defined(DEBUG_FLAGS)
+    if (tint == 1.0)
+        color = vec4(0.0, 0.2, 0.0, 0.2) + color * 0.8;
+#endif
+    gl_FragColor = color;
+}
+"#;
 
 const GLASS_SHADER: &str = r#"#version 100
 
@@ -107,6 +135,22 @@ pub(crate) fn expanded_capture(
     Rectangle::new((x1, y1).into(), ((x2 - x1).max(0), (y2 - y1).max(0)).into())
 }
 
+pub(crate) fn shadow_area(geometry: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    const PAD: i32 = 34;
+    Rectangle::new(
+        (geometry.loc.x - PAD, geometry.loc.y - PAD).into(),
+        (geometry.size.w + PAD * 2, geometry.size.h + PAD * 2).into(),
+    )
+}
+
+pub(crate) const fn shadow_strength(active: bool) -> f32 {
+    if active {
+        0.48
+    } else {
+        0.28
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EffectsError(String);
 
@@ -120,6 +164,7 @@ impl Error for EffectsError {}
 pub(crate) struct EffectsState {
     texture: GlesTexture,
     program: GlesTexProgram,
+    shadow_program: GlesPixelProgram,
     output_size: Size<i32, Physical>,
 }
 
@@ -140,6 +185,17 @@ impl EffectsState {
                 ],
             )
             .map_err(|error| EffectsError(format!("Prime glass shader compile failed: {error}")))?;
+
+        let shadow_program = renderer
+            .compile_custom_pixel_shader(
+                WINDOW_SHADOW_SHADER,
+                &[UniformName::new("strength", UniformType::_1f)],
+            )
+            .map_err(|error| {
+                EffectsError(format!(
+                    "Prime window shadow shader compile failed: {error}"
+                ))
+            })?;
 
         let texture_id = renderer
             .with_context(|gl| unsafe {
@@ -196,6 +252,7 @@ impl EffectsState {
         Ok(Self {
             texture,
             program,
+            shadow_program,
             output_size,
         })
     }
@@ -219,6 +276,39 @@ impl EffectsState {
                         scale,
                     ),
                 ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn shadow_elements_for_output(
+        &self,
+        output: &Output,
+        space: &Space<Window>,
+        focused: Option<&WlSurface>,
+    ) -> Vec<(Id, PixelShaderElement)> {
+        let output_geometry = match space.output_geometry(output) {
+            Some(geometry) => geometry,
+            None => return Vec::new(),
+        };
+        space
+            .elements()
+            .filter_map(|window| {
+                let surface = window.wl_surface()?;
+                let geometry = space.element_geometry(window)?;
+                if !output_geometry.overlaps(geometry) {
+                    return None;
+                }
+                let active = focused.is_some_and(|focus| focus == surface.as_ref());
+                let area = shadow_area(geometry);
+                let element = PixelShaderElement::new(
+                    self.shadow_program.clone(),
+                    area,
+                    None,
+                    1.0,
+                    vec![Uniform::new("strength", shadow_strength(active))],
+                    Kind::Unspecified,
+                );
+                Some((Id::from_wayland_resource(surface.as_ref()), element))
             })
             .collect()
     }
@@ -399,5 +489,16 @@ mod tests {
         assert_eq!(capture.loc.y, 0);
         assert!(capture.size.w <= 224);
         assert!(capture.size.h <= 148);
+    }
+
+    #[test]
+    fn window_shadow_expands_geometry_and_active_is_stronger() {
+        let geometry: Rectangle<i32, Logical> = Rectangle::new((100, 80).into(), (640, 480).into());
+        let shadow = shadow_area(geometry);
+        assert!(shadow.loc.x < geometry.loc.x);
+        assert!(shadow.loc.y < geometry.loc.y);
+        assert!(shadow.size.w > geometry.size.w);
+        assert!(shadow.size.h > geometry.size.h);
+        assert!(shadow_strength(true) > shadow_strength(false));
     }
 }

@@ -4,7 +4,7 @@ use smithay::{
         drm::compositor::{FrameFlags, PrimaryPlaneElement},
         renderer::{
             element::{render_elements, surface::WaylandSurfaceRenderElement, Element},
-            gles::GlesRenderer,
+            gles::{element::PixelShaderElement, GlesRenderer},
             Color32F, Renderer,
         },
     },
@@ -24,6 +24,7 @@ render_elements! {
     PrimeRenderElement<=GlesRenderer>;
     Space=SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
     Glass=crate::effects::GlassBackdropElement,
+    Shadow=PixelShaderElement,
 }
 
 pub(crate) const FRAME_NOT_PROVEN_LIMITATION: &str =
@@ -99,18 +100,38 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         1.0,
     )?;
     let had_mapped_surface = !base_elements.is_empty();
+    let focused = runtime.protocols.keyboard.current_focus();
     let mut glass_elements = runtime
         .effects
         .as_ref()
         .map(|effects| effects.elements_for_output(&runtime._output))
         .unwrap_or_default();
-    let mut elements = Vec::with_capacity(base_elements.len() + glass_elements.len());
+    let mut shadow_elements = runtime
+        .effects
+        .as_ref()
+        .map(|effects| {
+            effects.shadow_elements_for_output(
+                &runtime._output,
+                &runtime.protocols.space,
+                focused.as_ref(),
+            )
+        })
+        .unwrap_or_default();
+    let mut elements =
+        Vec::with_capacity(base_elements.len() + glass_elements.len() + shadow_elements.len());
     for element in base_elements {
         let matching_glass = glass_elements
             .iter()
             .position(|(surface_id, _)| surface_id == element.id())
             .map(|index| glass_elements.swap_remove(index).1);
+        let matching_shadow = shadow_elements
+            .iter()
+            .position(|(surface_id, _)| surface_id == element.id())
+            .map(|index| shadow_elements.swap_remove(index).1);
         elements.push(PrimeRenderElement::Space(element));
+        if let Some(shadow) = matching_shadow {
+            elements.push(PrimeRenderElement::Shadow(shadow));
+        }
         if let Some(glass) = matching_glass {
             elements.push(PrimeRenderElement::Glass(glass));
         }
