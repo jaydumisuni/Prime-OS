@@ -441,7 +441,7 @@ fn rounded_contains(rect: Rect, radius: i32, x: i32, y: i32) -> bool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Icon {
-    Orb,
+    Prime,
     Applications,
     Status,
     Network,
@@ -463,7 +463,7 @@ pub(crate) fn draw_icon(canvas: &mut Canvas<'_>, rect: Rect, icon: Icon, color: 
     let radius = (scale / 3).max(2);
 
     match icon {
-        Icon::Orb => {
+        Icon::Prime => {
             canvas.circle(center_x, center_y, radius, color.with_alpha(58));
             canvas.circle(center_x, center_y, (scale / 8).max(2), color);
             canvas.line(

@@ -4,6 +4,12 @@ use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSyst
 
 pub(crate) const PRIMARY_AURORA_BANDS: usize = 10;
 pub(crate) const SECONDARY_AURORA_BANDS: usize = 4;
+#[cfg(test)]
+pub(crate) const DECORATIVE_BOX_COUNT: usize = 0;
+pub(crate) const STATUS_CLUSTER_WIDTH: u32 = 176;
+pub(crate) const STATUS_CLUSTER_HEIGHT: u32 = 36;
+pub(crate) const STATUS_CLUSTER_TOP_MARGIN: i32 = 8;
+pub(crate) const STATUS_CLUSTER_RIGHT_MARGIN: i32 = 12;
 
 pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
     canvas.clear();
@@ -33,17 +39,16 @@ pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
         width_f * 0.80,
         height_f * 0.46,
         width_f * 0.52,
-        theme.cyan.with_alpha(86),
+        theme.cyan.with_alpha(118),
     );
     canvas.radial_glow(
         width_f * 0.54,
         height_f * 0.72,
         width_f * 0.32,
-        Argb::from_u32(0x523b82f6),
+        Argb::from_u32(0x703b82f6),
     );
 
     paint_aurora_ribbons(canvas, theme);
-    paint_geometric_traces(canvas, theme);
 
     let top_rule = theme.text.with_alpha(42);
     canvas.fill_rect(Rect::new(0, 44, width, 1), top_rule);
@@ -96,29 +101,6 @@ fn paint_aurora_ribbons(canvas: &mut Canvas<'_>, theme: &Theme) {
             }
             previous = Some((x, y));
         }
-    }
-}
-
-fn paint_geometric_traces(canvas: &mut Canvas<'_>, theme: &Theme) {
-    let width = canvas.width;
-    let height = canvas.height;
-    let trace = theme.cyan.with_alpha(22);
-    let violet_trace = theme.violet.with_alpha(18);
-    let sizes = [
-        (width / 3, height / 7, width / 6, height / 8),
-        (width / 2, height / 2, width / 7, height / 9),
-        (width * 3 / 5, height * 5 / 9, width / 5, height / 7),
-    ];
-    for (index, (x, y, w, h)) in sizes.into_iter().enumerate() {
-        if w < 8 || h < 8 {
-            continue;
-        }
-        canvas.stroke_rounded_rect(
-            Rect::new(x as i32, y as i32, w, h),
-            18,
-            1,
-            if index % 2 == 0 { trace } else { violet_trace },
-        );
     }
 }
 
@@ -177,40 +159,71 @@ pub(crate) fn paint_top_status_strip(
         theme.cyan.with_alpha(210),
     );
 
-    let status_label = status.label();
-    let status_width = text.measure(status_label, secondary).width as i32;
-    let right_margin = 18;
-    let status_x = canvas.width as i32 - right_margin - status_width;
-    text.draw(
-        canvas,
-        (status_x, 12),
-        status_label,
-        secondary,
-        match status {
-            TopStatus::Online => theme.cyan.with_alpha(236),
-            TopStatus::Limited => Argb::from_u32(0xfff59e0b).with_alpha(236),
-        },
+    let _ = status;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StatusClusterLayout {
+    pub(crate) bounds: Rect,
+}
+
+impl StatusClusterLayout {
+    pub(crate) const fn for_surface(width: u32, height: u32) -> Self {
+        Self {
+            bounds: Rect::new(0, 0, width, height),
+        }
+    }
+
+    pub(crate) fn hit(self, x: f64, y: f64) -> bool {
+        self.bounds.contains(x.floor() as i32, y.floor() as i32)
+    }
+}
+
+pub(crate) fn paint_status_cluster(
+    canvas: &mut Canvas<'_>,
+    text: &mut TextSystem,
+    theme: &Theme,
+    status: TopStatus,
+) {
+    canvas.clear();
+    if canvas.width < 120 || canvas.height < 28 {
+        return;
+    }
+    let body = Rect::new(
+        1,
+        1,
+        canvas.width.saturating_sub(2),
+        canvas.height.saturating_sub(2),
     );
-    let heading = "STATUS";
-    let heading_width = text.measure(heading, secondary).width as i32;
-    let icon_size = 14;
-    let heading_x = status_x - 18 - heading_width;
+    canvas.fill_rounded_rect(body, 17, theme.panel.with_alpha(92));
+    canvas.stroke_rounded_rect(body, 17, 1, theme.text.with_alpha(48));
+    let style = TextStyle {
+        size_px: 11,
+        weight: FontWeight::Semibold,
+    };
     draw_icon(
         canvas,
-        Rect::new(
-            heading_x - icon_size - 6,
-            12,
-            icon_size as u32,
-            icon_size as u32,
-        ),
-        Icon::Health,
-        theme.text.with_alpha(210),
+        Rect::new(13, 11, 14, 14),
+        Icon::Status,
+        theme.text.with_alpha(220),
     );
     text.draw(
         canvas,
-        (heading_x, 12),
-        heading,
-        secondary,
-        theme.text.with_alpha(210),
+        (35, 10),
+        "STATUS",
+        style,
+        theme.text.with_alpha(218),
+    );
+    let label = status.label();
+    let label_width = text.measure(label, style).width as i32;
+    text.draw(
+        canvas,
+        (canvas.width as i32 - 14 - label_width, 10),
+        label,
+        style,
+        match status {
+            TopStatus::Online => theme.cyan.with_alpha(238),
+            TopStatus::Limited => Argb::from_u32(0xfff59e0b).with_alpha(238),
+        },
     );
 }

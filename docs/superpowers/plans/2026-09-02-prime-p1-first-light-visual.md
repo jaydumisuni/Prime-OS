@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the mechanically proven P1 construction Shell with a physically accepted Prime-owned dark glass desktop, left rail, Orb, quick controls, window depth, real compositor backdrop blur, motion, and production typography while preserving truthful Core contracts and `SHELL_READY` semantics.
+**Goal:** Replace the mechanically proven P1 construction Shell with a physically accepted Prime-owned dark glass desktop, configurable left rail, Prime launcher, quick controls, window depth, real compositor backdrop blur, motion, and production typography while preserving truthful Core contracts and `SHELL_READY` semantics.
+
+> **2026-09-02 owner refinement:** the earlier working term `Orb` is superseded by **Prime launcher**. The fixed rail control is **Prime**. Current source uses `visual/prime_launcher.rs`, `RailAction::Prime`, and layer namespace `prime.shell.prime`. Prime is the only fixed rail entry; default configurable pins are Apps and Search; system truth shortcuts are optional because the permanent top-right status cluster opens Quick Controls. Boot/install/recovery logo assets remain deferred until this changed runtime is re-proven. Historical task text below may retain the old working term when describing the already-executed sequence; this refinement is authoritative.
 
 **Architecture:** Keep policy/content/interaction in `prime-shell` and scene-dependent effects in `prime-compositor`. Prime Shell renders transparent/tinted ARGB layer surfaces using a focused visual module tree and frame-callback motion; Prime Compositor identifies the existing Prime layer namespaces and inserts compositor-owned backdrop/shadow/focus elements into the bottom-up GLES render chain before the Shell surfaces are drawn. The proven commit `786018fd38a066e30144df869b9a8b2a2701381a` remains immutable; all work occurs on `design/p1-first-light-visual`.
 
@@ -37,7 +39,7 @@
 - `crates/prime-shell/src/visual/text.rs` — system-font discovery, `fontdue` rasterization and glyph cache.
 - `crates/prime-shell/src/visual/background.rs` — startup/desktop field.
 - `crates/prime-shell/src/visual/rail.rs` — vertical rail paint and hit geometry.
-- `crates/prime-shell/src/visual/orb.rs` — Orb launcher paint and application-row hit geometry.
+- `crates/prime-shell/src/visual/prime_launcher.rs` — Orb launcher paint and application-row hit geometry.
 - `crates/prime-shell/src/visual/quick_controls.rs` — truthful system cards and power-action hit geometry.
 - `crates/prime-shell/src/motion.rs` — transition state, easing and Wayland frame-callback scheduling.
 - `crates/prime-shell/src/main.rs` — surface lifecycle, Core data, keyboard/pointer actions and animation dispatch only.
@@ -300,7 +302,7 @@ git commit -m "feat(p1): build prime desktop and vertical rail"
 ### Task 4: Rebuild Orb and quick controls as animated Prime glass surfaces
 
 **Files:**
-- Create: `crates/prime-shell/src/visual/orb.rs`
+- Create: `crates/prime-shell/src/visual/prime_launcher.rs`
 - Create: `crates/prime-shell/src/visual/quick_controls.rs`
 - Create: `crates/prime-shell/src/motion.rs`
 - Modify: `crates/prime-shell/src/visual/mod.rs`
@@ -393,7 +395,7 @@ Tests are pure and do not require GL:
 #[test]
 fn only_prime_transient_namespaces_request_glass() {
     assert_eq!(material_for_namespace("prime.shell.rail"), Some(MaterialKind::Rail));
-    assert_eq!(material_for_namespace("prime.shell.orb"), Some(MaterialKind::Orb));
+    assert_eq!(material_for_namespace("prime.shell.prime"), Some(MaterialKind::PrimeLauncher));
     assert_eq!(material_for_namespace("prime.shell.quick-controls"), Some(MaterialKind::QuickControls));
     assert_eq!(material_for_namespace("random.client"), None);
 }

@@ -1,5 +1,5 @@
 pub(crate) mod background;
-pub(crate) mod orb;
+pub(crate) mod prime_launcher;
 pub(crate) mod primitives;
 #[cfg(test)]
 mod proof;
@@ -8,15 +8,21 @@ pub(crate) mod rail;
 pub(crate) mod text;
 pub(crate) mod theme;
 
-pub(crate) use background::{paint_settled_background, paint_top_status_strip, TopStatus};
-pub(crate) use orb::{paint_orb_surface, OrbLayout, ORB_HEIGHT, ORB_WIDTH};
+pub(crate) use background::{
+    paint_settled_background, paint_status_cluster, paint_top_status_strip, StatusClusterLayout,
+    TopStatus, STATUS_CLUSTER_HEIGHT, STATUS_CLUSTER_RIGHT_MARGIN, STATUS_CLUSTER_TOP_MARGIN,
+    STATUS_CLUSTER_WIDTH,
+};
+pub(crate) use prime_launcher::{
+    paint_prime_launcher_surface, PrimeLauncherLayout, PRIME_LAUNCHER_HEIGHT, PRIME_LAUNCHER_WIDTH,
+};
 pub(crate) use primitives::{draw_icon, Argb, Canvas, Icon, Rect};
 pub(crate) use quick_controls::{
     paint_quick_controls_surface, QuickControlsLayout, QuickControlsView, QUICK_HEIGHT, QUICK_WIDTH,
 };
 pub(crate) use rail::{
-    paint_rail_surface, RailAction, RailLayout, RAIL_HEIGHT, RAIL_LEFT_MARGIN, RAIL_TOP_MARGIN,
-    RAIL_WIDTH,
+    paint_rail_surface, rail_height_for_items, RailAction, RailConfiguration, RailLayout,
+    RAIL_LEFT_MARGIN, RAIL_TOP_MARGIN, RAIL_WIDTH,
 };
 pub(crate) use text::{FontWeight, TextStyle, TextSystem};
 pub(crate) use theme::Theme;
@@ -152,7 +158,7 @@ mod tests {
     #[test]
     fn every_prime_system_icon_renders_geometry() {
         let icons = [
-            Icon::Orb,
+            Icon::Prime,
             Icon::Applications,
             Icon::Status,
             Icon::Network,
@@ -183,45 +189,139 @@ mod tests {
     }
 
     #[test]
-    fn kratos_1080p_rail_is_vertical_and_floating() {
-        let rail = RailLayout::for_output(1920, 1080);
+    fn prime_is_the_only_fixed_default_rail_entry() {
+        let config = RailConfiguration::default();
+        assert_eq!(
+            config.actions(),
+            &[RailAction::Prime, RailAction::Apps, RailAction::Search,]
+        );
+    }
+
+    #[test]
+    fn rail_configuration_allows_optional_system_and_application_pins_without_duplicates() {
+        let config = RailConfiguration::from_json(
+            r#"{
+              "schema":"prime.rail.v1",
+              "pins":[
+                {"kind":"apps"},
+                {"kind":"search"},
+                {"kind":"network"},
+                {"kind":"application","application_id":"00000000-0000-0000-0000-000000000004"},
+                {"kind":"network"},
+                {"kind":"prime"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.actions(),
+            &[
+                RailAction::Prime,
+                RailAction::Apps,
+                RailAction::Search,
+                RailAction::Network,
+                RailAction::Application("00000000-0000-0000-0000-000000000004".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rail_configuration_round_trips_and_invalid_json_falls_back_to_default() {
+        let config = RailConfiguration::from_json(
+            r#"{"schema":"prime.rail.v1","pins":[{"kind":"audio"},{"kind":"storage"}]}"#,
+        )
+        .unwrap();
+        let encoded = config.to_json().unwrap();
+        assert_eq!(RailConfiguration::from_json(&encoded).unwrap(), config);
+        assert_eq!(
+            RailConfiguration::from_json_or_default("not-json"),
+            RailConfiguration::default()
+        );
+    }
+
+    #[test]
+    fn rail_configuration_persists_in_user_writable_json() {
+        let root =
+            std::env::temp_dir().join(format!("prime-rail-config-test-{}", std::process::id()));
+        let path = root.join("prime/rail.json");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            RailConfiguration::load_from_path(&path),
+            RailConfiguration::default()
+        );
+        let configured = RailConfiguration::from_json(
+            r#"{"schema":"prime.rail.v1","pins":[{"kind":"search"},{"kind":"audio"}]}"#,
+        )
+        .unwrap();
+        configured.save_to_path(&path).unwrap();
+        assert_eq!(RailConfiguration::load_from_path(&path), configured);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rail_height_is_content_driven_and_hit_testing_returns_configured_action() {
+        let actions = vec![RailAction::Prime, RailAction::Apps, RailAction::Search];
+        let rail = RailLayout::for_output(1920, 1080, actions.len());
         assert_eq!(rail.bounds.width, 72);
-        assert_eq!(rail.bounds.height, 620);
         assert_eq!(rail.bounds.x, 28);
         assert_eq!(rail.bounds.y, 96);
-        assert!(rail.bounds.height > rail.bounds.width * 8);
-    }
-
-    #[test]
-    fn approved_rail_entries_resolve_to_real_shell_actions() {
-        let rail = RailLayout::for_output(1920, 1080);
-        let expected = [
-            (rail.orb, RailAction::Orb),
-            (rail.apps, RailAction::Apps),
-            (rail.search, RailAction::Search),
-            (rail.status, RailAction::Status),
-            (rail.network, RailAction::Network),
-            (rail.audio, RailAction::Audio),
-            (rail.storage, RailAction::Storage),
-            (rail.health, RailAction::Health),
-        ];
-        for (rect, action) in expected {
-            assert_eq!(rail.hit(rect.center_x(), rect.center_y()), Some(action));
+        assert!(
+            rail.bounds.height < 360,
+            "three-item rail must stay compact"
+        );
+        assert_eq!(rail.items.len(), actions.len());
+        for (index, rect) in rail.items.iter().enumerate() {
+            assert_eq!(
+                rail.hit(rect.center_x(), rect.center_y(), &actions),
+                Some(actions[index].clone())
+            );
         }
+        assert_eq!(rail.hit(960.0, 540.0, &actions), None);
     }
 
     #[test]
-    fn rail_hit_targets_map_orb_and_status() {
-        let rail = RailLayout::for_output(1920, 1080);
+    fn approved_wallpaper_has_no_placeholder_geometric_boxes() {
+        assert_eq!(background::DECORATIVE_BOX_COUNT, 0);
+    }
+
+    #[test]
+    fn prime_launcher_is_compact_and_avoids_engineering_ready_badges() {
+        const {
+            assert!(PRIME_LAUNCHER_HEIGHT <= 540);
+        }
+        assert_eq!(prime_launcher::application_state_label(true), None);
         assert_eq!(
-            rail.hit(rail.orb.center_x(), rail.orb.center_y()),
-            Some(RailAction::Orb)
+            prime_launcher::application_state_label(false),
+            Some("Unavailable")
         );
-        assert_eq!(
-            rail.hit(rail.status.center_x(), rail.status.center_y()),
-            Some(RailAction::Status)
-        );
-        assert_eq!(rail.hit(960.0, 540.0), None);
+    }
+
+    #[test]
+    fn quick_control_truth_lines_resolve_to_visual_cards() {
+        let network = quick_controls::quick_control_card("NET enp1s0: UP CARRIER");
+        assert_eq!(network.label, "NETWORK");
+        assert_eq!(network.value, "enp1s0: UP CARRIER");
+        assert_eq!(network.icon, Icon::Network);
+        let audio = quick_controls::quick_control_card("AUDIO PCH: ALC897");
+        assert_eq!(audio.label, "AUDIO");
+        assert_eq!(audio.value, "PCH: ALC897");
+        assert_eq!(audio.icon, Icon::Audio);
+        let health = quick_controls::quick_control_card("HEALTH: PROVING");
+        assert_eq!(health.label, "HEALTH");
+        assert_eq!(health.value, "PROVING");
+        assert_eq!(health.icon, Icon::Health);
+    }
+
+    #[test]
+    fn quick_controls_use_a_two_column_card_grid() {
+        let layout = QuickControlsLayout::new(430, 600);
+        let first = layout.card_rect(0);
+        let second = layout.card_rect(1);
+        let third = layout.card_rect(2);
+        assert!(second.x > first.x);
+        assert_eq!(second.y, first.y);
+        assert!(third.y > first.y);
+        assert_eq!(third.x, first.x);
     }
 
     #[test]
@@ -275,10 +375,16 @@ mod tests {
 
     #[test]
     fn rail_surface_has_transparent_corners_and_brand_lit_body() {
-        let rail = RailLayout::for_output(1920, 1080);
+        let actions = RailConfiguration::default().actions().to_vec();
+        let rail = RailLayout::for_output(1920, 1080, actions.len());
         let mut bytes = vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
         let mut canvas = Canvas::new(&mut bytes, rail.bounds.width, rail.bounds.height).unwrap();
-        paint_rail_surface(&mut canvas, &Theme::prime_dark(), Some(RailAction::Orb));
+        paint_rail_surface(
+            &mut canvas,
+            &Theme::prime_dark(),
+            &actions,
+            Some(RailAction::Prime),
+        );
         assert_eq!(canvas.pixel(0, 0).unwrap(), Argb::TRANSPARENT);
         assert!(
             canvas
@@ -302,14 +408,37 @@ mod tests {
     }
 
     #[test]
+    fn top_right_status_cluster_is_compact_and_clickable() {
+        let layout = StatusClusterLayout::for_surface(176, 36);
+        assert_eq!(layout.bounds, Rect::new(0, 0, 176, 36));
+        assert!(layout.hit(150.0, 18.0));
+        assert!(!layout.hit(-1.0, 18.0));
+    }
+
+    #[test]
+    fn status_cluster_painter_keeps_transparent_corners_and_renders_truth() {
+        let theme = Theme::prime_dark();
+        let mut text = TextSystem::load_system().expect("Prime production font");
+        let mut bytes = vec![0u8; 176 * 36 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 176, 36).unwrap();
+        paint_status_cluster(&mut canvas, &mut text, &theme, TopStatus::Online);
+        assert_eq!(canvas.pixel(0, 0).unwrap(), Argb::TRANSPARENT);
+        let bright = (0..36)
+            .flat_map(|y| (0..176).map(move |x| (x, y)))
+            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 160 && p.g > 150))
+            .count();
+        assert!(bright > 20);
+    }
+
+    #[test]
     fn top_status_truth_labels_are_explicit() {
         assert_eq!(TopStatus::Online.label(), "ONLINE");
         assert_eq!(TopStatus::Limited.label(), "LIMITED");
     }
 
     #[test]
-    fn orb_layout_maps_two_column_application_cards() {
-        let layout = OrbLayout::new(520, 600);
+    fn prime_launcher_layout_maps_two_column_application_cards() {
+        let layout = PrimeLauncherLayout::new(520, 600);
         let first = layout.card_rect(0);
         let second = layout.card_rect(1);
         let third = layout.card_rect(2);
@@ -363,12 +492,13 @@ mod tests {
             .count();
         assert!(after_top > before_top);
 
-        let rail = RailLayout::for_output(1920, 1080);
+        let actions = RailConfiguration::default().actions().to_vec();
+        let rail = RailLayout::for_output(1920, 1080, actions.len());
         let mut rail_bytes =
             vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
         let mut rail_canvas =
             Canvas::new(&mut rail_bytes, rail.bounds.width, rail.bounds.height).unwrap();
-        paint_rail_surface(&mut rail_canvas, &theme, Some(RailAction::Orb));
+        paint_rail_surface(&mut rail_canvas, &theme, &actions, Some(RailAction::Prime));
         let bright_icon_pixels = (0..rail.bounds.height as i32)
             .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
             .filter(|&(x, y)| {

@@ -100,14 +100,14 @@ void main() {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MaterialKind {
     Rail,
-    Orb,
+    PrimeLauncher,
     QuickControls,
 }
 
 pub(crate) fn material_for_namespace(namespace: &str) -> Option<MaterialKind> {
     match namespace {
-        "prime.shell.rail" => Some(MaterialKind::Rail),
-        "prime.shell.orb" => Some(MaterialKind::Orb),
+        "prime.shell.rail" | "prime.shell.status" => Some(MaterialKind::Rail),
+        "prime.shell.prime" => Some(MaterialKind::PrimeLauncher),
         "prime.shell.quick-controls" => Some(MaterialKind::QuickControls),
         _ => None,
     }
@@ -350,7 +350,7 @@ impl GlassBackdropElement {
     fn tint(&self) -> (f32, f32, f32, f32) {
         match self.material {
             MaterialKind::Rail => (0.11, 0.08, 0.24, 0.18),
-            MaterialKind::Orb => (0.12, 0.08, 0.28, 0.22),
+            MaterialKind::PrimeLauncher => (0.12, 0.08, 0.28, 0.22),
             MaterialKind::QuickControls => (0.04, 0.16, 0.22, 0.20),
         }
     }
@@ -470,13 +470,18 @@ mod tests {
             Some(MaterialKind::Rail)
         );
         assert_eq!(
-            material_for_namespace("prime.shell.orb"),
-            Some(MaterialKind::Orb)
+            material_for_namespace("prime.shell.status"),
+            Some(MaterialKind::Rail)
+        );
+        assert_eq!(
+            material_for_namespace("prime.shell.prime"),
+            Some(MaterialKind::PrimeLauncher)
         );
         assert_eq!(
             material_for_namespace("prime.shell.quick-controls"),
             Some(MaterialKind::QuickControls)
         );
+        assert_eq!(material_for_namespace("prime.shell.orb"), None);
         assert_eq!(material_for_namespace("random.client"), None);
         assert_eq!(material_for_namespace("prime.shell.background"), None);
     }

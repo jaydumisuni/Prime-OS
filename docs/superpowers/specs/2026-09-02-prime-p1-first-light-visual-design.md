@@ -9,11 +9,11 @@ Workstream: `design/p1-first-light-visual`
 
 Turn the mechanically proven P1 compositor/Shell scaffold into the first visually complete Prime OS body without changing the frozen mechanical proof SHA.
 
-P1 visual acceptance is not a cosmetic pass. The resulting system must boot into a coherent Prime-owned desktop that visibly satisfies the First Light authority: startup identity, Prime Shell, system rail, Prime Orb/launcher, functional windowing, quick controls, smooth transitions, Prime glass/depth language, and no obvious Fedora/GNOME/KDE/COSMIC identity leakage.
+P1 visual acceptance is not a cosmetic pass. The resulting system must boot into a coherent Prime-owned desktop that visibly satisfies the First Light authority: startup identity, Prime Shell, system rail, Prime launcher, functional windowing, quick controls, smooth transitions, Prime glass/depth language, and no obvious Fedora/GNOME/KDE/COSMIC identity leakage.
 
-The supplied reference video at `/home/kratos/Downloads/ui should be something like this .mp4` remains the interaction/design donor. On 2026-09-02 the owner also explicitly approved the generated First Light desktop, Orb-open launcher, and quick-controls concept set shown in the design review. Those approved concepts are the implementation appearance target; Prime borrows the donor's principles but matches the approved Prime-specific composition, material depth, color distribution, and interaction hierarchy.
+The supplied reference video at `/home/kratos/Downloads/ui should be something like this .mp4` remains the interaction/design donor. On 2026-09-02 the owner also explicitly approved the generated First Light desktop, Prime-launcher-open, and quick-controls concept set shown in the design review. Those approved concepts are the implementation appearance target; Prime borrows the donor's principles but matches the approved Prime-specific composition, material depth, color distribution, and interaction hierarchy.
 
-The final Prime logo/mark is explicitly deferred until the OS visual body boots and behaves correctly. A provisional textual `PRIME` identity may be used during this phase; logo work must not block or distort the desktop architecture.
+The owner has now selected the Prime identity mark. Its asset integration into boot/install/recovery and the fixed Prime rail control is deliberately deferred until the core runtime/UI candidate is mechanically re-proven. A provisional geometric Prime control may remain during that proof; identity-asset work must not block runtime verification.
 
 ## 2. Non-negotiable product direction
 
@@ -53,9 +53,9 @@ Status colors such as green/amber/red remain semantic and do not replace the Pri
 
 ### 4.1 Background
 
-The settled desktop is a deep near-black/navy field with a clearly visible but controlled violet-to-blue-to-cyan aurora/light-ribbon composition, subtle geometric traces, and very subtle texture/noise to prevent flat banding. The colored energy crosses the desktop body rather than living only at edges. It must remain dark enough for content readability while still looking materially alive when no window is open.
+The settled desktop is a deep near-black/navy field with a clearly visible but controlled violet-to-blue-to-cyan aurora/light-ribbon composition and very subtle texture/noise to prevent flat banding. Placeholder geometric boxes/traces are not part of the accepted wallpaper. The colored energy crosses the desktop body rather than living only at edges. It must remain dark enough for content readability while still looking materially alive when no window is open.
 
-The current giant centered `PRIME` desktop label is removed after startup. Prime identity is present through the system materials, rail, Orb, and startup sequence rather than a permanent watermark.
+The current giant centered `PRIME` desktop label is removed after startup. Prime identity is present through the system materials, rail, Prime launcher, and startup sequence rather than a permanent watermark.
 
 ### 4.2 Startup transition
 
@@ -67,12 +67,9 @@ No final logo decision is made in this phase.
 
 Replace the construction top debug bar with two distinct product surfaces: (1) a hairline/minimal top status strip integrated with the desktop field, and (2) a slim floating vertical glass rail aligned near the left edge. The top strip is quiet informational chrome, not the old engineering rail; the left rail is the primary interactive system rail.
 
-The rail contains:
+The rail is configurable. The **Prime control is the only fixed entry** and is always first. The default P1 pins are `Prime`, `Apps`, and `Search`. `Apps` and `Search` may be removed or reordered by user configuration. Truthful `Status`, `Network`, `Audio`, `Storage`, and `Health` shortcuts remain available as optional pins but are not pinned by default because those functions already live in Quick Controls. Real admitted applications may also be pinned by application identity. Duplicate pins are rejected and the rail height is derived from the configured pin count.
 
-- Prime Orb entry point;
-- running/admitted application affordances when useful;
-- system/status entry;
-- minimal workspace/system indicators required by P1.
+The user-writable P1 persistence contract is `prime.rail.v1`, stored beneath the user XDG configuration root as `prime/rail.json`. Missing or invalid configuration fails safely to the default Prime/Apps/Search set; the immutable OS image does not carry per-user pin state.
 
 The rail is a frosted material with a small corner radius, soft cyan/violet edge light, subtle inner highlight, and restrained shadow. Idle state is quiet. Hover/focus/active state increases luminosity and depth rather than changing into solid blocks.
 
@@ -82,27 +79,27 @@ The rail must never display engineering labels such as `O ORB`, `Q STATUS`, or r
 
 The approved First Light composition retains a very thin top strip across the output. It presents provisional Prime/First Light identity at the left and concise truthful status at the right (health/state plus only indicators whose data is actually available). A subtle divider line separates it from the desktop field. It must remain visually subordinate to the wallpaper and left rail.
 
-At P1, quick-controls activation remains available from the left rail even if the top-right indicators are informational only. No fake Wi-Fi, battery, clock, or hardware values may be painted merely because they appeared in a concept render.
+The top-right truthful status cluster is a permanent pointer entry to Quick Controls, independent of rail configuration. Therefore removing optional system pins cannot configure the user out of system controls. Keyboard activation remains available independently. No fake Wi-Fi, battery, clock, or hardware values may be painted merely because they appeared in a concept render.
 
-## 5. Prime Orb
+## 5. Prime launcher
 
-Prime Orb is the central interaction surface and the main launcher.
+The fixed Prime control is the central navigation anchor and the main launcher. The earlier working term **Orb** is superseded and is not a Prime product term. The visible control is simply Prime; future accessibility copy should expose an action such as `Open Prime`.
 
-Activation sources remain keyboard and pointer, with a later `Super` binding permitted by the existing authority. The initial P1 implementation preserves existing truthful application admission/launch logic and changes the presentation and interaction body around it.
+Activation sources remain keyboard and pointer, with a later `Super` binding permitted by the existing authority. The P1 implementation preserves existing truthful application admission/launch logic and changes the presentation and interaction body around it.
 
 ### Visual form
 
-The Orb entry is a circular/rounded luminous control on the rail. Activation expands into a floating glass launcher, anchored to the rail but visually separated from it through depth and motion.
+The fixed Prime control is a compact luminous control at the top of the rail. Until the approved Prime mark asset is integrated after runtime proof, a provisional geometric Prime glyph may be used. Activation expands into a floating glass launcher, anchored beside the rail but visually separated through depth and motion.
 
 The launcher includes, at P1 minimum:
 
 - search/selection focus surface;
-- admitted applications with clear launch-ready/blocked states;
+- admitted applications shown as a clean two-column card grid;
 - selected-item hierarchy;
 - Prime/system destinations that are actually implemented;
-- concise status/limitation messaging when Core data is unavailable.
+- concise limitation messaging only when Core data requires it.
 
-The Orb is not a diagnostic table. Application status belongs in secondary visual treatment, not `READY/BLOCKED` columns dominating the launcher.
+Launch-ready applications do not carry engineering `READY` badges. Unavailable applications receive restrained secondary treatment such as `Unavailable` plus a small indicator. The Prime launcher is not a diagnostic table.
 
 Keyboard selection and pointer hit targets remain mechanically testable.
 
@@ -180,8 +177,8 @@ Static/unchanged backdrop work should be reused where correctness permits. Dirty
 At minimum define internal material profiles for:
 
 - `rail` — strongest translucency, compact blur, quiet shadow;
-- `orb` — deeper blur, stronger separation and violet/cyan edge response;
-- `quick_controls` — similar to Orb but more neutral for readability;
+- `prime_launcher` — deeper blur, stronger separation and violet/cyan edge response;
+- `quick_controls` — similar to the Prime launcher but more neutral for readability;
 - `window_focus` — shadow/focus treatment without pretending client content is glass.
 
 If GPU blur initialization fails, functionality must remain available with a tinted translucent fallback and the limitation must be recorded. **However, fallback mode does not satisfy KRATOS P1 visual acceptance.**
@@ -208,7 +205,7 @@ Motion is short, physical, and restrained.
 Target interaction durations:
 
 - hover/focus light: roughly 90–140 ms;
-- rail/Orb/quick panel open-close: roughly 160–240 ms;
+- rail/Prime-launcher/quick panel open-close: roughly 160–240 ms;
 - window focus/stack depth transition: roughly 120–200 ms;
 - startup identity-to-desktop: approximately 350–650 ms, governed by actual readiness rather than a fake timer.
 
@@ -227,7 +224,7 @@ Proposed client-side boundaries:
 - `visual/text.rs` — font loading/raster/cache/layout;
 - `visual/background.rs` — desktop/startup composition;
 - `visual/rail.rs` — rail paint + hit geometry;
-- `visual/orb.rs` — launcher paint + hit geometry;
+- `visual/prime_launcher.rs` — launcher paint + hit geometry;
 - `visual/quick_controls.rs` — system panel paint + hit geometry;
 - `motion.rs` — transition state and frame-callback timing.
 
@@ -244,7 +241,7 @@ P1 accepted visual state must remain responsive at the physical KRATOS baseline:
 Acceptance target:
 
 - normal desktop idle does not continuously redraw without cause;
-- Orb/quick-panel animation should sustain perceptually smooth 60 Hz where the display path allows;
+- Prime-launcher/quick-panel animation should sustain perceptually smooth 60 Hz where the display path allows;
 - blur/effects must not starve input or Wayland dispatch;
 - no CPU software blur of full-screen frames;
 - memory allocations for repeated animation frames should be bounded and reused where practical.
@@ -256,7 +253,7 @@ Performance regressions are engineering failures, not acceptable visual trade-of
 Existing physical keyboard/pointer delivery remains required.
 
 - pointer hit regions match visual controls;
-- keyboard navigation remains complete for Orb and quick controls;
+- keyboard navigation remains complete for the Prime launcher and quick controls;
 - Escape closes transient surfaces;
 - focus is visually obvious without relying only on color;
 - normal text contrast remains readable through glass;
@@ -292,7 +289,7 @@ Must re-prove at minimum:
 - UHD 630 + HDMI output;
 - keyboard and pointer;
 - real XDG client mapping;
-- Prime Shell background/rail/Orb/quick-controls surface lifecycle;
+- Prime Shell background/rail/Prime-launcher/quick-controls surface lifecycle;
 - mapped frame retirement;
 - `SHELL_READY` remains truthful;
 - effect path active rather than fallback during visual acceptance.
@@ -307,7 +304,7 @@ Review explicitly covers:
 - dark cyan/violet brand field;
 - real glass/depth quality;
 - left rail;
-- Orb launcher behavior;
+- Prime launcher behavior;
 - quick controls;
 - window focus/depth treatment;
 - spacing and typography;

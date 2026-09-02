@@ -2,22 +2,22 @@ use prime_contracts::ApplicationEntry;
 
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
-pub(crate) const ORB_WIDTH: u32 = 520;
-pub(crate) const ORB_HEIGHT: u32 = 600;
+pub(crate) const PRIME_LAUNCHER_WIDTH: u32 = 520;
+pub(crate) const PRIME_LAUNCHER_HEIGHT: u32 = 520;
 const CARD_COLUMNS: u32 = 2;
 const CARD_GAP: u32 = 12;
-const CARD_HEIGHT: u32 = 96;
+const CARD_HEIGHT: u32 = 88;
 const CARD_ROW_GAP: u32 = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct OrbLayout {
+pub(crate) struct PrimeLauncherLayout {
     pub(crate) bounds: Rect,
     pub(crate) search: Rect,
     pub(crate) apps: Rect,
     pub(crate) footer: Rect,
 }
 
-impl OrbLayout {
+impl PrimeLauncherLayout {
     pub(crate) fn new(width: u32, height: u32) -> Self {
         let bounds = Rect::new(0, 0, width, height);
         let search = Rect::new(24, 24, width.saturating_sub(48), 52);
@@ -59,7 +59,15 @@ impl OrbLayout {
     }
 }
 
-pub(crate) fn paint_orb_surface(
+pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'static str> {
+    if launch_ready {
+        None
+    } else {
+        Some("Unavailable")
+    }
+}
+
+pub(crate) fn paint_prime_launcher_surface(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
     theme: &Theme,
@@ -70,7 +78,7 @@ pub(crate) fn paint_orb_surface(
 ) {
     canvas.clear();
     let progress = progress.clamp(0.0, 1.0);
-    let layout = OrbLayout::new(canvas.width, canvas.height);
+    let layout = PrimeLauncherLayout::new(canvas.width, canvas.height);
     let slide = ((1.0 - progress) * 28.0).round() as i32;
     let alpha = (progress * 255.0).round() as u8;
     let body = Rect::new(
@@ -149,7 +157,7 @@ pub(crate) fn paint_orb_surface(
     text.draw(
         canvas,
         (layout.apps.x + slide, 92),
-        "CORE APPS",
+        "APPS",
         section_style,
         theme.muted.with_alpha(alpha),
     );
@@ -199,27 +207,18 @@ pub(crate) fn paint_orb_surface(
             title,
             theme.text.with_alpha(alpha),
         );
-        let state = if application.launch_ready {
-            "READY"
-        } else {
-            "BLOCKED"
-        };
-        let state_color = if application.launch_ready {
-            theme.cyan
-        } else {
-            Argb::from_u32(0xfff59e0b)
-        };
-        text.draw(
-            canvas,
-            (row.x + 66, row.y + 43),
-            state,
-            section_style,
-            state_color.with_alpha(alpha),
-        );
-        if !application.launch_ready {
+        if let Some(state) = application_state_label(application.launch_ready) {
+            let state_color = Argb::from_u32(0xfff59e0b);
+            text.draw(
+                canvas,
+                (row.x + 66, row.y + 43),
+                state,
+                section_style,
+                state_color.with_alpha(alpha),
+            );
             draw_icon(
                 canvas,
-                Rect::new(row.x + row.width as i32 - 38, row.y + 27, 18, 18),
+                Rect::new(row.x + row.width as i32 - 34, row.y + 25, 16, 16),
                 Icon::Blocked,
                 state_color.with_alpha(alpha),
             );
@@ -253,7 +252,7 @@ pub(crate) fn paint_orb_surface(
         16,
         Argb::from_u32(0xff071021).with_alpha(((148u16 * alpha as u16) / 255) as u8),
     );
-    let footer_text = message.unwrap_or("Select an admitted application to launch");
+    let footer_text = message.unwrap_or("Select an app to open");
     text.draw(
         canvas,
         (footer.x + 16, footer.y + 16),

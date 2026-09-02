@@ -3,7 +3,60 @@ use prime_contracts::SystemPowerAction;
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
 pub(crate) const QUICK_WIDTH: u32 = 430;
-pub(crate) const QUICK_HEIGHT: u32 = 600;
+pub(crate) const QUICK_HEIGHT: u32 = 560;
+const CARD_COLUMNS: u32 = 2;
+const CARD_GAP: u32 = 12;
+const CARD_HEIGHT: u32 = 86;
+const CARD_ROW_GAP: u32 = 12;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct QuickControlCard {
+    pub(crate) label: String,
+    pub(crate) value: String,
+    pub(crate) icon: Icon,
+}
+
+pub(crate) fn quick_control_card(line: &str) -> QuickControlCard {
+    let trimmed = line.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    let (label, icon, value) = if let Some(rest) = upper
+        .strip_prefix("NET ")
+        .or_else(|| upper.strip_prefix("NETWORK "))
+        .or_else(|| upper.strip_prefix("WIFI "))
+    {
+        let original_offset = trimmed.len().saturating_sub(rest.len());
+        ("NETWORK", Icon::Network, trimmed[original_offset..].trim())
+    } else if let Some(rest) = upper.strip_prefix("AUDIO ") {
+        let original_offset = trimmed.len().saturating_sub(rest.len());
+        ("AUDIO", Icon::Audio, trimmed[original_offset..].trim())
+    } else if let Some(rest) = upper.strip_prefix("STORAGE ") {
+        let original_offset = trimmed.len().saturating_sub(rest.len());
+        ("STORAGE", Icon::Storage, trimmed[original_offset..].trim())
+    } else if upper.starts_with("HEALTH") {
+        let value = trimmed
+            .split_once(':')
+            .map(|(_, value)| value.trim())
+            .unwrap_or(trimmed);
+        ("HEALTH", Icon::Health, value)
+    } else if upper.starts_with("PWR") || upper.starts_with("POWER") {
+        let value = trimmed
+            .split_once(' ')
+            .map(|(_, value)| value.trim())
+            .unwrap_or(trimmed);
+        ("POWER", Icon::Status, value)
+    } else {
+        let (label, value) = trimmed
+            .split_once(':')
+            .map(|(label, value)| (label.trim(), value.trim()))
+            .unwrap_or(("STATUS", trimmed));
+        (label, Icon::Status, value)
+    };
+    QuickControlCard {
+        label: label.to_owned(),
+        value: value.to_owned(),
+        icon,
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct QuickControlsView<'a> {
@@ -24,14 +77,26 @@ pub(crate) struct QuickControlsLayout {
 
 impl QuickControlsLayout {
     pub(crate) fn new(width: u32, height: u32) -> Self {
-        let action_y = height.saturating_sub(82) as i32;
+        let action_y = height.saturating_sub(78) as i32;
         let action_width = width.saturating_sub(60) / 2;
         Self {
             bounds: Rect::new(0, 0, width, height),
-            content: Rect::new(24, 82, width.saturating_sub(48), height.saturating_sub(184)),
-            restart: Rect::new(24, action_y, action_width, 54),
-            power_off: Rect::new((width / 2 + 6) as i32, action_y, action_width, 54),
+            content: Rect::new(24, 90, width.saturating_sub(48), height.saturating_sub(190)),
+            restart: Rect::new(24, action_y, action_width, 50),
+            power_off: Rect::new((width / 2 + 6) as i32, action_y, action_width, 50),
         }
+    }
+
+    pub(crate) fn card_rect(self, index: usize) -> Rect {
+        let card_width = self.content.width.saturating_sub(CARD_GAP) / CARD_COLUMNS;
+        let column = index as u32 % CARD_COLUMNS;
+        let row = index as u32 / CARD_COLUMNS;
+        Rect::new(
+            self.content.x + (column * (card_width + CARD_GAP)) as i32,
+            self.content.y + (row * (CARD_HEIGHT + CARD_ROW_GAP)) as i32,
+            card_width,
+            CARD_HEIGHT,
+        )
     }
 
     pub(crate) fn power_action_at(self, x: f64, y: f64) -> Option<SystemPowerAction> {
@@ -107,14 +172,14 @@ pub(crate) fn paint_quick_controls_surface(
     text.draw(
         canvas,
         (24, 24 + slide),
-        "QUICK CONTROLS",
+        "Quick Controls",
         heading,
         theme.text.with_alpha(alpha),
     );
     text.draw(
         canvas,
         (24, 57 + slide),
-        "Prime system truth",
+        "System controls and status",
         secondary,
         theme.muted.with_alpha(alpha),
     );
@@ -125,49 +190,41 @@ pub(crate) fn paint_quick_controls_surface(
         theme.muted.with_alpha(alpha),
     );
 
-    let card_width = layout.content.width;
-    let card_height = 56u32;
-    let pitch = 64u32;
-    let max_rows = (layout.content.height / pitch).min(6) as usize;
-    for (index, line) in lines.iter().take(max_rows).enumerate() {
-        let y = layout.content.y + (index as u32 * pitch) as i32 + slide;
-        let card = Rect::new(layout.content.x, y, card_width, card_height);
+    for (index, line) in lines.iter().take(6).enumerate() {
+        let card_data = quick_control_card(line);
+        let base = layout.card_rect(index);
+        let card = Rect::new(base.x, base.y + slide, base.width, base.height);
         canvas.fill_rounded_rect(
             card,
-            16,
-            Argb::from_u32(0xff0b1222).with_alpha(((148u16 * alpha as u16) / 255) as u8),
+            18,
+            Argb::from_u32(0xff0b1222).with_alpha(((142u16 * alpha as u16) / 255) as u8),
         );
         canvas.stroke_rounded_rect(
             card,
-            16,
+            18,
             1,
-            theme.text.with_alpha(((28u16 * alpha as u16) / 255) as u8),
+            theme.text.with_alpha(((30u16 * alpha as u16) / 255) as u8),
         );
-        let icon = if line.to_ascii_uppercase().contains("STORAGE") {
-            Icon::Storage
-        } else if line.to_ascii_uppercase().contains("NETWORK")
-            || line.to_ascii_uppercase().contains("WIFI")
-        {
-            Icon::Network
-        } else if line.to_ascii_uppercase().contains("AUDIO")
-            || line.to_ascii_uppercase().contains("VOLUME")
-        {
-            Icon::Audio
-        } else if line.to_ascii_uppercase().contains("HEALTH") {
-            Icon::Health
-        } else {
-            Icon::Status
-        };
         draw_icon(
             canvas,
-            Rect::new(card.x + 14, card.y + 17, 22, 22),
-            icon,
+            Rect::new(card.x + 14, card.y + 14, 22, 22),
+            card_data.icon,
             theme.cyan.with_alpha(alpha),
         );
         text.draw(
             canvas,
-            (card.x + 50, card.y + 17),
-            line,
+            (card.x + 46, card.y + 13),
+            &card_data.label,
+            TextStyle {
+                size_px: 10,
+                weight: FontWeight::Semibold,
+            },
+            theme.muted.with_alpha(alpha),
+        );
+        text.draw(
+            canvas,
+            (card.x + 14, card.y + 48),
+            &card_data.value,
             secondary,
             theme.text.with_alpha(alpha),
         );

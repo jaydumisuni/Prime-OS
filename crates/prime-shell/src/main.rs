@@ -40,7 +40,8 @@ use wayland_client::{
 
 const BACKGROUND_NAMESPACE: &str = "prime.shell.background";
 const RAIL_NAMESPACE: &str = "prime.shell.rail";
-const ORB_NAMESPACE: &str = "prime.shell.orb";
+const STATUS_NAMESPACE: &str = "prime.shell.status";
+const PRIME_NAMESPACE: &str = "prime.shell.prime";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -54,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("prime-shell — Prime P1 Shell interaction construction host");
         println!("Usage: prime-shell [--font-probe]");
         println!("Persistent baseline: background + rail");
-        println!("Functional surfaces: Orb applications + truthful quick controls");
+        println!("Functional surfaces: Prime launcher + truthful quick controls");
         return Ok(());
     }
 
@@ -66,6 +67,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let layer_shell = LayerShell::bind(&globals, &queue_handle)?;
     let shm = Shm::bind(&globals, &queue_handle)?;
     let pool = SlotPool::new(4, &shm)?;
+
+    let config_root = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".config"))
+        });
+    let rail_config_path = config_root.map(|root| root.join("prime/rail.json"));
+    let rail_configuration = rail_config_path
+        .as_deref()
+        .map(visual::RailConfiguration::load_from_path)
+        .unwrap_or_default();
+    if let Some(path) = rail_config_path.as_deref() {
+        if !path.exists() {
+            if let Err(error) = rail_configuration.save_to_path(path) {
+                eprintln!("prime-shell could not persist default rail configuration: {error}");
+            }
+        }
+    }
+    let rail_actions = rail_configuration.actions().to_vec();
+    let rail_height = visual::rail_height_for_items(rail_actions.len());
 
     let background_surface = compositor.create_surface(&queue_handle);
     let background = layer_shell.create_layer_surface(
@@ -93,8 +116,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     rail.set_margin(visual::RAIL_TOP_MARGIN, 0, 0, visual::RAIL_LEFT_MARGIN);
     rail.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
     rail.set_exclusive_zone(0);
-    rail.set_size(visual::RAIL_WIDTH, visual::RAIL_HEIGHT);
+    rail.set_size(visual::RAIL_WIDTH, rail_height);
     rail.commit();
+
+    let status_surface = compositor.create_surface(&queue_handle);
+    let status_cluster = layer_shell.create_layer_surface(
+        &queue_handle,
+        status_surface,
+        Layer::Top,
+        Some(STATUS_NAMESPACE),
+        None,
+    );
+    status_cluster.set_anchor(Anchor::TOP | Anchor::RIGHT);
+    status_cluster.set_margin(
+        visual::STATUS_CLUSTER_TOP_MARGIN,
+        visual::STATUS_CLUSTER_RIGHT_MARGIN,
+        0,
+        0,
+    );
+    status_cluster.set_keyboard_interactivity(KeyboardInteractivity::None);
+    status_cluster.set_exclusive_zone(0);
+    status_cluster.set_size(visual::STATUS_CLUSTER_WIDTH, visual::STATUS_CLUSTER_HEIGHT);
+    status_cluster.commit();
 
     let text = visual::TextSystem::load_system()?;
     eprintln!("PRIME_SHELL_FONT={}", text.family_name());
@@ -111,11 +154,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         theme: visual::Theme::prime_dark(),
         background,
         rail,
+        status_cluster,
         rail_width: 0,
+        rail_height,
+        rail_actions,
         background_configured: false,
         rail_configured: false,
+        status_configured: false,
         baseline_reported: false,
-        orb: None,
+        prime_launcher: None,
         quick_controls: None,
         keyboard: None,
         pointer: None,
@@ -123,7 +170,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         core: core_client::CoreClient::from_env(),
         applications: Vec::new(),
         selected_application: 0,
-        orb_message: None,
+        prime_launcher_message: None,
         quick_lines: Vec::new(),
         quick_power_ready: false,
         pending_power: None,
@@ -143,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShellSurfaceKind {
     Rail,
-    Orb,
+    PrimeLauncher,
     QuickControls,
 }
 
@@ -198,11 +245,15 @@ struct PrimeShell {
     theme: visual::Theme,
     background: LayerSurface,
     rail: LayerSurface,
+    status_cluster: LayerSurface,
     rail_width: u32,
+    rail_height: u32,
+    rail_actions: Vec<visual::RailAction>,
     background_configured: bool,
     rail_configured: bool,
+    status_configured: bool,
     baseline_reported: bool,
-    orb: Option<TransientSurface>,
+    prime_launcher: Option<TransientSurface>,
     quick_controls: Option<TransientSurface>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
@@ -210,7 +261,7 @@ struct PrimeShell {
     core: core_client::CoreClient,
     applications: Vec<prime_contracts::ApplicationEntry>,
     selected_application: usize,
-    orb_message: Option<String>,
+    prime_launcher_message: Option<String>,
     quick_lines: Vec<String>,
     quick_power_ready: bool,
     pending_power: Option<SystemPowerAction>,
@@ -248,12 +299,21 @@ where
     Ok(())
 }
 
+fn persistent_baseline_ready(background: bool, rail: bool, status: bool) -> bool {
+    background && rail && status
+}
+
 impl PrimeShell {
     fn report_baseline_once(&mut self) {
-        if self.background_configured && self.rail_configured && !self.baseline_reported {
+        if persistent_baseline_ready(
+            self.background_configured,
+            self.rail_configured,
+            self.status_configured,
+        ) && !self.baseline_reported
+        {
             self.baseline_reported = true;
             eprintln!(
-                "PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail;readiness_unearned"
+                "PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail,status;readiness_unearned"
             );
         }
     }
@@ -264,10 +324,10 @@ impl PrimeShell {
         }
         let layer = self.rail.clone();
         let width = self.rail_width;
-        let height = visual::RAIL_HEIGHT;
+        let height = self.rail_height;
         let theme = self.theme;
-        let active = if self.orb.is_some() {
-            Some(visual::RailAction::Orb)
+        let active = if self.prime_launcher.is_some() {
+            Some(visual::RailAction::Prime)
         } else if self.quick_controls.is_some() {
             Some(visual::RailAction::Status)
         } else {
@@ -277,7 +337,7 @@ impl PrimeShell {
             draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
                 let mut canvas = visual::Canvas::new(bytes, w, h)
                     .expect("Prime rail buffer must match configured dimensions");
-                visual::paint_rail_surface(&mut canvas, &theme, active);
+                visual::paint_rail_surface(&mut canvas, &theme, &self.rail_actions, active);
             })
         {
             eprintln!("prime-shell could not redraw rail: {error}");
@@ -289,11 +349,11 @@ impl PrimeShell {
         if surface == self.rail.wl_surface() {
             Some(ShellSurfaceKind::Rail)
         } else if self
-            .orb
+            .prime_launcher
             .as_ref()
             .is_some_and(|overlay| surface == overlay.layer.wl_surface())
         {
-            Some(ShellSurfaceKind::Orb)
+            Some(ShellSurfaceKind::PrimeLauncher)
         } else if self
             .quick_controls
             .as_ref()
@@ -341,9 +401,13 @@ impl PrimeShell {
         }
     }
 
-    fn toggle_orb(&mut self, queue_handle: &QueueHandle<Self>, source: InteractionSource) {
-        if self.orb.is_some() {
-            self.close_transient(ShellSurfaceKind::Orb, queue_handle, source);
+    fn toggle_prime_launcher(
+        &mut self,
+        queue_handle: &QueueHandle<Self>,
+        source: InteractionSource,
+    ) {
+        if self.prime_launcher.is_some() {
+            self.close_transient(ShellSurfaceKind::PrimeLauncher, queue_handle, source);
             return;
         }
         match self.core.applications() {
@@ -352,7 +416,7 @@ impl PrimeShell {
                 self.selected_application = self
                     .selected_application
                     .min(self.applications.len().saturating_sub(1));
-                self.orb_message = if self.applications.is_empty() {
+                self.prime_launcher_message = if self.applications.is_empty() {
                     Some("NO ADMITTED APPLICATION PROFILES".to_owned())
                 } else {
                     None
@@ -361,21 +425,21 @@ impl PrimeShell {
             Err(error) => {
                 self.applications.clear();
                 self.selected_application = 0;
-                self.orb_message = Some(format!("CORE UNAVAILABLE: {error}"));
+                self.prime_launcher_message = Some(format!("CORE UNAVAILABLE: {error}"));
             }
         }
-        self.orb = Some(self.create_overlay(
+        self.prime_launcher = Some(self.create_overlay(
             queue_handle,
-            ORB_NAMESPACE,
+            PRIME_NAMESPACE,
             Anchor::TOP | Anchor::LEFT,
             (82, 0, 0, 132),
-            visual::ORB_WIDTH,
-            visual::ORB_HEIGHT,
+            visual::PRIME_LAUNCHER_WIDTH,
+            visual::PRIME_LAUNCHER_HEIGHT,
         ));
         self.redraw_rail();
         match source {
-            InteractionSource::Pointer => eprintln!("PRIME_SHELL_ORB_OPEN=pointer"),
-            InteractionSource::Keyboard => eprintln!("PRIME_SHELL_ORB_OPEN=keyboard"),
+            InteractionSource::Pointer => eprintln!("PRIME_SHELL_PRIME_OPEN=pointer"),
+            InteractionSource::Keyboard => eprintln!("PRIME_SHELL_PRIME_OPEN=keyboard"),
         }
     }
 
@@ -427,18 +491,18 @@ impl PrimeShell {
 
     fn activate_selected_application(&mut self) {
         let Some(entry) = self.applications.get(self.selected_application).cloned() else {
-            self.orb_message = Some("NO APPLICATION SELECTED".to_owned());
+            self.prime_launcher_message = Some("NO APPLICATION SELECTED".to_owned());
             return;
         };
         if !entry.launch_ready {
-            self.orb_message = Some(if entry.limitations.is_empty() {
+            self.prime_launcher_message = Some(if entry.limitations.is_empty() {
                 "APPLICATION IS NOT LAUNCH READY".to_owned()
             } else {
                 entry.limitations.join(" | ")
             });
             return;
         }
-        self.orb_message = Some(match self.core.launch(entry.application_id) {
+        self.prime_launcher_message = Some(match self.core.launch(entry.application_id) {
             Ok(()) => format!("LAUNCH ACCEPTED: {}", entry.display_name),
             Err(error) => format!("LAUNCH DENIED: {error}"),
         });
@@ -460,15 +524,15 @@ impl PrimeShell {
         };
     }
 
-    fn redraw_orb(&mut self, queue_handle: &QueueHandle<Self>) {
-        let Some(orb) = self.orb.as_ref() else {
+    fn redraw_prime_launcher(&mut self, queue_handle: &QueueHandle<Self>) {
+        let Some(prime_launcher) = self.prime_launcher.as_ref() else {
             return;
         };
-        let layer = orb.layer.clone();
-        let width = orb.width;
-        let height = orb.height;
-        let progress = orb.progress;
-        if orb.transition.is_some() {
+        let layer = prime_launcher.layer.clone();
+        let width = prime_launcher.width;
+        let height = prime_launcher.height;
+        let progress = prime_launcher.progress;
+        if prime_launcher.transition.is_some() {
             layer
                 .wl_surface()
                 .frame(queue_handle, layer.wl_surface().clone());
@@ -478,19 +542,19 @@ impl PrimeShell {
         if let Err(error) =
             draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
                 let mut canvas = visual::Canvas::new(bytes, w, h)
-                    .expect("Prime Orb buffer must match configured dimensions");
-                visual::paint_orb_surface(
+                    .expect("Prime launcher buffer must match configured dimensions");
+                visual::paint_prime_launcher_surface(
                     &mut canvas,
                     text,
                     &theme,
                     &self.applications,
                     self.selected_application,
-                    self.orb_message.as_deref(),
+                    self.prime_launcher_message.as_deref(),
                     progress,
                 );
             })
         {
-            eprintln!("prime-shell could not redraw Orb: {error}");
+            eprintln!("prime-shell could not redraw Prime launcher: {error}");
             self.exit = true;
         }
     }
@@ -570,11 +634,13 @@ impl PrimeShell {
     ) {
         let transition = motion::Transition::closing(Duration::from_millis(180), Instant::now());
         let armed = match kind {
-            ShellSurfaceKind::Orb => self.orb.as_mut().is_some_and(|surface| {
-                surface.closing = true;
-                surface.transition = Some(transition);
-                true
-            }),
+            ShellSurfaceKind::PrimeLauncher => {
+                self.prime_launcher.as_mut().is_some_and(|surface| {
+                    surface.closing = true;
+                    surface.transition = Some(transition);
+                    true
+                })
+            }
             ShellSurfaceKind::QuickControls => {
                 self.quick_controls.as_mut().is_some_and(|surface| {
                     surface.closing = true;
@@ -592,7 +658,7 @@ impl PrimeShell {
             self.quick_message = None;
             self.redraw_quick_controls(queue_handle);
         } else {
-            self.redraw_orb(queue_handle);
+            self.redraw_prime_launcher(queue_handle);
         }
         match source {
             InteractionSource::Pointer => eprintln!("PRIME_SHELL_TRANSIENT_CLOSE=pointer"),
@@ -606,43 +672,50 @@ impl PrimeShell {
         layer: &LayerSurface,
         configure: &LayerSurfaceConfigure,
     ) -> bool {
-        if let Some(orb) = self.orb.as_mut() {
-            if layer.wl_surface() == orb.layer.wl_surface() {
+        if let Some(prime_launcher) = self.prime_launcher.as_mut() {
+            if layer.wl_surface() == prime_launcher.layer.wl_surface() {
                 let width = NonZeroU32::new(configure.new_size.0)
                     .map(NonZeroU32::get)
-                    .unwrap_or(orb.width);
+                    .unwrap_or(prime_launcher.width);
                 let height = NonZeroU32::new(configure.new_size.1)
                     .map(NonZeroU32::get)
-                    .unwrap_or(orb.height);
-                orb.width = width;
-                orb.height = height;
-                let progress = orb.transition.map_or(orb.progress, |transition| {
-                    transition.sample_at(Instant::now())
-                });
-                orb.progress = progress;
-                if orb.transition.is_some() {
-                    orb.layer
+                    .unwrap_or(prime_launcher.height);
+                prime_launcher.width = width;
+                prime_launcher.height = height;
+                let progress = prime_launcher
+                    .transition
+                    .map_or(prime_launcher.progress, |transition| {
+                        transition.sample_at(Instant::now())
+                    });
+                prime_launcher.progress = progress;
+                if prime_launcher.transition.is_some() {
+                    prime_launcher
+                        .layer
                         .wl_surface()
-                        .frame(queue_handle, orb.layer.wl_surface().clone());
+                        .frame(queue_handle, prime_launcher.layer.wl_surface().clone());
                 }
                 let theme = self.theme;
                 let text = &mut self.text;
-                if let Err(error) =
-                    draw_visual_surface(&mut self.pool, &orb.layer, width, height, |bytes, w, h| {
+                if let Err(error) = draw_visual_surface(
+                    &mut self.pool,
+                    &prime_launcher.layer,
+                    width,
+                    height,
+                    |bytes, w, h| {
                         let mut canvas = visual::Canvas::new(bytes, w, h)
-                            .expect("Prime Orb buffer must match configured dimensions");
-                        visual::paint_orb_surface(
+                            .expect("Prime launcher buffer must match configured dimensions");
+                        visual::paint_prime_launcher_surface(
                             &mut canvas,
                             text,
                             &theme,
                             &self.applications,
                             self.selected_application,
-                            self.orb_message.as_deref(),
+                            self.prime_launcher_message.as_deref(),
                             progress,
                         );
-                    })
-                {
-                    eprintln!("prime-shell could not draw Orb overlay: {error}");
+                    },
+                ) {
+                    eprintln!("prime-shell could not draw Prime launcher overlay: {error}");
                     self.exit = true;
                 }
                 return true;
@@ -734,12 +807,12 @@ impl CompositorHandler for PrimeShell {
     ) {
         let now = Instant::now();
         if self
-            .orb
+            .prime_launcher
             .as_ref()
             .is_some_and(|overlay| surface == overlay.layer.wl_surface())
         {
             let mut should_close = false;
-            if let Some(overlay) = self.orb.as_mut() {
+            if let Some(overlay) = self.prime_launcher.as_mut() {
                 if let Some(transition) = overlay.transition {
                     overlay.progress = transition.sample_at(now);
                     if transition.is_complete_at(now) {
@@ -750,11 +823,11 @@ impl CompositorHandler for PrimeShell {
                 }
             }
             if should_close {
-                self.orb.take();
+                self.prime_launcher.take();
                 self.keyboard_focus = None;
                 self.redraw_rail();
             } else {
-                self.redraw_orb(queue_handle);
+                self.redraw_prime_launcher(queue_handle);
             }
             return;
         }
@@ -850,13 +923,13 @@ impl LayerShellHandler for PrimeShell {
             eprintln!("prime-shell persistent rail surface closed");
             self.exit = true;
         } else if self
-            .orb
+            .prime_launcher
             .as_ref()
             .is_some_and(|overlay| layer.wl_surface() == overlay.layer.wl_surface())
         {
-            self.orb.take();
+            self.prime_launcher.take();
             self.keyboard_focus = None;
-            eprintln!("PRIME_SHELL_ORB_CLOSED=compositor");
+            eprintln!("PRIME_SHELL_PRIME_CLOSED=compositor");
         } else if self
             .quick_controls
             .as_ref()
@@ -915,10 +988,10 @@ impl LayerShellHandler for PrimeShell {
         } else if layer.wl_surface() == self.rail.wl_surface() {
             let height = NonZeroU32::new(configure.new_size.1)
                 .map(NonZeroU32::get)
-                .unwrap_or(visual::RAIL_HEIGHT);
+                .unwrap_or(self.rail_height);
             let theme = self.theme;
-            let active = if self.orb.is_some() {
-                Some(visual::RailAction::Orb)
+            let active = if self.prime_launcher.is_some() {
+                Some(visual::RailAction::Prime)
             } else if self.quick_controls.is_some() {
                 Some(visual::RailAction::Status)
             } else {
@@ -928,7 +1001,7 @@ impl LayerShellHandler for PrimeShell {
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime rail buffer must match configured dimensions");
-                    visual::paint_rail_surface(&mut canvas, &theme, active);
+                    visual::paint_rail_surface(&mut canvas, &theme, &self.rail_actions, active);
                 })
             {
                 eprintln!("prime-shell could not draw rail: {error}");
@@ -937,6 +1010,29 @@ impl LayerShellHandler for PrimeShell {
             }
             self.rail_width = width;
             self.rail_configured = true;
+        } else if layer.wl_surface() == self.status_cluster.wl_surface() {
+            let height = NonZeroU32::new(configure.new_size.1)
+                .map(NonZeroU32::get)
+                .unwrap_or(visual::STATUS_CLUSTER_HEIGHT);
+            let status = if self.core.system_status().is_ok() {
+                visual::TopStatus::Online
+            } else {
+                visual::TopStatus::Limited
+            };
+            let theme = self.theme;
+            let text = &mut self.text;
+            if let Err(error) =
+                draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
+                    let mut canvas = visual::Canvas::new(bytes, w, h)
+                        .expect("Prime status buffer must match configured dimensions");
+                    visual::paint_status_cluster(&mut canvas, text, &theme, status);
+                })
+            {
+                eprintln!("prime-shell could not draw status cluster: {error}");
+                self.exit = true;
+                return;
+            }
+            self.status_configured = true;
         } else {
             eprintln!("prime-shell received configure for an unknown layer surface");
             self.exit = true;
@@ -1052,9 +1148,9 @@ impl KeyboardHandler for PrimeShell {
         event: KeyEvent,
     ) {
         if event.keysym == Keysym::Escape {
-            if matches!(self.keyboard_focus, Some(ShellSurfaceKind::Orb)) {
+            if matches!(self.keyboard_focus, Some(ShellSurfaceKind::PrimeLauncher)) {
                 self.close_transient(
-                    ShellSurfaceKind::Orb,
+                    ShellSurfaceKind::PrimeLauncher,
                     queue_handle,
                     InteractionSource::Keyboard,
                 );
@@ -1068,20 +1164,20 @@ impl KeyboardHandler for PrimeShell {
             return;
         }
 
-        if self.keyboard_focus == Some(ShellSurfaceKind::Orb) {
+        if self.keyboard_focus == Some(ShellSurfaceKind::PrimeLauncher) {
             if event.keysym == Keysym::Up {
                 self.move_application_selection(-1);
-                self.redraw_orb(queue_handle);
+                self.redraw_prime_launcher(queue_handle);
                 return;
             }
             if event.keysym == Keysym::Down {
                 self.move_application_selection(1);
-                self.redraw_orb(queue_handle);
+                self.redraw_prime_launcher(queue_handle);
                 return;
             }
             if event.keysym == Keysym::Return {
                 self.activate_selected_application();
-                self.redraw_orb(queue_handle);
+                self.redraw_prime_launcher(queue_handle);
                 return;
             }
         }
@@ -1103,7 +1199,7 @@ impl KeyboardHandler for PrimeShell {
         }
         if self.keyboard_focus == Some(ShellSurfaceKind::Rail) {
             match character.to_ascii_lowercase() {
-                'o' => self.toggle_orb(queue_handle, InteractionSource::Keyboard),
+                'o' => self.toggle_prime_launcher(queue_handle, InteractionSource::Keyboard),
                 'q' => self.toggle_quick_controls(queue_handle, InteractionSource::Keyboard),
                 _ => {}
             }
@@ -1159,18 +1255,27 @@ impl PointerHandler for PrimeShell {
                 continue;
             }
 
-            if &event.surface == self.rail.wl_surface() {
+            if &event.surface == self.status_cluster.wl_surface() {
+                let layout = visual::StatusClusterLayout::for_surface(
+                    visual::STATUS_CLUSTER_WIDTH,
+                    visual::STATUS_CLUSTER_HEIGHT,
+                );
+                if layout.hit(event.position.0, event.position.1) {
+                    self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
+                }
+            } else if &event.surface == self.rail.wl_surface() {
                 let layout = visual::RailLayout::for_surface(
                     self.rail_width.max(visual::RAIL_WIDTH),
-                    visual::RAIL_HEIGHT,
+                    self.rail_height,
+                    self.rail_actions.len(),
                 );
-                match layout.hit(event.position.0, event.position.1) {
+                match layout.hit(event.position.0, event.position.1, &self.rail_actions) {
                     Some(
-                        visual::RailAction::Orb
+                        visual::RailAction::Prime
                         | visual::RailAction::Apps
                         | visual::RailAction::Search,
                     ) => {
-                        self.toggle_orb(queue_handle, InteractionSource::Pointer);
+                        self.toggle_prime_launcher(queue_handle, InteractionSource::Pointer);
                     }
                     Some(
                         visual::RailAction::Status
@@ -1181,23 +1286,51 @@ impl PointerHandler for PrimeShell {
                     ) => {
                         self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
                     }
+                    Some(visual::RailAction::Application(application_id)) => {
+                        match self.core.applications() {
+                            Ok(projection) => {
+                                if let Some(entry) = projection.applications.into_iter().find(|entry| {
+                                    entry.application_id.to_string() == application_id
+                                }) {
+                                    if entry.launch_ready {
+                                        match self.core.launch(entry.application_id) {
+                                            Ok(()) => eprintln!(
+                                                "PRIME_SHELL_RAIL_APPLICATION_LAUNCH=accepted;application_id={application_id}"
+                                            ),
+                                            Err(error) => eprintln!(
+                                                "PRIME_SHELL_RAIL_APPLICATION_LAUNCH=denied;application_id={application_id};error={error}"
+                                            ),
+                                        }
+                                    } else {
+                                        eprintln!(
+                                            "PRIME_SHELL_RAIL_APPLICATION_LAUNCH=not_ready;application_id={application_id}"
+                                        );
+                                    }
+                                } else {
+                                    eprintln!(
+                                        "PRIME_SHELL_RAIL_APPLICATION_LAUNCH=missing;application_id={application_id}"
+                                    );
+                                }
+                            }
+                            Err(error) => eprintln!(
+                                "PRIME_SHELL_RAIL_APPLICATION_LAUNCH=core_unavailable;application_id={application_id};error={error}"
+                            ),
+                        }
+                    }
                     None => {}
                 }
             } else if self
-                .orb
+                .prime_launcher
                 .as_ref()
-                .is_some_and(|orb| &event.surface == orb.layer.wl_surface())
+                .is_some_and(|prime_launcher| &event.surface == prime_launcher.layer.wl_surface())
             {
-                if let Some(index) = self.orb.as_ref().and_then(|orb| {
-                    visual::OrbLayout::new(orb.width, orb.height).application_at(
-                        event.position.0,
-                        event.position.1,
-                        self.applications.len(),
-                    )
+                if let Some(index) = self.prime_launcher.as_ref().and_then(|prime_launcher| {
+                    visual::PrimeLauncherLayout::new(prime_launcher.width, prime_launcher.height)
+                        .application_at(event.position.0, event.position.1, self.applications.len())
                 }) {
                     self.selected_application = index;
                     self.activate_selected_application();
-                    self.redraw_orb(queue_handle);
+                    self.redraw_prime_launcher(queue_handle);
                 }
             } else {
                 let action = self
@@ -1239,6 +1372,13 @@ mod tests {
         let now = Instant::now();
         let transition = motion::Transition::closing(Duration::from_millis(200), now);
         assert_eq!(transition.sample_at(now + Duration::from_millis(200)), 0.0);
+    }
+
+    #[test]
+    fn persistent_baseline_requires_background_rail_and_status_cluster() {
+        assert!(!persistent_baseline_ready(true, true, false));
+        assert!(!persistent_baseline_ready(true, false, true));
+        assert!(persistent_baseline_ready(true, true, true));
     }
 
     #[test]

@@ -32,16 +32,40 @@ fn base_scene(active: Option<RailAction>) -> Vec<u8> {
     paint_settled_background(&mut desktop, &theme);
     paint_top_status_strip(&mut desktop, &mut text, &theme, TopStatus::Online);
 
-    let mut rail_bytes = vec![0u8; RAIL_WIDTH as usize * RAIL_HEIGHT as usize * 4];
+    let mut status_bytes =
+        vec![0u8; STATUS_CLUSTER_WIDTH as usize * STATUS_CLUSTER_HEIGHT as usize * 4];
     {
-        let mut rail = Canvas::new(&mut rail_bytes, RAIL_WIDTH, RAIL_HEIGHT).unwrap();
-        paint_rail_surface(&mut rail, &theme, active);
+        let mut status = Canvas::new(
+            &mut status_bytes,
+            STATUS_CLUSTER_WIDTH,
+            STATUS_CLUSTER_HEIGHT,
+        )
+        .unwrap();
+        paint_status_cluster(&mut status, &mut text, &theme, TopStatus::Online);
+    }
+    composite(
+        &mut desktop,
+        &mut status_bytes,
+        STATUS_CLUSTER_WIDTH,
+        STATUS_CLUSTER_HEIGHT,
+        (
+            OUTPUT_WIDTH as i32 - STATUS_CLUSTER_WIDTH as i32 - STATUS_CLUSTER_RIGHT_MARGIN,
+            STATUS_CLUSTER_TOP_MARGIN,
+        ),
+    );
+
+    let actions = RailConfiguration::default().actions().to_vec();
+    let rail_height = rail_height_for_items(actions.len());
+    let mut rail_bytes = vec![0u8; RAIL_WIDTH as usize * rail_height as usize * 4];
+    {
+        let mut rail = Canvas::new(&mut rail_bytes, RAIL_WIDTH, rail_height).unwrap();
+        paint_rail_surface(&mut rail, &theme, &actions, active);
     }
     composite(
         &mut desktop,
         &mut rail_bytes,
         RAIL_WIDTH,
-        RAIL_HEIGHT,
+        rail_height,
         (RAIL_LEFT_MARGIN, RAIL_TOP_MARGIN),
     );
     bytes
@@ -106,15 +130,21 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
     let baseline = base_scene(None);
     std::fs::write(format!("{directory}/01-baseline.bgra"), baseline).unwrap();
 
-    let mut orb_scene = base_scene(Some(RailAction::Orb));
+    let mut prime_scene = base_scene(Some(RailAction::Prime));
     {
-        let mut desktop = Canvas::new(&mut orb_scene, OUTPUT_WIDTH, OUTPUT_HEIGHT).unwrap();
-        let mut orb_bytes = vec![0u8; ORB_WIDTH as usize * ORB_HEIGHT as usize * 4];
+        let mut desktop = Canvas::new(&mut prime_scene, OUTPUT_WIDTH, OUTPUT_HEIGHT).unwrap();
+        let mut prime_bytes =
+            vec![0u8; PRIME_LAUNCHER_WIDTH as usize * PRIME_LAUNCHER_HEIGHT as usize * 4];
         {
-            let mut orb = Canvas::new(&mut orb_bytes, ORB_WIDTH, ORB_HEIGHT).unwrap();
+            let mut prime_launcher = Canvas::new(
+                &mut prime_bytes,
+                PRIME_LAUNCHER_WIDTH,
+                PRIME_LAUNCHER_HEIGHT,
+            )
+            .unwrap();
             let mut text = TextSystem::load_system().expect("Prime production font");
-            paint_orb_surface(
-                &mut orb,
+            paint_prime_launcher_surface(
+                &mut prime_launcher,
                 &mut text,
                 &theme,
                 &applications_fixture(),
@@ -125,13 +155,13 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
         }
         composite(
             &mut desktop,
-            &mut orb_bytes,
-            ORB_WIDTH,
-            ORB_HEIGHT,
+            &mut prime_bytes,
+            PRIME_LAUNCHER_WIDTH,
+            PRIME_LAUNCHER_HEIGHT,
             (132, 82),
         );
     }
-    std::fs::write(format!("{directory}/02-orb.bgra"), orb_scene).unwrap();
+    std::fs::write(format!("{directory}/02-prime_launcher.bgra"), prime_scene).unwrap();
 
     let mut quick_scene = base_scene(Some(RailAction::Status));
     {

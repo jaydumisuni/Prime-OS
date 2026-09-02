@@ -28,7 +28,8 @@ cargo build --release --locked -p prime-compositor -p prime-shell
 [[ "$(target/release/prime-shell --font-probe)" == "PRIME_SHELL_FONT_PROBE=Noto Sans" ]] || fail "Prime production font probe failed"
 grep -Fq 'prime.shell.background' crates/prime-shell/src/main.rs
 grep -Fq 'prime.shell.rail' crates/prime-shell/src/main.rs
-grep -Fq 'prime.shell.orb' crates/prime-shell/src/main.rs
+grep -Fq 'prime.shell.prime' crates/prime-shell/src/main.rs
+grep -Fq 'prime.shell.status' crates/prime-shell/src/main.rs
 grep -Fq 'prime.shell.quick-controls' crates/prime-shell/src/main.rs
 grep -Fq 'Prime glass effects are in fallback mode' crates/prime-compositor/src/effects.rs
 printf 'P1_VISUAL_HOST_BUILD=PASS\n'
