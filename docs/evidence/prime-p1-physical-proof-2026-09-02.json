@@ -1,0 +1,116 @@
+{
+  "schema": "prime.p1-physical-proof-checkpoint.v1",
+  "date": "2026-09-02",
+  "branch": "design/p1-first-light-visual",
+  "source_revision": "5b43c5c7639f9e7176ef7eedfd43f5a4a969ad87",
+  "generation_id": "p1-first-light-5b43c5c7639f",
+  "generation_state": "HEALTH_PROVING",
+  "known_good_proven": false,
+  "owner_visual_acceptance": false,
+  "canonical": {
+    "status": "PASS",
+    "qcow2_sha256": "75c4fb22d3460552642ce2a0e46966f358a7dcbe3b655235ba50f2dd45a9d25a",
+    "composefs_digest": "8d0374c1b8f5330c709750a0f16f8fc8bb37b497838f5f9c919e18f3781b8f63cc7dd820353731ed6657bc4e6f81addc4b0dab3135e07b1467bf0f8302a5085a",
+    "uefi": "OVMF",
+    "mechanical_shell_ready": true
+  },
+  "recovery": {
+    "status": "PASS",
+    "isolated_ovmf_boot": true,
+    "interactive_console": true,
+    "recovery_uki_sha256": "608e17eab499d4a130241612ad1b23280b32e5c24580cb6eb76abc36cc3beb76",
+    "poweroff_action_proven": false
+  },
+  "physical_graphics": {
+    "status": "PASS",
+    "gpu": "Intel UHD 630",
+    "drm": "/dev/dri/card1",
+    "connector": "HDMI-A-1",
+    "mode": "1920x1080@60Hz",
+    "glass_effects": "ready",
+    "glass_fallback": false
+  },
+  "final_readiness": {
+    "phase": "SHELL_READY",
+    "frames_queued": 739,
+    "frames_submitted": 739,
+    "mapped_surface_frames_submitted": 737,
+    "clients_accepted": 6,
+    "input_events_seen": 1114
+  },
+  "xdg": {
+    "toplevel": "PASS",
+    "popup": "PASS",
+    "invalid_client_isolation": "PASS"
+  },
+  "input": {
+    "pointer_orb": "PASS",
+    "pointer_quick_controls": "PASS",
+    "keyboard_quick_controls": "PASS",
+    "keyboard_navigation_close": "PASS",
+    "post_suspend_pointer_quick_controls": "PASS"
+  },
+  "output_revalidation": {
+    "drm_change_fail_closed": "PASS",
+    "returned_to_shell_ready": "PASS",
+    "physical_cable_hotplug": "BLOCKED_EXTERNAL",
+    "dp": "BLOCKED_EXTERNAL"
+  },
+  "suspend_resume": {
+    "deep_s3": "PASS",
+    "rtc_auto_wake_seconds": 10,
+    "prime_survived_without_restart": true,
+    "post_resume_shell_ready": true,
+    "wifi_reconnected": true
+  },
+  "performance": {
+    "idle_frame_delta": 0,
+    "idle_cpu_compositor_percent": 0.0,
+    "idle_cpu_shell_percent": 0.0,
+    "active_compositor_average_percent": 0.13,
+    "active_compositor_peak_sample_percent": 1.0
+  },
+  "usb": {
+    "usb2_attached_paths": {
+      "1-4": "RTL8188EUS Wi-Fi",
+      "1-5": "Logitech M185 receiver",
+      "1-6": "HP Elite Keyboard",
+      "1-8": "Xiaomi ADB"
+    },
+    "usb3_root_hub": "10Gbit/s xHCI 8 ports",
+    "superspeed_device": "BLOCKED_EXTERNAL",
+    "removable_storage": "ABSENT"
+  },
+  "network": {
+    "wifi": "PASS",
+    "ssid": "TTG HOME",
+    "ethernet_driver": "r8169",
+    "ethernet_carrier": "BLOCKED_EXTERNAL"
+  },
+  "audio": {
+    "hdmi_stream_path": "PASS",
+    "analog_stream_path": "PASS",
+    "audibility": "PENDING_EXTERNAL"
+  },
+  "thermals_celsius": {
+    "x86_pkg": 42,
+    "pch": 46,
+    "acpi_high": 30,
+    "acpi_low": 27.8
+  },
+  "restoration": {
+    "gdm": "PASS",
+    "xorg": "PASS",
+    "xfce4_session": "PASS",
+    "prime_temporary_compositor_inactive": true
+  },
+  "remaining_gates": {
+    "usb3_superspeed": "BLOCKED_EXTERNAL",
+    "ethernet_carrier": "BLOCKED_EXTERNAL",
+    "audible_audio": "PENDING_EXTERNAL",
+    "physical_display_hotplug_dp": "BLOCKED_EXTERNAL",
+    "owner_visual_acceptance": "PENDING_OWNER",
+    "known_good_promotion": "NOT_EARNED"
+  },
+  "transient_evidence_root": "/var/tmp/prime-p1-visual-proof-20260902T144904Z/physical/"
+}

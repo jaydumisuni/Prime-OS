@@ -606,7 +606,7 @@ cargo build --release --locked -p prime-compositor -p prime-shell
 
 Expected: PASS.
 
-- [ ] **Step 3: Run the existing canonical P1 local proof unchanged first**
+- [x] **Step 3: Run the existing canonical P1 local proof unchanged first**
 
 Launch `tools/prove-p1-local.sh` through the already-proven user-systemd + sudo execution lane with a unique `PRIME_P1_WORK_ROOT`. Require:
 
@@ -616,7 +616,7 @@ P1_LOCAL_PROOF=PASS
 
 and persisted `HEALTH_PROVING`, `SHELL_READY`, mapped frame retirement, clean QCOW2/UEFI evidence. If the visual implementation invalidates mechanical proof, stop and fix the regression before any visual acceptance attempt.
 
-- [ ] **Step 4: Open the physical KRATOS Prime graphics window**
+- [x] **Step 4: Open the physical KRATOS Prime graphics window**
 
 Preserve normal desktop recovery path first. Stop GDM only for the bounded proof window, move to the Prime tty/logind session, launch the exact branch `prime-compositor`, then `prime-shell`. Keep Oracle workstation connectivity alive.
 
@@ -635,7 +635,7 @@ Verify readiness JSON reaches:
 
 and **does not** contain `Prime glass effects are in fallback mode`.
 
-- [ ] **Step 5: Re-run physical XDG and input evidence**
+- [x] **Step 5: Re-run physical XDG and input evidence**
 
 Run the disposable XDG toplevel+popup proof against the live Prime compositor and require:
 
@@ -647,7 +647,7 @@ PRIME_P1_PHYSICAL_XDG_CLIENT=PASS
 
 Exercise keyboard/pointer Orb and quick-controls paths and verify input counters advance. Re-run the malformed-client isolation probe and prove the offending client is rejected without killing compositor/Shell.
 
-- [ ] **Step 6: Capture performance/effect evidence**
+- [x] **Step 6: Capture performance/effect evidence**
 
 During Orb open/close and quick-controls animation, record compositor process CPU, frame/readiness counters, and absence of effect fallback/errors. Confirm idle desktop does not continuously increment queued/submitted frames when no client/content changes require redraw.
 
@@ -661,11 +661,15 @@ Owner explicitly judges: startup field, THETECHGUY dark/cyan/violet palette, gla
 
 Do **not** infer approval from screenshots or mechanical readiness. Owner acceptance must be explicit.
 
-- [ ] **Step 8: Restore KRATOS desktop after review**
+- [x] **Step 8: Restore KRATOS desktop after review**
+
+> 2026-09-02 checkpoint: KRATOS was restored before final owner acceptance at the owner's later request; GDM/Xorg/XFCE restoration is proven in `docs/PRIME_P1_PHYSICAL_PROOF_2026-09-02.md`.
 
 Stop temporary Prime Shell/compositor units and restore GDM/XFCE. Verify `gdm.service` active and Xorg/XFCE present so the workstation is not left at a TTY or stale framebuffer.
 
 - [ ] **Step 9: Freeze and push accepted visual candidate**
+
+> Evidence checkpoint may be committed/pushed before owner acceptance, but this step remains open until the owner explicitly accepts the physical visual candidate.
 
 After owner acceptance and clean regression evidence:
 
