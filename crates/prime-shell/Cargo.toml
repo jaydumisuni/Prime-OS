@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+fontdb.workspace = true
+fontdue.workspace = true
 prime-contracts.workspace = true
 serde_json.workspace = true
 smithay-client-toolkit = { workspace = true, features = ["xkbcommon"] }

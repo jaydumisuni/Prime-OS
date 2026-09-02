@@ -1,7 +1,9 @@
 pub(crate) mod primitives;
+pub(crate) mod text;
 pub(crate) mod theme;
 
-pub(crate) use primitives::{Argb, Canvas, Rect};
+pub(crate) use primitives::{draw_icon, Argb, Canvas, Icon, Rect};
+pub(crate) use text::{coverage_color, preferred_families, FontWeight, TextStyle, TextSystem};
 pub(crate) use theme::Theme;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -660,5 +662,82 @@ mod tests {
     fn render_context_defaults_to_prime_dark_theme() {
         let context = RenderContext::default();
         assert_eq!(context.theme, Theme::prime_dark());
+    }
+
+    #[test]
+    fn font_family_preference_is_noto_then_dejavu() {
+        assert_eq!(preferred_families(), ["Noto Sans", "DejaVu Sans"]);
+    }
+
+    #[test]
+    fn glyph_coverage_scales_text_alpha() {
+        let color = Argb::from_u32(0xfff8fafc);
+        assert_eq!(coverage_color(color, 128).a, 128);
+        assert_eq!(coverage_color(color, 0), Argb::TRANSPARENT);
+        assert_eq!(coverage_color(color, 255), color);
+    }
+
+    #[test]
+    fn text_styles_distinguish_regular_and_semibold_hierarchy() {
+        assert_eq!(TextStyle::body().weight, FontWeight::Regular);
+        assert_eq!(TextStyle::title().weight, FontWeight::Semibold);
+        assert!(TextStyle::title().size_px > TextStyle::body().size_px);
+    }
+
+    #[test]
+    fn system_text_rasterizes_antialiased_prime_copy() {
+        let mut text = TextSystem::load_system().expect("KRATOS must provide a Prime Shell font");
+        assert!(["Noto Sans", "DejaVu Sans"].contains(&text.family_name()));
+        let metrics = text.measure("Prime", TextStyle::body());
+        assert!(metrics.width > 0);
+        assert!(metrics.height > 0);
+
+        let mut bytes = vec![0u8; 320 * 80 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 320, 80).unwrap();
+        text.draw(
+            &mut canvas,
+            (8, 8),
+            "Prime",
+            TextStyle::body(),
+            Argb::from_u32(0xfff8fafc),
+        );
+        let painted = (0..80)
+            .flat_map(|y| (0..320).map(move |x| (x, y)))
+            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|pixel| pixel.a > 0))
+            .count();
+        assert!(painted > 32);
+    }
+
+    #[test]
+    fn every_prime_system_icon_renders_geometry() {
+        let icons = [
+            Icon::Orb,
+            Icon::Applications,
+            Icon::Status,
+            Icon::Network,
+            Icon::Audio,
+            Icon::Storage,
+            Icon::Health,
+            Icon::Restart,
+            Icon::Power,
+            Icon::Search,
+            Icon::Chevron,
+            Icon::Blocked,
+        ];
+        for icon in icons {
+            let mut bytes = vec![0u8; 32 * 32 * 4];
+            let mut canvas = Canvas::new(&mut bytes, 32, 32).unwrap();
+            draw_icon(
+                &mut canvas,
+                Rect::new(0, 0, 32, 32),
+                icon,
+                Argb::from_u32(0xff22d3ee),
+            );
+            let painted = (0..32)
+                .flat_map(|y| (0..32).map(move |x| (x, y)))
+                .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|pixel| pixel.a > 0))
+                .count();
+            assert!(painted > 4, "{icon:?} produced no meaningful geometry");
+        }
     }
 }

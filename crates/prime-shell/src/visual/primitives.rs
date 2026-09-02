@@ -438,3 +438,250 @@ fn rounded_contains(rect: Rect, radius: i32, x: i32, y: i32) -> bool {
     let dy = i64::from(y - center_y);
     dx * dx + dy * dy <= i64::from(radius) * i64::from(radius)
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Icon {
+    Orb,
+    Applications,
+    Status,
+    Network,
+    Audio,
+    Storage,
+    Health,
+    Restart,
+    Power,
+    Search,
+    Chevron,
+    Blocked,
+}
+
+pub(crate) fn draw_icon(canvas: &mut Canvas<'_>, rect: Rect, icon: Icon, color: Argb) {
+    let center_x = rect.x.saturating_add((rect.width / 2) as i32);
+    let center_y = rect.y.saturating_add((rect.height / 2) as i32);
+    let scale = rect.width.min(rect.height).max(8);
+    let stroke = (scale / 10).max(1);
+    let radius = (scale / 3).max(2);
+
+    match icon {
+        Icon::Orb => {
+            canvas.circle(center_x, center_y, radius, color.with_alpha(58));
+            canvas.circle(center_x, center_y, (scale / 8).max(2), color);
+            canvas.line(
+                (center_x - radius as i32, center_y),
+                (center_x + radius as i32, center_y),
+                stroke,
+                color.with_alpha(180),
+            );
+        }
+        Icon::Applications => {
+            let cell = (scale / 5).max(3);
+            let gap = (scale / 8).max(2);
+            let total = cell * 2 + gap;
+            let start_x = center_x - (total / 2) as i32;
+            let start_y = center_y - (total / 2) as i32;
+            for row in 0..2 {
+                for column in 0..2 {
+                    canvas.fill_rounded_rect(
+                        Rect::new(
+                            start_x + (column * (cell + gap)) as i32,
+                            start_y + (row * (cell + gap)) as i32,
+                            cell,
+                            cell,
+                        ),
+                        (cell / 3).max(1),
+                        color,
+                    );
+                }
+            }
+        }
+        Icon::Status => {
+            for offset in [-1, 0, 1] {
+                let y = center_y + offset * (scale as i32 / 5).max(3);
+                canvas.line(
+                    (center_x - radius as i32, y),
+                    (center_x + radius as i32, y),
+                    stroke,
+                    color.with_alpha(180),
+                );
+                canvas.circle(center_x + offset * 4, y, stroke.max(1), color);
+            }
+        }
+        Icon::Network => {
+            let bottom = center_y + radius as i32 / 2;
+            canvas.circle(center_x, bottom, stroke.max(1), color);
+            canvas.line(
+                (center_x - radius as i32, center_y - radius as i32 / 2),
+                (center_x, bottom - 3),
+                stroke,
+                color.with_alpha(150),
+            );
+            canvas.line(
+                (center_x + radius as i32, center_y - radius as i32 / 2),
+                (center_x, bottom - 3),
+                stroke,
+                color.with_alpha(150),
+            );
+            canvas.line(
+                (center_x - radius as i32 / 2, center_y),
+                (center_x + radius as i32 / 2, center_y),
+                stroke,
+                color,
+            );
+        }
+        Icon::Audio => {
+            let body = (scale / 5).max(3);
+            canvas.fill_rounded_rect(
+                Rect::new(
+                    center_x - radius as i32,
+                    center_y - body as i32 / 2,
+                    body,
+                    body,
+                ),
+                1,
+                color,
+            );
+            canvas.line(
+                (center_x - radius as i32 + body as i32, center_y),
+                (center_x, center_y - radius as i32 / 2),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x - radius as i32 + body as i32, center_y),
+                (center_x, center_y + radius as i32 / 2),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x + 3, center_y - radius as i32 / 2),
+                (center_x + radius as i32, center_y),
+                stroke,
+                color.with_alpha(180),
+            );
+            canvas.line(
+                (center_x + radius as i32, center_y),
+                (center_x + 3, center_y + radius as i32 / 2),
+                stroke,
+                color.with_alpha(180),
+            );
+        }
+        Icon::Storage => {
+            canvas.stroke_rounded_rect(
+                Rect::new(
+                    center_x - radius as i32,
+                    center_y - radius as i32 / 2,
+                    radius * 2,
+                    radius,
+                ),
+                (scale / 10).max(2),
+                stroke,
+                color,
+            );
+            canvas.circle(center_x + radius as i32 / 2, center_y, stroke.max(1), color);
+        }
+        Icon::Health => {
+            canvas.line(
+                (center_x - radius as i32, center_y),
+                (center_x - radius as i32 / 3, center_y),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x - radius as i32 / 3, center_y),
+                (center_x, center_y - radius as i32 / 2),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x, center_y - radius as i32 / 2),
+                (center_x + radius as i32 / 3, center_y + radius as i32 / 2),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x + radius as i32 / 3, center_y + radius as i32 / 2),
+                (center_x + radius as i32, center_y),
+                stroke,
+                color,
+            );
+        }
+        Icon::Restart => {
+            canvas.line(
+                (center_x - radius as i32, center_y),
+                (center_x - radius as i32 / 2, center_y - radius as i32),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x - radius as i32 / 2, center_y - radius as i32),
+                (center_x + radius as i32 / 2, center_y - radius as i32),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x + radius as i32 / 2, center_y - radius as i32),
+                (center_x + radius as i32, center_y),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x + radius as i32, center_y),
+                (center_x + radius as i32 / 3, center_y + radius as i32),
+                stroke,
+                color.with_alpha(190),
+            );
+            canvas.line(
+                (center_x - radius as i32, center_y),
+                (center_x - radius as i32 + 5, center_y - 5),
+                stroke,
+                color,
+            );
+        }
+        Icon::Power => {
+            canvas.circle(center_x, center_y + 2, radius, color.with_alpha(90));
+            canvas.line(
+                (center_x, center_y - radius as i32 - 2),
+                (center_x, center_y + 2),
+                stroke.max(2),
+                color,
+            );
+        }
+        Icon::Search => {
+            canvas.circle(
+                center_x - 3,
+                center_y - 3,
+                (scale / 5).max(3),
+                color.with_alpha(110),
+            );
+            canvas.line(
+                (center_x + 2, center_y + 2),
+                (center_x + radius as i32, center_y + radius as i32),
+                stroke,
+                color,
+            );
+        }
+        Icon::Chevron => {
+            canvas.line(
+                (center_x - radius as i32 / 2, center_y - radius as i32),
+                (center_x + radius as i32 / 2, center_y),
+                stroke,
+                color,
+            );
+            canvas.line(
+                (center_x + radius as i32 / 2, center_y),
+                (center_x - radius as i32 / 2, center_y + radius as i32),
+                stroke,
+                color,
+            );
+        }
+        Icon::Blocked => {
+            canvas.circle(center_x, center_y, radius, color.with_alpha(90));
+            canvas.line(
+                (center_x - radius as i32, center_y + radius as i32),
+                (center_x + radius as i32, center_y - radius as i32),
+                stroke.max(2),
+                color,
+            );
+        }
+    }
+}
