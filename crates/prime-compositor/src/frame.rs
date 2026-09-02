@@ -2,9 +2,16 @@ use crate::Runtime;
 use smithay::{
     backend::{
         drm::compositor::{FrameFlags, PrimaryPlaneElement},
-        renderer::{Color32F, Renderer},
+        renderer::{
+            element::{render_elements, surface::WaylandSurfaceRenderElement, Element},
+            gles::GlesRenderer,
+            Color32F, Renderer,
+        },
     },
-    desktop::{layer_map_for_output, space::space_render_elements},
+    desktop::{
+        layer_map_for_output,
+        space::{space_render_elements, SpaceRenderElements},
+    },
     reexports::drm::control::crtc,
 };
 use std::{
@@ -12,6 +19,12 @@ use std::{
     io,
     time::{Duration, Instant},
 };
+
+render_elements! {
+    PrimeRenderElement<=GlesRenderer>;
+    Space=SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
+    Glass=crate::effects::GlassBackdropElement,
+}
 
 pub(crate) const FRAME_NOT_PROVEN_LIMITATION: &str =
     "Mapped-surface frame lifecycle is not proven until a queued frame retires on matching DRM vblank";
@@ -79,13 +92,29 @@ pub(crate) fn try_queue(runtime: &mut Runtime) -> Result<(), Box<dyn Error>> {
         runtime.persist_best_effort();
     }
 
-    let elements = space_render_elements(
+    let base_elements = space_render_elements(
         &mut runtime._renderer,
         [&runtime.protocols.space],
         &runtime._output,
         1.0,
     )?;
-    let had_mapped_surface = !elements.is_empty();
+    let had_mapped_surface = !base_elements.is_empty();
+    let mut glass_elements = runtime
+        .effects
+        .as_ref()
+        .map(|effects| effects.elements_for_output(&runtime._output))
+        .unwrap_or_default();
+    let mut elements = Vec::with_capacity(base_elements.len() + glass_elements.len());
+    for element in base_elements {
+        let matching_glass = glass_elements
+            .iter()
+            .position(|(surface_id, _)| surface_id == element.id())
+            .map(|index| glass_elements.swap_remove(index).1);
+        elements.push(PrimeRenderElement::Space(element));
+        if let Some(glass) = matching_glass {
+            elements.push(PrimeRenderElement::Glass(glass));
+        }
+    }
     let result = runtime._drm_output.render_frame(
         &mut runtime._renderer,
         &elements,

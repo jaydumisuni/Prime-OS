@@ -1,3 +1,4 @@
+mod effects;
 mod frame;
 mod input;
 mod output;
@@ -95,6 +96,7 @@ pub(crate) struct Runtime {
     _drm_output: output::PrimeDrmOutput,
     output_manager: output::PrimeDrmOutputManager,
     _renderer: GlesRenderer,
+    effects: Option<effects::EffectsState>,
     frame: frame::FrameState,
     _session: LibSeatSession,
     readiness_path: PathBuf,
@@ -249,6 +251,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         mode.size.w, mode.size.h, mode.refresh
     );
 
+    let effects = match effects::EffectsState::new(&mut renderer, mode.size) {
+        Ok(effects) => {
+            eprintln!("PRIME_GLASS_EFFECTS=ready");
+            Some(effects)
+        }
+        Err(error) => {
+            eprintln!("prime-compositor glass effects fallback: {error}");
+            None
+        }
+    };
+
     let protocols = protocols::ProtocolState::new(&display_handle, &physical_output, &seat_name)?;
 
     let udev_backend = UdevBackend::new(&seat_name)?;
@@ -357,6 +370,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         runtime.persist_best_effort();
     })?;
 
+    let glass_effects_ready = effects.is_some();
     let mut runtime = Runtime {
         display_handle,
         protocols,
@@ -364,6 +378,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         _drm_output: drm_output,
         output_manager,
         _renderer: renderer,
+        effects,
         frame: frame::FrameState::new(),
         _session: session,
         readiness_path,
@@ -397,12 +412,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             clients_accepted: 0,
             input_events_seen: 0,
             last_udev_event: None,
-            limitations: vec![
-                "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
-                "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
-                frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
-                shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
-            ],
+            limitations: {
+                let mut limitations = vec![
+                    "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline".to_owned(),
+                    "Absolute-position pointer events are not routed in the P1 relative-pointer baseline".to_owned(),
+                    frame::FRAME_NOT_PROVEN_LIMITATION.to_owned(),
+                    shell::SHELL_NOT_PROVEN_LIMITATION.to_owned(),
+                ];
+                if !glass_effects_ready {
+                    limitations.push(effects::GLASS_FALLBACK_LIMITATION.to_owned());
+                }
+                limitations
+            },
         },
     };
     runtime.persist()?;
