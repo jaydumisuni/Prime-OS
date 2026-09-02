@@ -1,0 +1,440 @@
+use std::{error::Error, fmt};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Argb {
+    pub(crate) a: u8,
+    pub(crate) r: u8,
+    pub(crate) g: u8,
+    pub(crate) b: u8,
+}
+
+impl Argb {
+    pub(crate) const TRANSPARENT: Self = Self {
+        a: 0,
+        r: 0,
+        g: 0,
+        b: 0,
+    };
+
+    pub(crate) const fn from_u32(value: u32) -> Self {
+        Self {
+            a: ((value >> 24) & 0xff) as u8,
+            r: ((value >> 16) & 0xff) as u8,
+            g: ((value >> 8) & 0xff) as u8,
+            b: (value & 0xff) as u8,
+        }
+    }
+
+    pub(crate) fn over(self, destination: Self) -> Self {
+        let source_alpha = u32::from(self.a);
+        let destination_alpha = u32::from(destination.a);
+        let inverse_source = 255 - source_alpha;
+        let output_alpha = source_alpha + (destination_alpha * inverse_source + 127) / 255;
+        if output_alpha == 0 {
+            return Self::TRANSPARENT;
+        }
+
+        Self {
+            a: output_alpha.min(255) as u8,
+            r: composite_channel(
+                self.r,
+                destination.r,
+                source_alpha,
+                destination_alpha,
+                inverse_source,
+                output_alpha,
+            ),
+            g: composite_channel(
+                self.g,
+                destination.g,
+                source_alpha,
+                destination_alpha,
+                inverse_source,
+                output_alpha,
+            ),
+            b: composite_channel(
+                self.b,
+                destination.b,
+                source_alpha,
+                destination_alpha,
+                inverse_source,
+                output_alpha,
+            ),
+        }
+    }
+
+    fn with_alpha(self, alpha: u8) -> Self {
+        Self { a: alpha, ..self }
+    }
+
+    fn mix(self, other: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        Self {
+            a: lerp_channel(self.a, other.a, t),
+            r: lerp_channel(self.r, other.r, t),
+            g: lerp_channel(self.g, other.g, t),
+            b: lerp_channel(self.b, other.b, t),
+        }
+    }
+
+    fn to_premultiplied_u32(self) -> u32 {
+        let alpha = u32::from(self.a);
+        let premultiply = |channel: u8| (u32::from(channel) * alpha + 127) / 255;
+        (alpha << 24)
+            | (premultiply(self.r) << 16)
+            | (premultiply(self.g) << 8)
+            | premultiply(self.b)
+    }
+
+    fn from_premultiplied_u32(value: u32) -> Self {
+        let alpha = ((value >> 24) & 0xff) as u8;
+        if alpha == 0 {
+            return Self::TRANSPARENT;
+        }
+        let unpremultiply = |channel: u8| {
+            ((u32::from(channel) * 255 + u32::from(alpha) / 2) / u32::from(alpha)).min(255) as u8
+        };
+        Self {
+            a: alpha,
+            r: unpremultiply(((value >> 16) & 0xff) as u8),
+            g: unpremultiply(((value >> 8) & 0xff) as u8),
+            b: unpremultiply((value & 0xff) as u8),
+        }
+    }
+}
+
+fn composite_channel(
+    source: u8,
+    destination: u8,
+    source_alpha: u32,
+    destination_alpha: u32,
+    inverse_source: u32,
+    output_alpha: u32,
+) -> u8 {
+    let source_premultiplied = u32::from(source) * source_alpha;
+    let destination_premultiplied =
+        (u32::from(destination) * destination_alpha * inverse_source + 127) / 255;
+    ((source_premultiplied + destination_premultiplied + output_alpha / 2) / output_alpha).min(255)
+        as u8
+}
+
+fn lerp_channel(start: u8, end: u8, t: f32) -> u8 {
+    (f32::from(start) + (f32::from(end) - f32::from(start)) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Rect {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl Rect {
+    pub(crate) const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub(crate) fn contains(self, x: i32, y: i32) -> bool {
+        let right = i64::from(self.x) + i64::from(self.width);
+        let bottom = i64::from(self.y) + i64::from(self.height);
+        i64::from(x) >= i64::from(self.x)
+            && i64::from(y) >= i64::from(self.y)
+            && i64::from(x) < right
+            && i64::from(y) < bottom
+    }
+
+    pub(crate) fn center_x(self) -> f64 {
+        f64::from(self.x) + f64::from(self.width) / 2.0
+    }
+
+    pub(crate) fn center_y(self) -> f64 {
+        f64::from(self.y) + f64::from(self.height) / 2.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanvasError {
+    SizeOverflow,
+    BufferTooSmall,
+}
+
+impl fmt::Display for CanvasError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SizeOverflow => formatter.write_str("Prime canvas dimensions overflow"),
+            Self::BufferTooSmall => {
+                formatter.write_str("Prime canvas buffer is smaller than its declared dimensions")
+            }
+        }
+    }
+}
+
+impl Error for CanvasError {}
+
+pub(crate) struct Canvas<'a> {
+    bytes: &'a mut [u8],
+    width: u32,
+    height: u32,
+}
+
+impl<'a> Canvas<'a> {
+    pub(crate) fn new(bytes: &'a mut [u8], width: u32, height: u32) -> Result<Self, CanvasError> {
+        let required = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or(CanvasError::SizeOverflow)?;
+        if bytes.len() < required {
+            return Err(CanvasError::BufferTooSmall);
+        }
+        Ok(Self {
+            bytes,
+            width,
+            height,
+        })
+    }
+
+    pub(crate) fn clear(&mut self) {
+        let required = self.width as usize * self.height as usize * 4;
+        self.bytes[..required].fill(0);
+    }
+
+    pub(crate) fn pixel(&self, x: i32, y: i32) -> Option<Argb> {
+        let offset = self.offset(x, y)?;
+        let value = u32::from_le_bytes(self.bytes[offset..offset + 4].try_into().ok()?);
+        Some(Argb::from_premultiplied_u32(value))
+    }
+
+    pub(crate) fn blend_pixel(&mut self, x: i32, y: i32, color: Argb) {
+        let Some(destination) = self.pixel(x, y) else {
+            return;
+        };
+        self.replace_pixel(x, y, color.over(destination));
+    }
+
+    pub(crate) fn fill_rect(&mut self, rect: Rect, color: Argb) {
+        let (start_x, start_y, end_x, end_y) = self.clamped_bounds(rect);
+        for y in start_y..end_y {
+            for x in start_x..end_x {
+                self.blend_pixel(x, y, color);
+            }
+        }
+    }
+
+    pub(crate) fn fill_rounded_rect(&mut self, rect: Rect, radius: u32, color: Argb) {
+        self.paint_rounded_region(rect, radius, None, color);
+    }
+
+    pub(crate) fn stroke_rounded_rect(
+        &mut self,
+        rect: Rect,
+        radius: u32,
+        thickness: u32,
+        color: Argb,
+    ) {
+        if thickness == 0 || rect.width == 0 || rect.height == 0 {
+            return;
+        }
+        let inset = thickness.min(rect.width / 2).min(rect.height / 2);
+        let inner = (rect.width > inset * 2 && rect.height > inset * 2).then(|| {
+            Rect::new(
+                rect.x.saturating_add(inset as i32),
+                rect.y.saturating_add(inset as i32),
+                rect.width - inset * 2,
+                rect.height - inset * 2,
+            )
+        });
+        self.paint_rounded_region(
+            rect,
+            radius,
+            inner.map(|r| (r, radius.saturating_sub(inset))),
+            color,
+        );
+    }
+
+    pub(crate) fn vertical_gradient(&mut self, rect: Rect, top: Argb, bottom: Argb) {
+        if rect.height == 0 {
+            return;
+        }
+        for row in 0..rect.height {
+            let t = if rect.height == 1 {
+                0.0
+            } else {
+                row as f32 / (rect.height - 1) as f32
+            };
+            self.fill_rect(
+                Rect::new(rect.x, rect.y.saturating_add(row as i32), rect.width, 1),
+                top.mix(bottom, t),
+            );
+        }
+    }
+
+    pub(crate) fn radial_glow(&mut self, center_x: f32, center_y: f32, radius: f32, color: Argb) {
+        if radius <= 0.0 {
+            return;
+        }
+        let min_x = (center_x - radius).floor() as i32;
+        let max_x = (center_x + radius).ceil() as i32;
+        let min_y = (center_y - radius).floor() as i32;
+        let max_y = (center_y + radius).ceil() as i32;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let dx = x as f32 + 0.5 - center_x;
+                let dy = y as f32 + 0.5 - center_y;
+                let distance = (dx * dx + dy * dy).sqrt();
+                if distance <= radius {
+                    let falloff = 1.0 - distance / radius;
+                    let alpha = (f32::from(color.a) * falloff * falloff).round() as u8;
+                    self.blend_pixel(x, y, color.with_alpha(alpha));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn circle(&mut self, center_x: i32, center_y: i32, radius: u32, color: Argb) {
+        let radius = radius as i32;
+        let radius_squared = i64::from(radius) * i64::from(radius);
+        for y in center_y.saturating_sub(radius)..=center_y.saturating_add(radius) {
+            for x in center_x.saturating_sub(radius)..=center_x.saturating_add(radius) {
+                let dx = i64::from(x - center_x);
+                let dy = i64::from(y - center_y);
+                if dx * dx + dy * dy <= radius_squared {
+                    self.blend_pixel(x, y, color);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn line(&mut self, start: (i32, i32), end: (i32, i32), thickness: u32, color: Argb) {
+        let (mut x0, mut y0) = start;
+        let (x1, y1) = end;
+        let dx = (x1 - x0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let dy = -(y1 - y0).abs();
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut error = dx + dy;
+        let radius = thickness.saturating_sub(1) / 2;
+
+        loop {
+            if radius == 0 {
+                self.blend_pixel(x0, y0, color);
+            } else {
+                self.circle(x0, y0, radius, color);
+            }
+            if x0 == x1 && y0 == y1 {
+                break;
+            }
+            let doubled = error * 2;
+            if doubled >= dy {
+                error += dy;
+                x0 += sx;
+            }
+            if doubled <= dx {
+                error += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    fn paint_rounded_region(
+        &mut self,
+        outer: Rect,
+        outer_radius: u32,
+        excluded_inner: Option<(Rect, u32)>,
+        color: Argb,
+    ) {
+        let radius = outer_radius.min(outer.width / 2).min(outer.height / 2) as i32;
+        let (start_x, start_y, end_x, end_y) = self.clamped_bounds(outer);
+        for y in start_y..end_y {
+            for x in start_x..end_x {
+                if !rounded_contains(outer, radius, x, y) {
+                    continue;
+                }
+                if excluded_inner.is_some_and(|(inner, inner_radius)| {
+                    rounded_contains(inner, inner_radius as i32, x, y)
+                }) {
+                    continue;
+                }
+                self.blend_pixel(x, y, color);
+            }
+        }
+    }
+
+    fn replace_pixel(&mut self, x: i32, y: i32, color: Argb) {
+        let Some(offset) = self.offset(x, y) else {
+            return;
+        };
+        self.bytes[offset..offset + 4].copy_from_slice(&color.to_premultiplied_u32().to_le_bytes());
+    }
+
+    fn offset(&self, x: i32, y: i32) -> Option<usize> {
+        if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
+            return None;
+        }
+        (y as usize)
+            .checked_mul(self.width as usize)
+            .and_then(|row| row.checked_add(x as usize))
+            .and_then(|pixel| pixel.checked_mul(4))
+    }
+
+    fn clamped_bounds(&self, rect: Rect) -> (i32, i32, i32, i32) {
+        let start_x = rect.x.max(0).min(self.width as i32);
+        let start_y = rect.y.max(0).min(self.height as i32);
+        let end_x = rect
+            .x
+            .saturating_add(rect.width as i32)
+            .max(0)
+            .min(self.width as i32);
+        let end_y = rect
+            .y
+            .saturating_add(rect.height as i32)
+            .max(0)
+            .min(self.height as i32);
+        (start_x, start_y, end_x, end_y)
+    }
+}
+
+fn rounded_contains(rect: Rect, radius: i32, x: i32, y: i32) -> bool {
+    if radius <= 0 {
+        return rect.contains(x, y);
+    }
+    let radius = radius
+        .min((rect.width / 2) as i32)
+        .min((rect.height / 2) as i32);
+    let left = rect.x;
+    let top = rect.y;
+    let right = rect.x.saturating_add(rect.width as i32);
+    let bottom = rect.y.saturating_add(rect.height as i32);
+    if x < left || y < top || x >= right || y >= bottom {
+        return false;
+    }
+
+    let inner_left = left + radius;
+    let inner_right = right - radius;
+    let inner_top = top + radius;
+    let inner_bottom = bottom - radius;
+    if x >= inner_left && x < inner_right || y >= inner_top && y < inner_bottom {
+        return true;
+    }
+
+    let center_x = if x < inner_left {
+        inner_left
+    } else {
+        inner_right - 1
+    };
+    let center_y = if y < inner_top {
+        inner_top
+    } else {
+        inner_bottom - 1
+    };
+    let dx = i64::from(x - center_x);
+    let dy = i64::from(y - center_y);
+    dx * dx + dy * dy <= i64::from(radius) * i64::from(radius)
+}

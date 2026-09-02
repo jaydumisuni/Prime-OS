@@ -1,3 +1,14 @@
+pub(crate) mod primitives;
+pub(crate) mod theme;
+
+pub(crate) use primitives::{Argb, Canvas, Rect};
+pub(crate) use theme::Theme;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RenderContext {
+    pub(crate) theme: Theme,
+}
+
 use prime_contracts::{ApplicationEntry, SystemPowerAction};
 
 pub(crate) const ORB_LIST_TOP: f64 = 82.0;
@@ -564,5 +575,90 @@ mod tests {
             Some(SystemPowerAction::PowerOff)
         );
         assert_eq!(quick_power_action_at(280.0, height), None);
+    }
+
+    #[test]
+    fn alpha_blend_preserves_opaque_destination() {
+        let dst = Argb::from_u32(0xff050818);
+        let src = Argb::from_u32(0x8022d3ee);
+        let mixed = src.over(dst);
+        assert_eq!(mixed.a, 255);
+        assert!(mixed.g > dst.g);
+        assert!(mixed.b > dst.b);
+    }
+
+    #[test]
+    fn rect_geometry_contains_and_centers() {
+        let rect = Rect::new(10, 20, 40, 60);
+        assert!(rect.contains(10, 20));
+        assert!(rect.contains(49, 79));
+        assert!(!rect.contains(50, 80));
+        assert_eq!(rect.center_x(), 30.0);
+        assert_eq!(rect.center_y(), 50.0);
+    }
+
+    #[test]
+    fn canvas_fill_clear_and_rounded_geometry_are_bounded() {
+        let mut bytes = vec![0u8; 32 * 32 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 32, 32).unwrap();
+        canvas.fill_rect(Rect::new(4, 4, 8, 8), Argb::from_u32(0xff22d3ee));
+        assert_eq!(canvas.pixel(4, 4).unwrap(), Argb::from_u32(0xff22d3ee));
+        assert_eq!(canvas.pixel(3, 3).unwrap(), Argb::TRANSPARENT);
+        canvas.clear();
+        assert_eq!(canvas.pixel(4, 4).unwrap(), Argb::TRANSPARENT);
+        canvas.fill_rounded_rect(Rect::new(0, 0, 32, 32), 10, Argb::from_u32(0xcc0f172a));
+        assert_eq!(canvas.pixel(0, 0).unwrap().a, 0);
+        assert!(canvas.pixel(16, 16).unwrap().a > 0);
+    }
+
+    #[test]
+    fn stroke_gradient_and_glow_have_distinct_material_behavior() {
+        let mut bytes = vec![0u8; 64 * 64 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 64, 64).unwrap();
+        canvas.stroke_rounded_rect(Rect::new(4, 4, 40, 40), 8, 2, Argb::from_u32(0xff8b5cf6));
+        assert!(canvas.pixel(24, 4).unwrap().a > 0);
+        assert_eq!(canvas.pixel(24, 24).unwrap().a, 0);
+        canvas.vertical_gradient(
+            Rect::new(48, 0, 8, 32),
+            Argb::from_u32(0xff05050d),
+            Argb::from_u32(0xff071021),
+        );
+        assert_ne!(canvas.pixel(50, 1).unwrap(), canvas.pixel(50, 30).unwrap());
+        canvas.radial_glow(32.0, 52.0, 10.0, Argb::from_u32(0x8022d3ee));
+        assert!(canvas.pixel(32, 52).unwrap().a > canvas.pixel(23, 52).unwrap().a);
+    }
+
+    #[test]
+    fn circle_and_line_primitives_touch_expected_pixels_only() {
+        let mut bytes = vec![0u8; 32 * 32 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 32, 32).unwrap();
+        let color = Argb::from_u32(0xfff8fafc);
+        canvas.circle(8, 8, 3, color);
+        assert_eq!(canvas.pixel(8, 8).unwrap(), color);
+        assert_eq!(canvas.pixel(0, 0).unwrap(), Argb::TRANSPARENT);
+        canvas.line((16, 4), (16, 20), 1, color);
+        assert_eq!(canvas.pixel(16, 12).unwrap(), color);
+        assert_eq!(canvas.pixel(15, 12).unwrap(), Argb::TRANSPARENT);
+    }
+
+    #[test]
+    fn prime_dark_theme_matches_brand_authority() {
+        let theme = Theme::prime_dark();
+        assert_eq!(theme.base_0, Argb::from_u32(0xff05050d));
+        assert_eq!(theme.base_1, Argb::from_u32(0xff050818));
+        assert_eq!(theme.base_2, Argb::from_u32(0xff071021));
+        assert_eq!(theme.panel, Argb::from_u32(0xff0f172a));
+        assert_eq!(theme.cyan, Argb::from_u32(0xff22d3ee));
+        assert_eq!(theme.cyan_alt, Argb::from_u32(0xff06b6d4));
+        assert_eq!(theme.violet, Argb::from_u32(0xff8b5cf6));
+        assert_eq!(theme.violet_alt, Argb::from_u32(0xffa855f7));
+        assert_eq!(theme.text, Argb::from_u32(0xfff8fafc));
+        assert_eq!(theme.muted, Argb::from_u32(0xff94a3b8));
+    }
+
+    #[test]
+    fn render_context_defaults_to_prime_dark_theme() {
+        let context = RenderContext::default();
+        assert_eq!(context.theme, Theme::prime_dark());
     }
 }
