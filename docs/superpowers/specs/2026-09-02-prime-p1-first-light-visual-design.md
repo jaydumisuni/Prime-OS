@@ -1,7 +1,7 @@
 # Prime OS P1 First Light Visual Body — Design
 
 Date: 2026-09-02
-Status: proposed visual authority for user review
+Status: owner-approved visual authority
 Parent mechanical candidate: `786018fd38a066e30144df869b9a8b2a2701381a`
 Workstream: `design/p1-first-light-visual`
 
@@ -11,7 +11,7 @@ Turn the mechanically proven P1 compositor/Shell scaffold into the first visuall
 
 P1 visual acceptance is not a cosmetic pass. The resulting system must boot into a coherent Prime-owned desktop that visibly satisfies the First Light authority: startup identity, Prime Shell, system rail, Prime Orb/launcher, functional windowing, quick controls, smooth transitions, Prime glass/depth language, and no obvious Fedora/GNOME/KDE/COSMIC identity leakage.
 
-The supplied reference video at `/home/kratos/Downloads/ui should be something like this .mp4` is the interaction/design donor and quality bar. Prime borrows its principles and motion language, not its branding or exact screen composition.
+The supplied reference video at `/home/kratos/Downloads/ui should be something like this .mp4` remains the interaction/design donor. On 2026-09-02 the owner also explicitly approved the generated First Light desktop, Orb-open launcher, and quick-controls concept set shown in the design review. Those approved concepts are the implementation appearance target; Prime borrows the donor's principles but matches the approved Prime-specific composition, material depth, color distribution, and interaction hierarchy.
 
 The final Prime logo/mark is explicitly deferred until the OS visual body boots and behaves correctly. A provisional textual `PRIME` identity may be used during this phase; logo work must not block or distort the desktop architecture.
 
@@ -45,7 +45,7 @@ Prime uses the established THETECHGUY visual family recovered from the current l
 
 ### Material rule
 
-Cyan is the primary live/interaction light. Violet supplies depth and Prime/THETECHGUY identity. Magenta is rare emphasis, not a permanent neon border. The desktop remains predominantly dark so the color appears as light in glass, focus, and motion rather than as large saturated blocks.
+Cyan is the primary live/interaction light. Violet supplies depth and Prime/THETECHGUY identity. Magenta is rare emphasis, not a permanent neon border. The desktop remains predominantly dark, but color is part of the desktop field itself: cyan/teal and violet light must visibly travel through the wallpaper/aurora body and translucent materials. The accepted design must not reduce the brand palette to colored outlines around otherwise flat black surfaces.
 
 Status colors such as green/amber/red remain semantic and do not replace the Prime cyan/violet accent system.
 
@@ -53,7 +53,7 @@ Status colors such as green/amber/red remain semantic and do not replace the Pri
 
 ### 4.1 Background
 
-The settled desktop is a deep near-black/navy field with a restrained indigo-to-cyan aurora/depth gradient and very subtle texture/noise to prevent flat banding. It must remain visually quiet enough that application content and glass surfaces dominate.
+The settled desktop is a deep near-black/navy field with a clearly visible but controlled violet-to-blue-to-cyan aurora/light-ribbon composition, subtle geometric traces, and very subtle texture/noise to prevent flat banding. The colored energy crosses the desktop body rather than living only at edges. It must remain dark enough for content readability while still looking materially alive when no window is open.
 
 The current giant centered `PRIME` desktop label is removed after startup. Prime identity is present through the system materials, rail, Orb, and startup sequence rather than a permanent watermark.
 
@@ -65,7 +65,7 @@ No final logo decision is made in this phase.
 
 ### 4.3 System rail
 
-Replace the construction top debug bar with a slim floating vertical rail aligned near the left edge, following the donor's spatial idea while remaining Prime-specific.
+Replace the construction top debug bar with two distinct product surfaces: (1) a hairline/minimal top status strip integrated with the desktop field, and (2) a slim floating vertical glass rail aligned near the left edge. The top strip is quiet informational chrome, not the old engineering rail; the left rail is the primary interactive system rail.
 
 The rail contains:
 
@@ -77,6 +77,12 @@ The rail contains:
 The rail is a frosted material with a small corner radius, soft cyan/violet edge light, subtle inner highlight, and restrained shadow. Idle state is quiet. Hover/focus/active state increases luminosity and depth rather than changing into solid blocks.
 
 The rail must never display engineering labels such as `O ORB`, `Q STATUS`, or readiness/debug state in the accepted product surface.
+
+### 4.4 Top status strip
+
+The approved First Light composition retains a very thin top strip across the output. It presents provisional Prime/First Light identity at the left and concise truthful status at the right (health/state plus only indicators whose data is actually available). A subtle divider line separates it from the desktop field. It must remain visually subordinate to the wallpaper and left rail.
+
+At P1, quick-controls activation remains available from the left rail even if the top-right indicators are informational only. No fake Wi-Fi, battery, clock, or hardware values may be painted merely because they appeared in a concept render.
 
 ## 5. Prime Orb
 

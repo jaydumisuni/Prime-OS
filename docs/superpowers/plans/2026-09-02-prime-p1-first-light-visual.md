@@ -268,13 +268,13 @@ fn rail_hit_targets_map_orb_and_status() {
 
 - [ ] **Step 2: Change the persistent rail layer-shell contract**
 
-Replace `RAIL_HEIGHT`/full-width top anchoring with a fixed-width floating vertical surface anchored `LEFT`, using margins via `LayerSurface::set_margin` if supported by SCTK 0.20.0. Keep exclusive zone `0` so application windows can exist behind/next to the floating rail; P1 window placement remains compositor-owned.
+Replace `RAIL_HEIGHT`/full-width top anchoring with a fixed-width floating vertical surface anchored `LEFT`, using margins via `LayerSurface::set_margin` in SCTK 0.20.0. Keep exclusive zone `0` so application windows can exist behind/next to the floating rail; P1 window placement remains compositor-owned. The approved thin top status strip is drawn as part of the non-interactive background composition at P1 rather than preserving the old engineering rail.
 
 Background remains full output, non-interactive, exclusive zone `-1`.
 
 - [ ] **Step 3: Implement the desktop field**
 
-Paint the background from `#05050d`/`#050818` with a restrained violet upper glow and cyan lower/edge glow. Remove the permanent centered `PRIME` word from settled background painting. Keep a separate startup-progress parameter so Task 4 can animate provisional identity before settled state.
+Paint the background from `#05050d`/`#050818` with the owner-approved visible violet-to-blue-to-cyan aurora/light-ribbon field crossing the desktop body, plus subtle geometric traces. Color must exist throughout the wallpaper/material field rather than only borders. Remove the permanent centered `PRIME` word from settled background painting. Paint the approved hairline top status strip as subordinate desktop chrome with only truthful available status. Keep a separate startup-progress parameter so Task 4 can animate provisional identity before settled state.
 
 - [ ] **Step 4: Implement rail paint**
 
