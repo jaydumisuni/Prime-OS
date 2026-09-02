@@ -206,6 +206,22 @@ Current connector truth after resume:
 
 Software DRM topology invalidation/recovery is proven. Physical cable removal/reinsertion, DP output, SuperSpeed USB data, Ethernet carrier, and audible audio require corresponding external hardware/actions and remain explicitly unproven.
 
+## Unattended Remote Soak While Owner Away — PASS for Available Paths
+
+Additional non-physical testing was run after the main proof while KRATOS remained unattended:
+
+- 60 ICMP packets to the active Wi-Fi gateway: 60 received, 0% loss, 7.651 ms average RTT
+- USB topology sampled 60 times over ~30 seconds: one topology hash across all 60 samples; Ports 4/5/6/8 remained stable
+- second independent deep ACPI S3 RTC-wake cycle: PASS (`16:56:00` entry, `16:56:11` exit)
+- Wi-Fi re-associated and reacquired its DHCP lease by `16:56:13` after that second S3 cycle
+- GDM remained active after the second unattended resume
+- three consecutive locked full-workspace test runs: PASS / PASS / PASS
+- NVMe controller state: `live`; Samsung MZVL81T0HFLB-00BLL, 17 queues
+- HDMI connector continued to advertise the expected mode family through 1920x1080 plus lower fallback modes
+- boot-kernel scan found no `GPU HANG` evidence from i915; the host does contain pre-existing HP ACPI firmware warnings that did not prevent either proven deep-S3 resume
+
+This soak adds repeatability evidence only. It does not change any external gate requiring a missing physical device, cable, human hearing, or owner visual judgment.
+
 ## KRATOS Restoration — PASS
 
 The bounded Prime physical-proof units were stopped after evidence capture. Normal workstation graphics were restored:

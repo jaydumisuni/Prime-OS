@@ -112,5 +112,37 @@
     "owner_visual_acceptance": "PENDING_OWNER",
     "known_good_promotion": "NOT_EARNED"
   },
-  "transient_evidence_root": "/var/tmp/prime-p1-visual-proof-20260902T144904Z/physical/"
+  "transient_evidence_root": "/var/tmp/prime-p1-visual-proof-20260902T144904Z/physical/",
+  "unattended_remote_soak": {
+    "wifi_gateway_ping": {
+      "packets_tx": 60,
+      "packets_rx": 60,
+      "packet_loss_percent": 0.0,
+      "rtt_avg_ms": 7.651,
+      "rtt_max_ms": 80.272
+    },
+    "usb_topology_samples": {
+      "samples": 60,
+      "unique_topologies": 1,
+      "stable": true
+    },
+    "second_deep_s3": {
+      "status": "PASS",
+      "entry": "2026-09-02T16:56:00+02:00",
+      "exit": "2026-09-02T16:56:11+02:00",
+      "wifi_dhcp_return": "2026-09-02T16:56:13+02:00",
+      "gdm_post_resume": "active"
+    },
+    "workspace_test_loops": {
+      "loops": 3,
+      "all_passed": true
+    },
+    "nvme": {
+      "state": "live",
+      "model": "SAMSUNG MZVL81T0HFLB-00BLL",
+      "queue_count": 17
+    },
+    "i915_gpu_hang_observed": false,
+    "preexisting_acpi_firmware_warnings_observed": true
+  }
 }
