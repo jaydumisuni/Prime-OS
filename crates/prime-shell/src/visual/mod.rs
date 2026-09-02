@@ -262,12 +262,12 @@ mod tests {
     fn rail_height_is_content_driven_and_hit_testing_returns_configured_action() {
         let actions = vec![RailAction::Prime, RailAction::Apps, RailAction::Search];
         let rail = RailLayout::for_output(1920, 1080, actions.len());
-        assert_eq!(rail.bounds.width, 72);
-        assert_eq!(rail.bounds.x, 28);
-        assert_eq!(rail.bounds.y, 96);
+        assert_eq!(rail.bounds.width, 132);
+        assert_eq!(rail.bounds.x, 56);
+        assert_eq!(rail.bounds.y, 140);
         assert!(
-            rail.bounds.height < 360,
-            "three-item rail must stay compact"
+            (300..=350).contains(&rail.bounds.height),
+            "three-item rail should preserve the approved proportions while staying content-driven"
         );
         assert_eq!(rail.items.len(), actions.len());
         for (index, rect) in rail.items.iter().enumerate() {
@@ -277,6 +277,67 @@ mod tests {
             );
         }
         assert_eq!(rail.hit(960.0, 540.0, &actions), None);
+    }
+
+    #[test]
+    fn approved_reference_geometry_is_frozen_for_1080p() {
+        assert_eq!(RAIL_WIDTH, 132);
+        assert_eq!(RAIL_LEFT_MARGIN, 56);
+        assert_eq!(RAIL_TOP_MARGIN, 140);
+        assert_eq!(background::TOP_STRIP_RULE_Y, 59);
+        assert_eq!(STATUS_CLUSTER_WIDTH, 480);
+        assert_eq!(STATUS_CLUSTER_HEIGHT, 44);
+    }
+
+    #[test]
+    fn rail_actions_have_user_visible_labels_except_prime_mark() {
+        assert_eq!(RailAction::Prime.label(), None);
+        assert_eq!(RailAction::Apps.label(), Some("APPS"));
+        assert_eq!(RailAction::Search.label(), Some("SEARCH"));
+        assert_eq!(RailAction::Network.label(), Some("NETWORK"));
+        assert_eq!(RailAction::Audio.label(), Some("AUDIO"));
+        assert_eq!(RailAction::Storage.label(), Some("STORAGE"));
+        assert_eq!(RailAction::Health.label(), Some("HEALTH"));
+    }
+
+    #[test]
+    fn approved_prime_mark_renders_identity_geometry() {
+        let theme = Theme::prime_dark();
+        let mut bytes = vec![0u8; 80 * 80 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 80, 80).unwrap();
+        rail::draw_prime_mark(&mut canvas, Rect::new(5, 5, 70, 70), &theme, false);
+        let painted = (0..80)
+            .flat_map(|y| (0..80).map(move |x| (x, y)))
+            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 80 && p.b > 100))
+            .count();
+        assert!(painted > 100);
+    }
+
+    #[test]
+    fn desktop_chrome_paints_bottom_identity_and_watermark() {
+        let theme = Theme::prime_dark();
+        let mut text = TextSystem::load_system().expect("Prime production font");
+        let mut bytes = vec![0u8; 1920 * 1080 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 1920, 1080).unwrap();
+        paint_settled_background(&mut canvas, &theme);
+        let before_left = canvas.pixel(70, 1010).unwrap();
+        let before_right = canvas.pixel(1810, 1010).unwrap();
+        paint_top_status_strip(&mut canvas, &mut text, &theme, TopStatus::Online);
+        let left_region = (970..1055)
+            .flat_map(|y| (55..360).map(move |x| (x, y)))
+            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 0 && p.r > 110))
+            .count();
+        let right_region = (970..1055)
+            .flat_map(|y| (1680..1885).map(move |x| (x, y)))
+            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 0 && p.b > 80))
+            .count();
+        assert!(left_region > 60, "bottom-left Prime identity must render");
+        assert!(
+            right_region > 20,
+            "bottom-right Prime watermark must render"
+        );
+        assert_ne!(canvas.pixel(70, 1010).unwrap(), before_left);
+        assert_ne!(canvas.pixel(1810, 1010).unwrap(), before_right);
     }
 
     #[test]
@@ -381,6 +442,7 @@ mod tests {
         let mut canvas = Canvas::new(&mut bytes, rail.bounds.width, rail.bounds.height).unwrap();
         paint_rail_surface(
             &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
             &Theme::prime_dark(),
             &actions,
             Some(RailAction::Prime),
@@ -408,10 +470,10 @@ mod tests {
     }
 
     #[test]
-    fn top_right_status_cluster_is_compact_and_clickable() {
-        let layout = StatusClusterLayout::for_surface(176, 36);
-        assert_eq!(layout.bounds, Rect::new(0, 0, 176, 36));
-        assert!(layout.hit(150.0, 18.0));
+    fn top_right_status_cluster_matches_approved_top_chrome_and_is_clickable() {
+        let layout = StatusClusterLayout::for_surface(480, 44);
+        assert_eq!(layout.bounds, Rect::new(0, 0, 480, 44));
+        assert!(layout.hit(450.0, 22.0));
         assert!(!layout.hit(-1.0, 18.0));
     }
 
@@ -419,12 +481,14 @@ mod tests {
     fn status_cluster_painter_keeps_transparent_corners_and_renders_truth() {
         let theme = Theme::prime_dark();
         let mut text = TextSystem::load_system().expect("Prime production font");
-        let mut bytes = vec![0u8; 176 * 36 * 4];
-        let mut canvas = Canvas::new(&mut bytes, 176, 36).unwrap();
+        let mut bytes =
+            vec![0u8; STATUS_CLUSTER_WIDTH as usize * STATUS_CLUSTER_HEIGHT as usize * 4];
+        let mut canvas =
+            Canvas::new(&mut bytes, STATUS_CLUSTER_WIDTH, STATUS_CLUSTER_HEIGHT).unwrap();
         paint_status_cluster(&mut canvas, &mut text, &theme, TopStatus::Online);
         assert_eq!(canvas.pixel(0, 0).unwrap(), Argb::TRANSPARENT);
-        let bright = (0..36)
-            .flat_map(|y| (0..176).map(move |x| (x, y)))
+        let bright = (0..44)
+            .flat_map(|y| (0..480).map(move |x| (x, y)))
             .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 160 && p.g > 150))
             .count();
         assert!(bright > 20);
@@ -432,7 +496,7 @@ mod tests {
 
     #[test]
     fn top_status_truth_labels_are_explicit() {
-        assert_eq!(TopStatus::Online.label(), "ONLINE");
+        assert_eq!(TopStatus::Online.label(), "NOMINAL");
         assert_eq!(TopStatus::Limited.label(), "LIMITED");
     }
 
@@ -474,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn approved_top_strip_uses_production_text_and_rail_is_icon_first() {
+    fn approved_top_strip_and_rail_follow_reference_typography() {
         let theme = Theme::prime_dark();
         let mut text = TextSystem::load_system().expect("Prime production font");
 
@@ -498,7 +562,13 @@ mod tests {
             vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
         let mut rail_canvas =
             Canvas::new(&mut rail_bytes, rail.bounds.width, rail.bounds.height).unwrap();
-        paint_rail_surface(&mut rail_canvas, &theme, &actions, Some(RailAction::Prime));
+        paint_rail_surface(
+            &mut rail_canvas,
+            &mut text,
+            &theme,
+            &actions,
+            Some(RailAction::Prime),
+        );
         let bright_icon_pixels = (0..rail.bounds.height as i32)
             .flat_map(|y| (0..rail.bounds.width as i32).map(move |x| (x, y)))
             .filter(|&(x, y)| {

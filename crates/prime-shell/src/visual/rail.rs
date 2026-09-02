@@ -2,15 +2,15 @@ use std::{fs, io, path::Path};
 
 use serde_json::{json, Value};
 
-use super::{draw_icon, Argb, Canvas, Icon, Rect, Theme};
+use super::{draw_icon, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
-pub(crate) const RAIL_WIDTH: u32 = 72;
-pub(crate) const RAIL_LEFT_MARGIN: i32 = 28;
-pub(crate) const RAIL_TOP_MARGIN: i32 = 96;
+pub(crate) const RAIL_WIDTH: u32 = 132;
+pub(crate) const RAIL_LEFT_MARGIN: i32 = 56;
+pub(crate) const RAIL_TOP_MARGIN: i32 = 140;
 pub(crate) const MAX_RAIL_ITEMS: usize = 8;
-const RAIL_VERTICAL_PADDING: u32 = 10;
-const RAIL_ITEM_HEIGHT: u32 = 54;
-const RAIL_ITEM_GAP: u32 = 6;
+const RAIL_VERTICAL_PADDING: u32 = 18;
+const RAIL_ITEM_HEIGHT: u32 = 88;
+const RAIL_ITEM_GAP: u32 = 8;
 const RAIL_SCHEMA: &str = "prime.rail.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -37,6 +37,20 @@ impl RailAction {
             Self::Audio => Icon::Audio,
             Self::Storage => Icon::Storage,
             Self::Health => Icon::Health,
+        }
+    }
+
+    pub(crate) fn label(&self) -> Option<&'static str> {
+        match self {
+            Self::Prime => None,
+            Self::Apps => Some("APPS"),
+            Self::Search => Some("SEARCH"),
+            Self::Status => Some("STATUS"),
+            Self::Network => Some("NETWORK"),
+            Self::Audio => Some("AUDIO"),
+            Self::Storage => Some("STORAGE"),
+            Self::Health => Some("HEALTH"),
+            Self::Application(_) => Some("APP"),
         }
     }
 
@@ -216,8 +230,69 @@ impl RailLayout {
     }
 }
 
+pub(crate) fn draw_prime_mark(canvas: &mut Canvas<'_>, rect: Rect, theme: &Theme, active: bool) {
+    let cx = rect.center_x().round() as i32;
+    let cy = rect.center_y().round() as i32;
+    let size = rect.width.min(rect.height).max(24) as i32;
+    let half = size / 2;
+    let top = cy - half + 3;
+    let bottom = cy + half - 4;
+    let left = cx - half + 5;
+    let right = cx + half - 5;
+    let glow = if active { 150 } else { 92 };
+    canvas.radial_glow(
+        cx as f32,
+        cy as f32,
+        size as f32 * 0.58,
+        theme.violet.with_alpha(glow),
+    );
+    let violet = theme.violet.with_alpha(if active { 245 } else { 220 });
+    let cyan = theme.cyan.with_alpha(if active { 250 } else { 225 });
+    canvas.line((left, cy + 6), (cx, top), 3, violet);
+    canvas.line((cx, top), (right, cy + 6), 3, cyan);
+    canvas.line((left, cy + 6), (cx - 2, bottom), 3, violet.with_alpha(210));
+    canvas.line((right, cy + 6), (cx + 2, bottom), 3, cyan.with_alpha(220));
+    canvas.line(
+        (cx - half / 2, cy - 2),
+        (cx, cy - 8),
+        2,
+        violet.with_alpha(210),
+    );
+    canvas.line(
+        (cx, cy - 8),
+        (cx + half / 2, cy - 2),
+        2,
+        cyan.with_alpha(220),
+    );
+    canvas.line(
+        (cx - half / 3, cy + 5),
+        (cx, cy + half / 5),
+        2,
+        violet.with_alpha(190),
+    );
+    canvas.line(
+        (cx + half / 3, cy + 5),
+        (cx, cy + half / 5),
+        2,
+        cyan.with_alpha(200),
+    );
+    canvas.circle(
+        cx,
+        cy + half / 4,
+        (size as u32 / 8).max(3),
+        theme.violet.with_alpha(90),
+    );
+    canvas.circle(
+        cx,
+        cy + half / 4,
+        (size as u32 / 16).max(2),
+        theme.text.with_alpha(245),
+    );
+}
+
 pub(crate) fn paint_rail_surface(
     canvas: &mut Canvas<'_>,
+    text: &mut TextSystem,
     theme: &Theme,
     actions: &[RailAction],
     active: Option<RailAction>,
@@ -230,47 +305,52 @@ pub(crate) fn paint_rail_surface(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(108));
-    canvas.stroke_rounded_rect(body, 24, 1, theme.text.with_alpha(54));
+    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(92));
+    canvas.stroke_rounded_rect(body, 24, 1, theme.text.with_alpha(76));
     canvas.fill_rounded_rect(
-        Rect::new(7, 5, canvas.width.saturating_sub(14), 1),
+        Rect::new(12, 7, canvas.width.saturating_sub(24), 1),
         1,
-        theme.text.with_alpha(36),
+        theme.text.with_alpha(40),
     );
-
-    if let Some(prime_rect) = layout.items.first() {
-        canvas.radial_glow(
-            prime_rect.center_x() as f32,
-            prime_rect.center_y() as f32,
-            44.0,
-            theme.violet.with_alpha(96),
-        );
-    }
 
     for (rect, action) in layout.items.iter().zip(actions.iter()) {
         let is_active = active.as_ref() == Some(action);
         if is_active {
-            canvas.fill_rounded_rect(*rect, 16, theme.violet.with_alpha(48));
-            canvas.stroke_rounded_rect(*rect, 16, 1, theme.cyan.with_alpha(136));
+            canvas.fill_rounded_rect(*rect, 18, theme.violet.with_alpha(34));
+            canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(112));
         }
-        let icon_size = if matches!(action, RailAction::Prime) {
-            30
-        } else {
-            21
-        };
+        if matches!(action, RailAction::Prime) {
+            let mark = Rect::new(rect.x + 24, rect.y + 8, rect.width.saturating_sub(48), 68);
+            draw_prime_mark(canvas, mark, theme, is_active);
+            continue;
+        }
+
+        let icon_size = 28;
         let icon_rect = Rect::new(
             rect.center_x().round() as i32 - icon_size as i32 / 2,
-            rect.center_y().round() as i32 - icon_size as i32 / 2,
+            rect.y + 17,
             icon_size,
             icon_size,
         );
         let color = if is_active {
             theme.cyan
-        } else if matches!(action, RailAction::Prime) {
-            Argb::from_u32(0xffc4b5fd)
         } else {
-            theme.text.with_alpha(214)
+            theme.text.with_alpha(226)
         };
         draw_icon(canvas, icon_rect, action.icon(), color);
+        if let Some(label) = action.label() {
+            let style = TextStyle {
+                size_px: 11,
+                weight: FontWeight::Regular,
+            };
+            let width = text.measure(label, style).width as i32;
+            text.draw(
+                canvas,
+                (rect.center_x().round() as i32 - width / 2, rect.y + 55),
+                label,
+                style,
+                theme.text.with_alpha(205),
+            );
+        }
     }
 }

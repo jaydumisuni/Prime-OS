@@ -6,10 +6,11 @@ pub(crate) const PRIMARY_AURORA_BANDS: usize = 10;
 pub(crate) const SECONDARY_AURORA_BANDS: usize = 4;
 #[cfg(test)]
 pub(crate) const DECORATIVE_BOX_COUNT: usize = 0;
-pub(crate) const STATUS_CLUSTER_WIDTH: u32 = 176;
-pub(crate) const STATUS_CLUSTER_HEIGHT: u32 = 36;
-pub(crate) const STATUS_CLUSTER_TOP_MARGIN: i32 = 8;
-pub(crate) const STATUS_CLUSTER_RIGHT_MARGIN: i32 = 12;
+pub(crate) const TOP_STRIP_RULE_Y: i32 = 59;
+pub(crate) const STATUS_CLUSTER_WIDTH: u32 = 480;
+pub(crate) const STATUS_CLUSTER_HEIGHT: u32 = 44;
+pub(crate) const STATUS_CLUSTER_TOP_MARGIN: i32 = 7;
+pub(crate) const STATUS_CLUSTER_RIGHT_MARGIN: i32 = 24;
 
 pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
     canvas.clear();
@@ -51,7 +52,7 @@ pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
     paint_aurora_ribbons(canvas, theme);
 
     let top_rule = theme.text.with_alpha(42);
-    canvas.fill_rect(Rect::new(0, 44, width, 1), top_rule);
+    canvas.fill_rect(Rect::new(0, TOP_STRIP_RULE_Y, width, 1), top_rule);
 }
 
 fn paint_aurora_ribbons(canvas: &mut Canvas<'_>, theme: &Theme) {
@@ -113,7 +114,7 @@ pub(crate) enum TopStatus {
 impl TopStatus {
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            Self::Online => "ONLINE",
+            Self::Online => "NOMINAL",
             Self::Limited => "LIMITED",
         }
     }
@@ -125,11 +126,11 @@ pub(crate) fn paint_top_status_strip(
     theme: &Theme,
     status: TopStatus,
 ) {
-    if canvas.width < 180 || canvas.height < 46 {
+    if canvas.width < 420 || canvas.height < 120 {
         return;
     }
     let brand = TextStyle {
-        size_px: 13,
+        size_px: 14,
         weight: FontWeight::Semibold,
     };
     let secondary = TextStyle {
@@ -138,27 +139,91 @@ pub(crate) fn paint_top_status_strip(
     };
     text.draw(
         canvas,
-        (18, 12),
+        (36, 17),
         "PRIME OS",
         brand,
-        theme.text.with_alpha(236),
+        theme.text.with_alpha(242),
     );
     let brand_width = text.measure("PRIME OS", brand).width as i32;
     text.draw(
         canvas,
-        (26 + brand_width, 12),
+        (48 + brand_width, 18),
         "First Light",
         secondary,
-        theme.muted.with_alpha(230),
+        theme.muted.with_alpha(232),
     );
     let first_width = text.measure("First Light", secondary).width as i32;
     canvas.circle(
-        34 + brand_width + first_width,
-        20,
-        3,
-        theme.cyan.with_alpha(210),
+        58 + brand_width + first_width,
+        27,
+        4,
+        theme.text.with_alpha(70),
+    );
+    canvas.circle(
+        58 + brand_width + first_width,
+        27,
+        2,
+        theme.cyan.with_alpha(220),
     );
 
+    if canvas.height >= 1040 {
+        let identity_y = canvas.height as i32 - 102;
+        let build_y = canvas.height as i32 - 77;
+        text.draw(
+            canvas,
+            (68, identity_y),
+            "PRIME OS",
+            TextStyle {
+                size_px: 18,
+                weight: FontWeight::Semibold,
+            },
+            theme.text.with_alpha(232),
+        );
+        let idw = text
+            .measure(
+                "PRIME OS",
+                TextStyle {
+                    size_px: 18,
+                    weight: FontWeight::Semibold,
+                },
+            )
+            .width as i32;
+        text.draw(
+            canvas,
+            (80 + idw, identity_y + 1),
+            "First Light",
+            TextStyle {
+                size_px: 16,
+                weight: FontWeight::Regular,
+            },
+            Argb::from_u32(0xff60a5fa).with_alpha(230),
+        );
+        text.draw(
+            canvas,
+            (68, build_y),
+            "KRATOS // BUILD 0.1.0",
+            TextStyle {
+                size_px: 10,
+                weight: FontWeight::Regular,
+            },
+            theme.muted.with_alpha(190),
+        );
+
+        let watermark_y = canvas.height as i32 - 92;
+        let watermark_x = canvas.width as i32 - 145;
+        canvas.circle(watermark_x, watermark_y + 7, 12, theme.text.with_alpha(20));
+        canvas.circle(watermark_x, watermark_y + 7, 4, theme.cyan.with_alpha(38));
+        text.draw(
+            canvas,
+            (watermark_x + 27, watermark_y),
+            "PRIME",
+            TextStyle {
+                size_px: 17,
+                weight: FontWeight::Regular,
+            },
+            theme.text.with_alpha(34),
+        );
+    }
     let _ = status;
 }
 
@@ -186,44 +251,69 @@ pub(crate) fn paint_status_cluster(
     status: TopStatus,
 ) {
     canvas.clear();
-    if canvas.width < 120 || canvas.height < 28 {
+    if canvas.width < 360 || canvas.height < 36 {
         return;
     }
-    let body = Rect::new(
-        1,
-        1,
-        canvas.width.saturating_sub(2),
-        canvas.height.saturating_sub(2),
-    );
-    canvas.fill_rounded_rect(body, 17, theme.panel.with_alpha(92));
-    canvas.stroke_rounded_rect(body, 17, 1, theme.text.with_alpha(48));
     let style = TextStyle {
         size_px: 11,
         weight: FontWeight::Semibold,
     };
     draw_icon(
         canvas,
-        Rect::new(13, 11, 14, 14),
+        Rect::new(8, 14, 14, 14),
         Icon::Status,
         theme.text.with_alpha(220),
     );
     text.draw(
         canvas,
-        (35, 10),
+        (29, 12),
         "STATUS",
         style,
-        theme.text.with_alpha(218),
+        theme.text.with_alpha(222),
     );
-    let label = status.label();
-    let label_width = text.measure(label, style).width as i32;
+    canvas.circle(
+        88,
+        21,
+        4,
+        match status {
+            TopStatus::Online => Argb::from_u32(0xff34d399),
+            TopStatus::Limited => Argb::from_u32(0xfff59e0b),
+        },
+    );
     text.draw(
         canvas,
-        (canvas.width as i32 - 14 - label_width, 10),
-        label,
+        (100, 12),
+        status.label(),
         style,
-        match status {
-            TopStatus::Online => theme.cyan.with_alpha(238),
-            TopStatus::Limited => Argb::from_u32(0xfff59e0b).with_alpha(238),
-        },
+        theme.muted.with_alpha(230),
+    );
+
+    for x in [184, 248, 312, 376] {
+        canvas.fill_rect(Rect::new(x, 8, 1, 27), theme.text.with_alpha(55));
+    }
+    draw_icon(
+        canvas,
+        Rect::new(204, 13, 18, 18),
+        Icon::Network,
+        theme.text.with_alpha(220),
+    );
+    draw_icon(
+        canvas,
+        Rect::new(268, 13, 18, 18),
+        Icon::Audio,
+        theme.text.with_alpha(220),
+    );
+    draw_icon(
+        canvas,
+        Rect::new(332, 13, 18, 18),
+        Icon::Power,
+        theme.text.with_alpha(210),
+    );
+    text.draw(
+        canvas,
+        (397, 12),
+        "PRIME",
+        style,
+        theme.text.with_alpha(185),
     );
 }

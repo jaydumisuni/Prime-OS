@@ -333,11 +333,13 @@ impl PrimeShell {
         } else {
             None
         };
+        let text = &mut self.text;
+        let rail_actions = &self.rail_actions;
         if let Err(error) =
             draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
                 let mut canvas = visual::Canvas::new(bytes, w, h)
                     .expect("Prime rail buffer must match configured dimensions");
-                visual::paint_rail_surface(&mut canvas, &theme, &self.rail_actions, active);
+                visual::paint_rail_surface(&mut canvas, text, &theme, rail_actions, active);
             })
         {
             eprintln!("prime-shell could not redraw rail: {error}");
@@ -997,11 +999,13 @@ impl LayerShellHandler for PrimeShell {
             } else {
                 None
             };
+            let text = &mut self.text;
+            let rail_actions = &self.rail_actions;
             if let Err(error) =
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime rail buffer must match configured dimensions");
-                    visual::paint_rail_surface(&mut canvas, &theme, &self.rail_actions, active);
+                    visual::paint_rail_surface(&mut canvas, text, &theme, rail_actions, active);
                 })
             {
                 eprintln!("prime-shell could not draw rail: {error}");

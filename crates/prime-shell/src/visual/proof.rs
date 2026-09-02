@@ -59,7 +59,7 @@ fn base_scene(active: Option<RailAction>) -> Vec<u8> {
     let mut rail_bytes = vec![0u8; RAIL_WIDTH as usize * rail_height as usize * 4];
     {
         let mut rail = Canvas::new(&mut rail_bytes, RAIL_WIDTH, rail_height).unwrap();
-        paint_rail_surface(&mut rail, &theme, &actions, active);
+        paint_rail_surface(&mut rail, &mut text, &theme, &actions, active);
     }
     composite(
         &mut desktop,
