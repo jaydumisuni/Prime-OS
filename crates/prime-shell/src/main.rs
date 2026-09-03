@@ -45,6 +45,20 @@ const STATUS_NAMESPACE: &str = "prime.shell.status";
 const PRIME_NAMESPACE: &str = "prime.shell.prime";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
 
+fn finish_wayland_read(
+    result: Result<usize, wayland_client::backend::WaylandError>,
+) -> Result<(), wayland_client::backend::WaylandError> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(wayland_client::backend::WaylandError::Io(error))
+            if error.kind() == io::ErrorKind::WouldBlock =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--font-probe") {
@@ -206,7 +220,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 drop(read_guard);
             } else if ready > 0 {
-                read_guard.read()?;
+                finish_wayland_read(read_guard.read())?;
                 event_queue.dispatch_pending(&mut shell)?;
             } else {
                 drop(read_guard);
@@ -1525,6 +1539,19 @@ mod tests {
         assert!(!persistent_baseline_ready(true, true, false));
         assert!(!persistent_baseline_ready(true, false, true));
         assert!(persistent_baseline_ready(true, true, true));
+    }
+
+    #[test]
+    fn wayland_read_would_block_is_retryable() {
+        let error =
+            wayland_client::backend::WaylandError::Io(io::Error::from(io::ErrorKind::WouldBlock));
+        assert!(finish_wayland_read(Err(error)).is_ok());
+    }
+
+    #[test]
+    fn wayland_read_other_io_errors_remain_fatal() {
+        let error = wayland_client::backend::WaylandError::Io(io::Error::other("socket failed"));
+        assert!(finish_wayland_read(Err(error)).is_err());
     }
 
     #[test]
