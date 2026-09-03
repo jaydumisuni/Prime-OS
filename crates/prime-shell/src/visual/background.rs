@@ -1,9 +1,13 @@
-use std::f32::consts::PI;
-
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
+#[cfg(test)]
 pub(crate) const PRIMARY_AURORA_BANDS: usize = 10;
+#[cfg(test)]
 pub(crate) const SECONDARY_AURORA_BANDS: usize = 4;
+pub(crate) const WALLPAPER_SOURCE_WIDTH: u32 = 160;
+pub(crate) const WALLPAPER_SOURCE_HEIGHT: u32 = 90;
+pub(crate) const WALLPAPER_RGB565: &[u8] =
+    include_bytes!("../../assets/prime-first-light-wallpaper-160x90.rgb565");
 #[cfg(test)]
 pub(crate) const DECORATIVE_BOX_COUNT: usize = 0;
 pub(crate) const TOP_STRIP_RULE_Y: i32 = 59;
@@ -14,94 +18,172 @@ pub(crate) const STATUS_CLUSTER_RIGHT_MARGIN: i32 = 24;
 
 pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
     canvas.clear();
-    let width = canvas.width;
-    let height = canvas.height;
-    if width == 0 || height == 0 {
+    if canvas.width == 0 || canvas.height == 0 {
         return;
     }
 
-    canvas.vertical_gradient(Rect::new(0, 0, width, height), theme.base_2, theme.base_0);
-
-    let width_f = width as f32;
-    let height_f = height as f32;
-    canvas.radial_glow(
-        width_f * 0.18,
-        height_f * 0.60,
-        width_f * 0.52,
-        theme.violet.with_alpha(118),
+    paint_reference_wallpaper(canvas);
+    paint_reference_fine_detail(canvas, theme);
+    canvas.fill_rect(
+        Rect::new(0, TOP_STRIP_RULE_Y, canvas.width, 1),
+        theme.text.with_alpha(58),
     );
-    canvas.radial_glow(
-        width_f * 0.38,
-        height_f * 0.68,
-        width_f * 0.42,
-        Argb::from_u32(0xff7c3aed).with_alpha(72),
-    );
-    canvas.radial_glow(
-        width_f * 0.80,
-        height_f * 0.46,
-        width_f * 0.52,
-        theme.cyan.with_alpha(118),
-    );
-    canvas.radial_glow(
-        width_f * 0.54,
-        height_f * 0.72,
-        width_f * 0.32,
-        Argb::from_u32(0x703b82f6),
-    );
-
-    paint_aurora_ribbons(canvas, theme);
-
-    let top_rule = theme.text.with_alpha(42);
-    canvas.fill_rect(Rect::new(0, TOP_STRIP_RULE_Y, width, 1), top_rule);
 }
 
-fn paint_aurora_ribbons(canvas: &mut Canvas<'_>, theme: &Theme) {
+fn paint_reference_wallpaper(canvas: &mut Canvas<'_>) {
+    debug_assert_eq!(
+        WALLPAPER_RGB565.len(),
+        (WALLPAPER_SOURCE_WIDTH * WALLPAPER_SOURCE_HEIGHT * 2) as usize
+    );
+    let output_width = canvas.width.max(1);
+    let output_height = canvas.height.max(1);
+    let source_max_x = WALLPAPER_SOURCE_WIDTH - 1;
+    let source_max_y = WALLPAPER_SOURCE_HEIGHT - 1;
+
+    for y in 0..output_height {
+        let source_y = if output_height == 1 {
+            0.0
+        } else {
+            y as f32 * source_max_y as f32 / (output_height - 1) as f32
+        };
+        let y0 = source_y.floor() as u32;
+        let y1 = (y0 + 1).min(source_max_y);
+        let ty = source_y - y0 as f32;
+
+        for x in 0..output_width {
+            let source_x = if output_width == 1 {
+                0.0
+            } else {
+                x as f32 * source_max_x as f32 / (output_width - 1) as f32
+            };
+            let x0 = source_x.floor() as u32;
+            let x1 = (x0 + 1).min(source_max_x);
+            let tx = source_x - x0 as f32;
+
+            let top = mix_color(wallpaper_pixel(x0, y0), wallpaper_pixel(x1, y0), tx);
+            let bottom = mix_color(wallpaper_pixel(x0, y1), wallpaper_pixel(x1, y1), tx);
+            canvas.blend_pixel(x as i32, y as i32, mix_color(top, bottom, ty));
+        }
+    }
+}
+
+fn cubic_point(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
+    let u = 1.0 - t;
+    u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+}
+
+fn paint_curve(
+    canvas: &mut Canvas<'_>,
+    control_x: [f32; 4],
+    control_y: [f32; 4],
+    y_offset: f32,
+    color: Argb,
+) {
+    let width = canvas.width as f32;
+    let height = canvas.height as f32;
+    let mut previous = None;
+    for sample in 0..=240 {
+        let t = sample as f32 / 240.0;
+        let point = (
+            (cubic_point(control_x[0], control_x[1], control_x[2], control_x[3], t) * width).round()
+                as i32,
+            ((cubic_point(control_y[0], control_y[1], control_y[2], control_y[3], t) + y_offset)
+                * height)
+                .round() as i32,
+        );
+        if let Some(last) = previous {
+            canvas.line(last, point, 1, color);
+        }
+        previous = Some(point);
+    }
+}
+
+fn paint_reference_fine_detail(canvas: &mut Canvas<'_>, theme: &Theme) {
+    // Fine luminous strands measured from the approved First Light wallpaper.
+    // The compact RGB565 authority preserves the large light field; these
+    // low-alpha one-pixel traces restore the crisp filament structure lost
+    // during downsampling without changing the macro colour distribution.
+    let violet_curve_x = [0.0, 0.16, 0.31, 0.58];
+    let violet_curve_y = [0.36, 0.43, 0.72, 0.61];
+    for offset in [-0.012, -0.006, 0.0, 0.007, 0.014] {
+        paint_curve(
+            canvas,
+            violet_curve_x,
+            violet_curve_y,
+            offset,
+            theme.violet.with_alpha(if offset == 0.0 { 82 } else { 28 }),
+        );
+    }
+
+    let cyan_curve_x = [0.47, 0.61, 0.77, 1.01];
+    let cyan_curve_y = [0.61, 0.59, 0.55, 0.34];
+    for offset in [-0.012, -0.006, 0.0, 0.007, 0.014] {
+        paint_curve(
+            canvas,
+            cyan_curve_x,
+            cyan_curve_y,
+            offset,
+            theme.cyan.with_alpha(if offset == 0.0 { 94 } else { 30 }),
+        );
+    }
+
+    let upper_x = [0.61, 0.73, 0.86, 1.02];
+    let upper_y = [0.36, 0.43, 0.33, 0.20];
+    for offset in [-0.008, 0.0, 0.009] {
+        paint_curve(
+            canvas,
+            upper_x,
+            upper_y,
+            offset,
+            theme.cyan.with_alpha(if offset == 0.0 { 58 } else { 20 }),
+        );
+    }
+
+    // Sparse deterministic light points echo the reference particle field.
     let width = canvas.width as i32;
     let height = canvas.height as i32;
-    if width <= 1 || height <= 1 {
-        return;
-    }
-
-    let bands = PRIMARY_AURORA_BANDS;
-    for band in 0..bands {
-        let t = band as f32 / (bands - 1) as f32;
-        let alpha = (4.0 + (1.0 - (t - 0.5).abs() * 2.0) * 8.0) as u8;
-        let color = if band < bands / 2 {
-            theme.violet.with_alpha(alpha)
-        } else {
-            theme.cyan.with_alpha(alpha)
-        };
-        let offset = (band as f32 - bands as f32 / 2.0) * (height as f32 * 0.0065);
-        let mut previous: Option<(i32, i32)> = None;
-        let step = (width / 180).max(2) as usize;
-        for x in (0..width).step_by(step) {
-            let progress = x as f32 / width as f32;
-            let wave = (progress * PI * 2.15).sin() * height as f32 * 0.085
-                + (progress * PI * 0.75).cos() * height as f32 * 0.045;
-            let sweep = (0.68 - progress * 0.19) * height as f32;
-            let y = (sweep + wave + offset).round() as i32;
-            if let Some(last) = previous {
-                canvas.line(last, (x, y), if band % 5 == 0 { 2 } else { 1 }, color);
-            }
-            previous = Some((x, y));
+    for index in 0..92_i32 {
+        let x = (index * 197 + 83).rem_euclid(width.max(1));
+        let y = (index * index * 43 + 61).rem_euclid(height.max(1));
+        let reference_zone = (x < width * 2 / 5 && y > height / 8 && y < height * 4 / 5)
+            || (x > width / 2 && y < height * 3 / 5);
+        if reference_zone && index % 3 != 0 {
+            let color = if x < width / 2 {
+                theme.violet
+            } else {
+                theme.cyan
+            };
+            canvas.circle(x, y, 1, color.with_alpha(34));
         }
     }
+}
 
-    for band in 0..SECONDARY_AURORA_BANDS {
-        let t = band as f32 / (SECONDARY_AURORA_BANDS - 1) as f32;
-        let color = Argb::from_u32(0xff60a5fa).with_alpha((4.0 + 8.0 * (1.0 - t)) as u8);
-        let offset = band as f32 * height as f32 * 0.007;
-        let mut previous = None;
-        let step = (width / 150).max(2) as usize;
-        for x in (0..width).step_by(step) {
-            let progress = x as f32 / width as f32;
-            let wave = (progress * PI * 2.8 + 0.6).sin() * height as f32 * 0.035;
-            let y = (height as f32 * 0.61 + wave + offset).round() as i32;
-            if let Some(last) = previous {
-                canvas.line(last, (x, y), 1, color);
-            }
-            previous = Some((x, y));
-        }
+fn wallpaper_pixel(x: u32, y: u32) -> Argb {
+    let offset = ((y * WALLPAPER_SOURCE_WIDTH + x) * 2) as usize;
+    let value = u16::from_le_bytes([WALLPAPER_RGB565[offset], WALLPAPER_RGB565[offset + 1]]);
+    let red = ((value >> 11) & 0x1f) as u32;
+    let green = ((value >> 5) & 0x3f) as u32;
+    let blue = (value & 0x1f) as u32;
+    Argb {
+        a: 255,
+        r: ((red * 255 + 15) / 31) as u8,
+        g: ((green * 255 + 31) / 63) as u8,
+        b: ((blue * 255 + 15) / 31) as u8,
+    }
+}
+
+fn mix_color(start: Argb, end: Argb, t: f32) -> Argb {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| {
+        (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Argb {
+        a: 255,
+        r: mix(start.r, end.r),
+        g: mix(start.g, end.g),
+        b: mix(start.b, end.b),
     }
 }
 
@@ -244,6 +326,23 @@ impl StatusClusterLayout {
     }
 }
 
+fn local_clock_label() -> String {
+    // SAFETY: libc::time and localtime_r are called with valid pointers to
+    // stack-owned values; localtime_r writes exactly one libc::tm.
+    unsafe {
+        let mut now: libc::time_t = 0;
+        if libc::time(&mut now) == -1 {
+            return "--:--".to_owned();
+        }
+        let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+        if libc::localtime_r(&now, local.as_mut_ptr()).is_null() {
+            return "--:--".to_owned();
+        }
+        let local = local.assume_init();
+        format!("{:02}:{:02}", local.tm_hour, local.tm_min)
+    }
+}
+
 pub(crate) fn paint_status_cluster(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
@@ -260,9 +359,9 @@ pub(crate) fn paint_status_cluster(
     };
     draw_icon(
         canvas,
-        Rect::new(8, 14, 14, 14),
-        Icon::Status,
-        theme.text.with_alpha(220),
+        Rect::new(7, 12, 18, 18),
+        Icon::Shield,
+        theme.text.with_alpha(224),
     );
     text.draw(
         canvas,
@@ -288,32 +387,28 @@ pub(crate) fn paint_status_cluster(
         theme.muted.with_alpha(230),
     );
 
-    for x in [184, 248, 312, 376] {
+    for x in [178, 282, 382] {
         canvas.fill_rect(Rect::new(x, 8, 1, 27), theme.text.with_alpha(55));
     }
     draw_icon(
         canvas,
-        Rect::new(204, 13, 18, 18),
-        Icon::Network,
-        theme.text.with_alpha(220),
+        Rect::new(197, 11, 22, 22),
+        Icon::Wifi,
+        theme.text.with_alpha(224),
     );
     draw_icon(
         canvas,
-        Rect::new(268, 13, 18, 18),
+        Rect::new(241, 11, 22, 22),
         Icon::Audio,
-        theme.text.with_alpha(220),
+        theme.text.with_alpha(224),
     );
     draw_icon(
         canvas,
-        Rect::new(332, 13, 18, 18),
-        Icon::Power,
-        theme.text.with_alpha(210),
+        Rect::new(302, 12, 22, 20),
+        Icon::Battery,
+        theme.text.with_alpha(218),
     );
-    text.draw(
-        canvas,
-        (397, 12),
-        "PRIME",
-        style,
-        theme.text.with_alpha(185),
-    );
+    text.draw(canvas, (331, 12), "AC", style, theme.muted.with_alpha(228));
+    let clock = local_clock_label();
+    text.draw(canvas, (409, 12), &clock, style, theme.text.with_alpha(230));
 }

@@ -773,6 +773,7 @@ version = "0.1.0"
 dependencies = [
  "fontdb",
  "fontdue",
+ "libc",
  "prime-contracts",
  "serde_json",
  "smithay-client-toolkit",

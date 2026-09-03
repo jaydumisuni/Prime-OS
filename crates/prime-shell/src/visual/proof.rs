@@ -74,47 +74,121 @@ fn base_scene(active: Option<RailAction>) -> Vec<u8> {
 fn applications_fixture() -> Vec<ApplicationEntry> {
     serde_json::from_str(
         r#"[
-          {
-            "application_id":"00000000-0000-0000-0000-000000000001",
-            "display_name":"Files",
-            "profile_revision":1,
-            "profile_digest":"proof-files",
-            "execution_backend":"NATIVE",
-            "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
-            "launch_ready":true,
-            "limitations":[]
-          },
-          {
-            "application_id":"00000000-0000-0000-0000-000000000002",
-            "display_name":"Terminal",
-            "profile_revision":1,
-            "profile_digest":"proof-terminal",
-            "execution_backend":"NATIVE",
-            "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
-            "launch_ready":true,
-            "limitations":[]
-          },
-          {
-            "application_id":"00000000-0000-0000-0000-000000000003",
-            "display_name":"Diagnostics",
-            "profile_revision":1,
-            "profile_digest":"proof-diagnostics",
-            "execution_backend":"NATIVE",
-            "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
-            "launch_ready":false,
-            "limitations":["proof fixture"]
-          },
-          {
-            "application_id":"00000000-0000-0000-0000-000000000004",
-            "display_name":"Settings",
-            "profile_revision":1,
-            "profile_digest":"proof-settings",
-            "execution_backend":"NATIVE",
-            "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
-            "launch_ready":true,
-            "limitations":[]
-          }
-        ]"#,
+  {
+    "application_id":"00000000-0000-0000-0000-000000000001",
+    "display_name":"Files",
+    "profile_revision":1,
+    "profile_digest":"proof-files",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"FUNCTIONAL",
+      "evidence_refs":[]
+    },
+    "launch_ready":true,
+    "limitations":[]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000002",
+    "display_name":"Terminal",
+    "profile_revision":1,
+    "profile_digest":"proof-terminal",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"FUNCTIONAL",
+      "evidence_refs":[]
+    },
+    "launch_ready":true,
+    "limitations":[]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000003",
+    "display_name":"Browser",
+    "profile_revision":1,
+    "profile_digest":"proof-browser",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"RECOGNIZED",
+      "evidence_refs":[]
+    },
+    "launch_ready":false,
+    "limitations":[
+      "proof fixture: unavailable"
+    ]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000004",
+    "display_name":"Settings",
+    "profile_revision":1,
+    "profile_digest":"proof-settings",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"FUNCTIONAL",
+      "evidence_refs":[]
+    },
+    "launch_ready":true,
+    "limitations":[]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000005",
+    "display_name":"Health",
+    "profile_revision":1,
+    "profile_digest":"proof-health",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"RECOGNIZED",
+      "evidence_refs":[]
+    },
+    "launch_ready":false,
+    "limitations":[
+      "proof fixture: unavailable"
+    ]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000006",
+    "display_name":"Network",
+    "profile_revision":1,
+    "profile_digest":"proof-network",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"RECOGNIZED",
+      "evidence_refs":[]
+    },
+    "launch_ready":false,
+    "limitations":[
+      "proof fixture: unavailable"
+    ]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000007",
+    "display_name":"Media",
+    "profile_revision":1,
+    "profile_digest":"proof-media",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"RECOGNIZED",
+      "evidence_refs":[]
+    },
+    "launch_ready":false,
+    "limitations":[
+      "proof fixture: unavailable"
+    ]
+  },
+  {
+    "application_id":"00000000-0000-0000-0000-000000000008",
+    "display_name":"Recovery",
+    "profile_revision":1,
+    "profile_digest":"proof-recovery",
+    "execution_backend":"NATIVE",
+    "compatibility":{
+      "state":"RECOGNIZED",
+      "evidence_refs":[]
+    },
+    "launch_ready":false,
+    "limitations":[
+      "proof fixture: unavailable"
+    ]
+  }
+]"#,
     )
     .expect("visual proof application fixture")
 }
@@ -143,14 +217,19 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
             )
             .unwrap();
             let mut text = TextSystem::load_system().expect("Prime production font");
+            let applications = applications_fixture();
             paint_prime_launcher_surface(
                 &mut prime_launcher,
                 &mut text,
                 &theme,
-                &applications_fixture(),
-                0,
-                None,
-                1.0,
+                PrimeLauncherView {
+                    applications: &applications,
+                    selected: 0,
+                    power_ready: true,
+                    pending_power: None,
+                    message: None,
+                    progress: 1.0,
+                },
             );
         }
         composite(
@@ -158,7 +237,7 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
             &mut prime_bytes,
             PRIME_LAUNCHER_WIDTH,
             PRIME_LAUNCHER_HEIGHT,
-            (132, 82),
+            (PRIME_LAUNCHER_LEFT_MARGIN, PRIME_LAUNCHER_TOP_MARGIN),
         );
     }
     std::fs::write(format!("{directory}/02-prime_launcher.bgra"), prime_scene).unwrap();
@@ -195,7 +274,7 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
             &mut quick_bytes,
             QUICK_WIDTH,
             QUICK_HEIGHT,
-            (OUTPUT_WIDTH as i32 - QUICK_WIDTH as i32 - 28, 70),
+            (OUTPUT_WIDTH as i32 - QUICK_WIDTH as i32 - 28, 94),
         );
     }
     std::fs::write(format!("{directory}/03-quick-controls.bgra"), quick_scene).unwrap();

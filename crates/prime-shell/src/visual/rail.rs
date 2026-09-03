@@ -2,7 +2,7 @@ use std::{fs, io, path::Path};
 
 use serde_json::{json, Value};
 
-use super::{draw_icon, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
+use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
 pub(crate) const RAIL_WIDTH: u32 = 132;
 pub(crate) const RAIL_LEFT_MARGIN: i32 = 56;
@@ -10,6 +10,7 @@ pub(crate) const RAIL_TOP_MARGIN: i32 = 140;
 pub(crate) const MAX_RAIL_ITEMS: usize = 8;
 const RAIL_VERTICAL_PADDING: u32 = 18;
 const RAIL_ITEM_HEIGHT: u32 = 88;
+pub(crate) const RAIL_PRIMARY_ICON_SIZE: u32 = 34;
 const RAIL_ITEM_GAP: u32 = 8;
 const RAIL_SCHEMA: &str = "prime.rail.v1";
 
@@ -230,64 +231,48 @@ impl RailLayout {
     }
 }
 
+const PRIME_LOGO_SIZE: u32 = 64;
+const PRIME_LOGO_RGBA: &[u8] = include_bytes!("../../assets/prime-logo-64.rgba");
+
 pub(crate) fn draw_prime_mark(canvas: &mut Canvas<'_>, rect: Rect, theme: &Theme, active: bool) {
-    let cx = rect.center_x().round() as i32;
-    let cy = rect.center_y().round() as i32;
-    let size = rect.width.min(rect.height).max(24) as i32;
-    let half = size / 2;
-    let top = cy - half + 3;
-    let bottom = cy + half - 4;
-    let left = cx - half + 5;
-    let right = cx + half - 5;
-    let glow = if active { 150 } else { 92 };
-    canvas.radial_glow(
-        cx as f32,
-        cy as f32,
-        size as f32 * 0.58,
-        theme.violet.with_alpha(glow),
+    debug_assert_eq!(
+        PRIME_LOGO_RGBA.len(),
+        (PRIME_LOGO_SIZE * PRIME_LOGO_SIZE * 4) as usize
     );
-    let violet = theme.violet.with_alpha(if active { 245 } else { 220 });
-    let cyan = theme.cyan.with_alpha(if active { 250 } else { 225 });
-    canvas.line((left, cy + 6), (cx, top), 3, violet);
-    canvas.line((cx, top), (right, cy + 6), 3, cyan);
-    canvas.line((left, cy + 6), (cx - 2, bottom), 3, violet.with_alpha(210));
-    canvas.line((right, cy + 6), (cx + 2, bottom), 3, cyan.with_alpha(220));
-    canvas.line(
-        (cx - half / 2, cy - 2),
-        (cx, cy - 8),
-        2,
-        violet.with_alpha(210),
-    );
-    canvas.line(
-        (cx, cy - 8),
-        (cx + half / 2, cy - 2),
-        2,
-        cyan.with_alpha(220),
-    );
-    canvas.line(
-        (cx - half / 3, cy + 5),
-        (cx, cy + half / 5),
-        2,
-        violet.with_alpha(190),
-    );
-    canvas.line(
-        (cx + half / 3, cy + 5),
-        (cx, cy + half / 5),
-        2,
-        cyan.with_alpha(200),
-    );
-    canvas.circle(
-        cx,
-        cy + half / 4,
-        (size as u32 / 8).max(3),
-        theme.violet.with_alpha(90),
-    );
-    canvas.circle(
-        cx,
-        cy + half / 4,
-        (size as u32 / 16).max(2),
-        theme.text.with_alpha(245),
-    );
+    let size = rect.width.min(rect.height).clamp(1, 80);
+    let x0 = rect.center_x().round() as i32 - size as i32 / 2;
+    let y0 = rect.center_y().round() as i32 - size as i32 / 2;
+    if active {
+        canvas.radial_glow(
+            rect.center_x() as f32,
+            rect.center_y() as f32,
+            size as f32 * 0.72,
+            theme.violet.with_alpha(118),
+        );
+        canvas.radial_glow(
+            rect.center_x() as f32 + size as f32 * 0.12,
+            rect.center_y() as f32,
+            size as f32 * 0.58,
+            theme.cyan.with_alpha(78),
+        );
+    }
+    for y in 0..size {
+        for x in 0..size {
+            let source_x = x * PRIME_LOGO_SIZE / size;
+            let source_y = y * PRIME_LOGO_SIZE / size;
+            let offset = ((source_y * PRIME_LOGO_SIZE + source_x) * 4) as usize;
+            let r = PRIME_LOGO_RGBA[offset];
+            let g = PRIME_LOGO_RGBA[offset + 1];
+            let b = PRIME_LOGO_RGBA[offset + 2];
+            let mut a = PRIME_LOGO_RGBA[offset + 3];
+            if !active {
+                a = ((u16::from(a) * 245) / 255) as u8;
+            }
+            if a != 0 {
+                canvas.blend_pixel(x0 + x as i32, y0 + y as i32, Argb { a, r, g, b });
+            }
+        }
+    }
 }
 
 pub(crate) fn paint_rail_surface(
@@ -305,8 +290,19 @@ pub(crate) fn paint_rail_surface(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(92));
-    canvas.stroke_rounded_rect(body, 24, 1, theme.text.with_alpha(76));
+    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(82));
+    canvas.stroke_rounded_rect(body, 24, 2, theme.cyan.with_alpha(58));
+    canvas.stroke_rounded_rect(
+        Rect::new(
+            2,
+            2,
+            canvas.width.saturating_sub(4),
+            canvas.height.saturating_sub(4),
+        ),
+        23,
+        1,
+        theme.text.with_alpha(88),
+    );
     canvas.fill_rounded_rect(
         Rect::new(12, 7, canvas.width.saturating_sub(24), 1),
         1,
@@ -320,12 +316,12 @@ pub(crate) fn paint_rail_surface(
             canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(112));
         }
         if matches!(action, RailAction::Prime) {
-            let mark = Rect::new(rect.x + 24, rect.y + 8, rect.width.saturating_sub(48), 68);
+            let mark = Rect::new(rect.x + 18, rect.y + 4, rect.width.saturating_sub(36), 80);
             draw_prime_mark(canvas, mark, theme, is_active);
             continue;
         }
 
-        let icon_size = 28;
+        let icon_size = RAIL_PRIMARY_ICON_SIZE;
         let icon_rect = Rect::new(
             rect.center_x().round() as i32 - icon_size as i32 / 2,
             rect.y + 17,

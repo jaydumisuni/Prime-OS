@@ -17,9 +17,9 @@ pub(crate) struct Theme {
 impl Theme {
     pub(crate) const fn prime_dark() -> Self {
         Self {
-            base_0: Argb::from_u32(0xff05050d),
-            base_1: Argb::from_u32(0xff050818),
-            base_2: Argb::from_u32(0xff071021),
+            base_0: Argb::from_u32(0xff050916),
+            base_1: Argb::from_u32(0xff071326),
+            base_2: Argb::from_u32(0xff0a2030),
             panel: Argb::from_u32(0xff0f172a),
             cyan: Argb::from_u32(0xff22d3ee),
             cyan_alt: Argb::from_u32(0xff06b6d4),

@@ -14,7 +14,8 @@ pub(crate) use background::{
     STATUS_CLUSTER_WIDTH,
 };
 pub(crate) use prime_launcher::{
-    paint_prime_launcher_surface, PrimeLauncherLayout, PRIME_LAUNCHER_HEIGHT, PRIME_LAUNCHER_WIDTH,
+    paint_prime_launcher_surface, PrimeLauncherLayout, PrimeLauncherView, PRIME_LAUNCHER_HEIGHT,
+    PRIME_LAUNCHER_LEFT_MARGIN, PRIME_LAUNCHER_TOP_MARGIN, PRIME_LAUNCHER_WIDTH,
 };
 pub(crate) use primitives::{draw_icon, Argb, Canvas, Icon, Rect};
 pub(crate) use quick_controls::{
@@ -34,7 +35,7 @@ mod tests {
 
     #[test]
     fn alpha_blend_preserves_opaque_destination() {
-        let dst = Argb::from_u32(0xff050818);
+        let dst = Argb::from_u32(0xff071326);
         let src = Argb::from_u32(0x8022d3ee);
         let mixed = src.over(dst);
         assert_eq!(mixed.a, 255);
@@ -75,8 +76,8 @@ mod tests {
         assert_eq!(canvas.pixel(24, 24).unwrap().a, 0);
         canvas.vertical_gradient(
             Rect::new(48, 0, 8, 32),
-            Argb::from_u32(0xff05050d),
-            Argb::from_u32(0xff071021),
+            Argb::from_u32(0xff050916),
+            Argb::from_u32(0xff0a2030),
         );
         assert_ne!(canvas.pixel(50, 1).unwrap(), canvas.pixel(50, 30).unwrap());
         canvas.radial_glow(32.0, 52.0, 10.0, Argb::from_u32(0x8022d3ee));
@@ -99,9 +100,9 @@ mod tests {
     #[test]
     fn prime_dark_theme_matches_brand_authority() {
         let theme = Theme::prime_dark();
-        assert_eq!(theme.base_0, Argb::from_u32(0xff05050d));
-        assert_eq!(theme.base_1, Argb::from_u32(0xff050818));
-        assert_eq!(theme.base_2, Argb::from_u32(0xff071021));
+        assert_eq!(theme.base_0, Argb::from_u32(0xff050916));
+        assert_eq!(theme.base_1, Argb::from_u32(0xff071326));
+        assert_eq!(theme.base_2, Argb::from_u32(0xff0a2030));
         assert_eq!(theme.panel, Argb::from_u32(0xff0f172a));
         assert_eq!(theme.cyan, Argb::from_u32(0xff22d3ee));
         assert_eq!(theme.cyan_alt, Argb::from_u32(0xff06b6d4));
@@ -160,6 +161,12 @@ mod tests {
         let icons = [
             Icon::Prime,
             Icon::Applications,
+            Icon::Files,
+            Icon::Terminal,
+            Icon::Browser,
+            Icon::Settings,
+            Icon::Media,
+            Icon::Recovery,
             Icon::Status,
             Icon::Network,
             Icon::Audio,
@@ -169,7 +176,6 @@ mod tests {
             Icon::Power,
             Icon::Search,
             Icon::Chevron,
-            Icon::Blocked,
         ];
         for icon in icons {
             let mut bytes = vec![0u8; 32 * 32 * 4];
@@ -301,6 +307,27 @@ mod tests {
     }
 
     #[test]
+    fn reference_rail_and_top_cluster_use_presentation_glyphs() {
+        const { assert!(rail::RAIL_PRIMARY_ICON_SIZE >= 34) };
+        let icons = [Icon::Shield, Icon::Wifi, Icon::Battery];
+        for icon in icons {
+            let mut bytes = vec![0u8; 40 * 40 * 4];
+            let mut canvas = Canvas::new(&mut bytes, 40, 40).unwrap();
+            draw_icon(
+                &mut canvas,
+                Rect::new(4, 4, 32, 32),
+                icon,
+                Argb::from_u32(0xffdbeafe),
+            );
+            let painted = (0..40)
+                .flat_map(|y| (0..40).map(move |x| (x, y)))
+                .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 20))
+                .count();
+            assert!(painted > 20, "presentation glyph must render");
+        }
+    }
+
+    #[test]
     fn approved_prime_mark_renders_identity_geometry() {
         let theme = Theme::prime_dark();
         let mut bytes = vec![0u8; 80 * 80 * 4];
@@ -320,24 +347,50 @@ mod tests {
         let mut bytes = vec![0u8; 1920 * 1080 * 4];
         let mut canvas = Canvas::new(&mut bytes, 1920, 1080).unwrap();
         paint_settled_background(&mut canvas, &theme);
-        let before_left = canvas.pixel(70, 1010).unwrap();
-        let before_right = canvas.pixel(1810, 1010).unwrap();
-        paint_top_status_strip(&mut canvas, &mut text, &theme, TopStatus::Online);
-        let left_region = (970..1055)
+        let left_before = (970..1055)
             .flat_map(|y| (55..360).map(move |x| (x, y)))
-            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 0 && p.r > 110))
-            .count();
-        let right_region = (970..1055)
+            .map(|(x, y)| canvas.pixel(x, y).unwrap())
+            .collect::<Vec<_>>();
+        let right_before = (970..1055)
             .flat_map(|y| (1680..1885).map(move |x| (x, y)))
-            .filter(|&(x, y)| canvas.pixel(x, y).is_some_and(|p| p.a > 0 && p.b > 80))
+            .map(|(x, y)| canvas.pixel(x, y).unwrap())
+            .collect::<Vec<_>>();
+        paint_top_status_strip(&mut canvas, &mut text, &theme, TopStatus::Online);
+        let left_changed = (970..1055)
+            .flat_map(|y| (55..360).map(move |x| (x, y)))
+            .zip(left_before)
+            .filter(|((x, y), before)| canvas.pixel(*x, *y).is_some_and(|after| after != *before))
             .count();
-        assert!(left_region > 60, "bottom-left Prime identity must render");
+        let right_changed = (970..1055)
+            .flat_map(|y| (1680..1885).map(move |x| (x, y)))
+            .zip(right_before)
+            .filter(|((x, y), before)| canvas.pixel(*x, *y).is_some_and(|after| after != *before))
+            .count();
+        assert!(left_changed > 60, "bottom-left Prime identity must render");
         assert!(
-            right_region > 20,
+            right_changed > 20,
             "bottom-right Prime watermark must render"
         );
-        assert_ne!(canvas.pixel(70, 1010).unwrap(), before_left);
-        assert_ne!(canvas.pixel(1810, 1010).unwrap(), before_right);
+    }
+
+    #[test]
+    fn approved_wallpaper_asset_is_frozen_to_reference_sample() {
+        assert_eq!(
+            background::WALLPAPER_RGB565.len(),
+            (background::WALLPAPER_SOURCE_WIDTH * background::WALLPAPER_SOURCE_HEIGHT * 2) as usize
+        );
+        let sample = |x: u32, y: u32| {
+            let offset = ((y * background::WALLPAPER_SOURCE_WIDTH + x) * 2) as usize;
+            u16::from_le_bytes([
+                background::WALLPAPER_RGB565[offset],
+                background::WALLPAPER_RGB565[offset + 1],
+            ])
+        };
+        assert_eq!(sample(0, 0), 0x0041);
+        assert_eq!(sample(80, 45), 0x0927);
+        assert_eq!(sample(20, 55), 0x190a);
+        assert_eq!(sample(120, 40), 0x1414);
+        assert_eq!(sample(159, 89), 0x0042);
     }
 
     #[test]
@@ -346,9 +399,10 @@ mod tests {
     }
 
     #[test]
-    fn prime_launcher_is_compact_and_avoids_engineering_ready_badges() {
+    fn prime_launcher_matches_approved_first_light_proportions_and_avoids_ready_badges() {
         const {
-            assert!(PRIME_LAUNCHER_HEIGHT <= 540);
+            assert!(PRIME_LAUNCHER_WIDTH >= 840 && PRIME_LAUNCHER_WIDTH <= 880);
+            assert!(PRIME_LAUNCHER_HEIGHT >= 760 && PRIME_LAUNCHER_HEIGHT <= 810);
         }
         assert_eq!(prime_launcher::application_state_label(true), None);
         assert_eq!(
@@ -374,15 +428,15 @@ mod tests {
     }
 
     #[test]
-    fn quick_controls_use_a_two_column_card_grid() {
-        let layout = QuickControlsLayout::new(430, 600);
+    fn quick_controls_use_reference_three_top_cards_and_two_summary_cards() {
+        let layout = QuickControlsLayout::new(600, 902);
         let first = layout.card_rect(0);
         let second = layout.card_rect(1);
         let third = layout.card_rect(2);
         assert!(second.x > first.x);
         assert_eq!(second.y, first.y);
-        assert!(third.y > first.y);
-        assert_eq!(third.x, first.x);
+        assert!(third.x > second.x);
+        assert_eq!(third.y, first.y);
     }
 
     #[test]
@@ -396,6 +450,23 @@ mod tests {
         assert_eq!(center.a, 255);
         assert_ne!(center, Argb::from_u32(0xfff8fafc));
         assert_ne!(top, bottom);
+    }
+
+    #[test]
+    fn approved_wallpaper_reference_anchors_are_preserved() {
+        let mut bytes = vec![0u8; 320 * 180 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 320, 180).unwrap();
+        paint_settled_background(&mut canvas, &Theme::prime_dark());
+        let near = |pixel: Argb, expected: (u8, u8, u8), tolerance: i16| {
+            (i16::from(pixel.r) - i16::from(expected.0)).abs() <= tolerance
+                && (i16::from(pixel.g) - i16::from(expected.1)).abs() <= tolerance
+                && (i16::from(pixel.b) - i16::from(expected.2)).abs() <= tolerance
+        };
+        assert!(near(canvas.pixel(160, 90).unwrap(), (13, 39, 61), 16));
+        assert!(near(canvas.pixel(40, 110).unwrap(), (29, 36, 87), 18));
+        assert!(near(canvas.pixel(240, 80).unwrap(), (23, 128, 160), 20));
+        assert!(near(canvas.pixel(128, 126).unwrap(), (139, 168, 214), 24));
+        assert!(near(canvas.pixel(276, 64).unwrap(), (29, 115, 144), 20));
     }
 
     #[test]
@@ -501,8 +572,8 @@ mod tests {
     }
 
     #[test]
-    fn prime_launcher_layout_maps_two_column_application_cards() {
-        let layout = PrimeLauncherLayout::new(520, 600);
+    fn prime_launcher_layout_maps_four_column_application_cards() {
+        let layout = PrimeLauncherLayout::new(858, 786);
         let first = layout.card_rect(0);
         let second = layout.card_rect(1);
         let third = layout.card_rect(2);
@@ -519,13 +590,29 @@ mod tests {
             Some(2)
         );
         assert!(second.x > first.x);
-        assert!(third.y > first.y);
+        assert!(third.x > second.x);
         assert_eq!(layout.application_at(8.0, 8.0, 3), None);
+        assert_eq!(
+            layout.power_action_at(layout.restart.center_x(), layout.restart.center_y()),
+            Some(SystemPowerAction::Reboot)
+        );
+        assert_eq!(
+            layout.power_action_at(layout.power_off.center_x(), layout.power_off.center_y()),
+            Some(SystemPowerAction::PowerOff)
+        );
+        assert_eq!(
+            layout.power_action_at(layout.lock.center_x(), layout.lock.center_y()),
+            None
+        );
+        assert_eq!(
+            layout.power_action_at(layout.log_out.center_x(), layout.log_out.center_y()),
+            None
+        );
     }
 
     #[test]
     fn quick_controls_power_actions_are_bounded_to_cards() {
-        let layout = QuickControlsLayout::new(430, 600);
+        let layout = QuickControlsLayout::new(600, 902);
         assert_eq!(
             layout.power_action_at(layout.restart.center_x(), layout.restart.center_y()),
             Some(SystemPowerAction::Reboot)

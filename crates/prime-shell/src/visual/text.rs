@@ -40,6 +40,7 @@ impl TextStyle {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn title() -> Self {
         Self {
             size_px: 24,

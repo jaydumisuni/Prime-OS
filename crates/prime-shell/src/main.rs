@@ -412,6 +412,12 @@ impl PrimeShell {
             self.close_transient(ShellSurfaceKind::PrimeLauncher, queue_handle, source);
             return;
         }
+        self.pending_power = None;
+        self.quick_message = None;
+        self.quick_power_ready = self
+            .core
+            .system_status()
+            .is_ok_and(|status| status.power_ready);
         match self.core.applications() {
             Ok(projection) => {
                 self.applications = projection.applications;
@@ -434,7 +440,12 @@ impl PrimeShell {
             queue_handle,
             PRIME_NAMESPACE,
             Anchor::TOP | Anchor::LEFT,
-            (82, 0, 0, 132),
+            (
+                visual::PRIME_LAUNCHER_TOP_MARGIN,
+                0,
+                0,
+                visual::PRIME_LAUNCHER_LEFT_MARGIN,
+            ),
             visual::PRIME_LAUNCHER_WIDTH,
             visual::PRIME_LAUNCHER_HEIGHT,
         ));
@@ -476,7 +487,7 @@ impl PrimeShell {
             queue_handle,
             QUICK_CONTROLS_NAMESPACE,
             Anchor::TOP | Anchor::RIGHT,
-            (70, 28, 0, 0),
+            (94, 28, 0, 0),
             visual::QUICK_WIDTH,
             visual::QUICK_HEIGHT,
         ));
@@ -549,10 +560,14 @@ impl PrimeShell {
                     &mut canvas,
                     text,
                     &theme,
-                    &self.applications,
-                    self.selected_application,
-                    self.prime_launcher_message.as_deref(),
-                    progress,
+                    visual::PrimeLauncherView {
+                        applications: &self.applications,
+                        selected: self.selected_application,
+                        power_ready: self.quick_power_ready,
+                        pending_power: self.pending_power,
+                        message: self.prime_launcher_message.as_deref(),
+                        progress,
+                    },
                 );
             })
         {
@@ -660,6 +675,8 @@ impl PrimeShell {
             self.quick_message = None;
             self.redraw_quick_controls(queue_handle);
         } else {
+            self.pending_power = None;
+            self.quick_message = None;
             self.redraw_prime_launcher(queue_handle);
         }
         match source {
@@ -710,10 +727,14 @@ impl PrimeShell {
                             &mut canvas,
                             text,
                             &theme,
-                            &self.applications,
-                            self.selected_application,
-                            self.prime_launcher_message.as_deref(),
-                            progress,
+                            visual::PrimeLauncherView {
+                                applications: &self.applications,
+                                selected: self.selected_application,
+                                power_ready: self.quick_power_ready,
+                                pending_power: self.pending_power,
+                                message: self.prime_launcher_message.as_deref(),
+                                progress,
+                            },
                         );
                     },
                 ) {
@@ -1328,12 +1349,31 @@ impl PointerHandler for PrimeShell {
                 .as_ref()
                 .is_some_and(|prime_launcher| &event.surface == prime_launcher.layer.wl_surface())
             {
-                if let Some(index) = self.prime_launcher.as_ref().and_then(|prime_launcher| {
-                    visual::PrimeLauncherLayout::new(prime_launcher.width, prime_launcher.height)
-                        .application_at(event.position.0, event.position.1, self.applications.len())
-                }) {
+                let (application, power_action) = self
+                    .prime_launcher
+                    .as_ref()
+                    .map(|prime_launcher| {
+                        let layout = visual::PrimeLauncherLayout::new(
+                            prime_launcher.width,
+                            prime_launcher.height,
+                        );
+                        (
+                            layout.application_at(
+                                event.position.0,
+                                event.position.1,
+                                self.applications.len(),
+                            ),
+                            layout.power_action_at(event.position.0, event.position.1),
+                        )
+                    })
+                    .unwrap_or((None, None));
+                if let Some(index) = application {
                     self.selected_application = index;
                     self.activate_selected_application();
+                    self.redraw_prime_launcher(queue_handle);
+                } else if let Some(action) = power_action {
+                    self.stage_power_action(action);
+                    self.prime_launcher_message = self.quick_message.take();
                     self.redraw_prime_launcher(queue_handle);
                 }
             } else {
