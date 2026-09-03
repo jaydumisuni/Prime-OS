@@ -4,10 +4,6 @@ use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSyst
 pub(crate) const PRIMARY_AURORA_BANDS: usize = 10;
 #[cfg(test)]
 pub(crate) const SECONDARY_AURORA_BANDS: usize = 4;
-pub(crate) const WALLPAPER_SOURCE_WIDTH: u32 = 160;
-pub(crate) const WALLPAPER_SOURCE_HEIGHT: u32 = 90;
-pub(crate) const WALLPAPER_RGB565: &[u8] =
-    include_bytes!("../../assets/prime-first-light-wallpaper-160x90.rgb565");
 #[cfg(test)]
 pub(crate) const DECORATIVE_BOX_COUNT: usize = 0;
 pub(crate) const TOP_STRIP_RULE_Y: i32 = 59;
@@ -16,55 +12,60 @@ pub(crate) const STATUS_CLUSTER_HEIGHT: u32 = 44;
 pub(crate) const STATUS_CLUSTER_TOP_MARGIN: i32 = 7;
 pub(crate) const STATUS_CLUSTER_RIGHT_MARGIN: i32 = 24;
 
+#[cfg(test)]
 pub(crate) fn paint_settled_background(canvas: &mut Canvas<'_>, theme: &Theme) {
+    paint_background_base(canvas, theme);
+    paint_background_motion(canvas, theme, 0.0);
+}
+
+pub(crate) fn paint_background_base(canvas: &mut Canvas<'_>, theme: &Theme) {
     canvas.clear();
     if canvas.width == 0 || canvas.height == 0 {
         return;
     }
 
-    paint_reference_wallpaper(canvas);
-    paint_reference_fine_detail(canvas, theme);
+    let full = Rect::new(0, 0, canvas.width, canvas.height);
+    canvas.vertical_gradient(full, theme.base_0, theme.base_1);
+
+    let width = canvas.width as f32;
+    let height = canvas.height as f32;
+    // Broad Prime light field. All positions and radii are normalized to the
+    // output, so there is no bitmap-upscale path at any display resolution.
+    canvas.radial_glow(
+        width * 0.20,
+        height * 0.56,
+        width * 0.46,
+        theme.violet_alt.with_alpha(104),
+    );
+    canvas.radial_glow(
+        width * 0.43,
+        height * 0.69,
+        width * 0.32,
+        theme.violet.with_alpha(54),
+    );
+    canvas.radial_glow(
+        width * 0.77,
+        height * 0.46,
+        width * 0.43,
+        theme.cyan_alt.with_alpha(96),
+    );
+    canvas.radial_glow(
+        width * 0.61,
+        height * 0.67,
+        width * 0.28,
+        theme.cyan.with_alpha(48),
+    );
+    canvas.radial_glow(
+        width * 0.52,
+        height * 0.58,
+        width * 0.18,
+        theme.text.with_alpha(18),
+    );
+
     canvas.fill_rect(
         Rect::new(0, TOP_STRIP_RULE_Y, canvas.width, 1),
         theme.text.with_alpha(58),
     );
-}
-
-fn paint_reference_wallpaper(canvas: &mut Canvas<'_>) {
-    debug_assert_eq!(
-        WALLPAPER_RGB565.len(),
-        (WALLPAPER_SOURCE_WIDTH * WALLPAPER_SOURCE_HEIGHT * 2) as usize
-    );
-    let output_width = canvas.width.max(1);
-    let output_height = canvas.height.max(1);
-    let source_max_x = WALLPAPER_SOURCE_WIDTH - 1;
-    let source_max_y = WALLPAPER_SOURCE_HEIGHT - 1;
-
-    for y in 0..output_height {
-        let source_y = if output_height == 1 {
-            0.0
-        } else {
-            y as f32 * source_max_y as f32 / (output_height - 1) as f32
-        };
-        let y0 = source_y.floor() as u32;
-        let y1 = (y0 + 1).min(source_max_y);
-        let ty = source_y - y0 as f32;
-
-        for x in 0..output_width {
-            let source_x = if output_width == 1 {
-                0.0
-            } else {
-                x as f32 * source_max_x as f32 / (output_width - 1) as f32
-            };
-            let x0 = source_x.floor() as u32;
-            let x1 = (x0 + 1).min(source_max_x);
-            let tx = source_x - x0 as f32;
-
-            let top = mix_color(wallpaper_pixel(x0, y0), wallpaper_pixel(x1, y0), tx);
-            let bottom = mix_color(wallpaper_pixel(x0, y1), wallpaper_pixel(x1, y1), tx);
-            canvas.blend_pixel(x as i32, y as i32, mix_color(top, bottom, ty));
-        }
-    }
 }
 
 fn cubic_point(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
@@ -77,13 +78,15 @@ fn paint_curve(
     control_x: [f32; 4],
     control_y: [f32; 4],
     y_offset: f32,
+    thickness: u32,
     color: Argb,
 ) {
     let width = canvas.width as f32;
     let height = canvas.height as f32;
+    let samples = ((canvas.width / 6).clamp(180, 420)) as usize;
     let mut previous = None;
-    for sample in 0..=240 {
-        let t = sample as f32 / 240.0;
+    for sample in 0..=samples {
+        let t = sample as f32 / samples as f32;
         let point = (
             (cubic_point(control_x[0], control_x[1], control_x[2], control_x[3], t) * width).round()
                 as i32,
@@ -92,59 +95,89 @@ fn paint_curve(
                 .round() as i32,
         );
         if let Some(last) = previous {
-            canvas.line(last, point, 1, color);
+            canvas.line(last, point, thickness, color);
         }
         previous = Some(point);
     }
 }
 
-fn paint_reference_fine_detail(canvas: &mut Canvas<'_>, theme: &Theme) {
-    // Fine luminous strands measured from the approved First Light wallpaper.
-    // The compact RGB565 authority preserves the large light field; these
-    // low-alpha one-pixel traces restore the crisp filament structure lost
-    // during downsampling without changing the macro colour distribution.
+pub(crate) fn paint_background_motion(canvas: &mut Canvas<'_>, theme: &Theme, phase: f32) {
+    if canvas.width == 0 || canvas.height == 0 {
+        return;
+    }
+
+    // Slow counter-phase drift keeps the desktop alive while preserving the
+    // approved composition. Motion amplitude is intentionally small so text,
+    // windows and the rail remain visually stable.
+    let slow = phase.sin();
+    let counter = (phase * 0.73 + 1.2).sin();
+    let fine = (phase * 1.31 + 0.4).sin();
+
     let violet_curve_x = [0.0, 0.16, 0.31, 0.58];
     let violet_curve_y = [0.36, 0.43, 0.72, 0.61];
-    for offset in [-0.012, -0.006, 0.0, 0.007, 0.014] {
+    let violet_drift = slow * 0.010;
+    for offset in [-0.018, -0.012, -0.006, 0.0, 0.007, 0.014, 0.020] {
+        let center = offset == 0.0;
         paint_curve(
             canvas,
             violet_curve_x,
             violet_curve_y,
-            offset,
-            theme.violet.with_alpha(if offset == 0.0 { 82 } else { 28 }),
+            offset + violet_drift,
+            1,
+            theme.violet.with_alpha(if center {
+                104
+            } else if offset.abs() <= 0.007 {
+                44
+            } else {
+                20
+            }),
         );
     }
 
     let cyan_curve_x = [0.47, 0.61, 0.77, 1.01];
     let cyan_curve_y = [0.61, 0.59, 0.55, 0.34];
-    for offset in [-0.012, -0.006, 0.0, 0.007, 0.014] {
+    let cyan_drift = counter * 0.011;
+    for offset in [-0.019, -0.012, -0.006, 0.0, 0.007, 0.014, 0.021] {
+        let center = offset == 0.0;
         paint_curve(
             canvas,
             cyan_curve_x,
             cyan_curve_y,
-            offset,
-            theme.cyan.with_alpha(if offset == 0.0 { 94 } else { 30 }),
+            offset + cyan_drift,
+            1,
+            theme.cyan.with_alpha(if center {
+                112
+            } else if offset.abs() <= 0.007 {
+                46
+            } else {
+                21
+            }),
         );
     }
 
     let upper_x = [0.61, 0.73, 0.86, 1.02];
     let upper_y = [0.36, 0.43, 0.33, 0.20];
-    for offset in [-0.008, 0.0, 0.009] {
+    let upper_drift = fine * 0.008;
+    for offset in [-0.010, 0.0, 0.011] {
         paint_curve(
             canvas,
             upper_x,
             upper_y,
-            offset,
-            theme.cyan.with_alpha(if offset == 0.0 { 58 } else { 20 }),
+            offset + upper_drift,
+            1,
+            theme.cyan.with_alpha(if offset == 0.0 { 70 } else { 24 }),
         );
     }
 
-    // Sparse deterministic light points echo the reference particle field.
+    // Sparse moving points provide enough temporal evidence to prove that the
+    // idle field is alive without turning the desktop into a particle effect.
     let width = canvas.width as i32;
     let height = canvas.height as i32;
+    let drift_x = (slow * canvas.width as f32 * 0.006).round() as i32;
+    let drift_y = (counter * canvas.height as f32 * 0.004).round() as i32;
     for index in 0..92_i32 {
-        let x = (index * 197 + 83).rem_euclid(width.max(1));
-        let y = (index * index * 43 + 61).rem_euclid(height.max(1));
+        let x = (index * 197 + 83 + drift_x).rem_euclid(width.max(1));
+        let y = (index * index * 43 + 61 + drift_y).rem_euclid(height.max(1));
         let reference_zone = (x < width * 2 / 5 && y > height / 8 && y < height * 4 / 5)
             || (x > width / 2 && y < height * 3 / 5);
         if reference_zone && index % 3 != 0 {
@@ -153,37 +186,8 @@ fn paint_reference_fine_detail(canvas: &mut Canvas<'_>, theme: &Theme) {
             } else {
                 theme.cyan
             };
-            canvas.circle(x, y, 1, color.with_alpha(34));
+            canvas.circle(x, y, 1, color.with_alpha(36));
         }
-    }
-}
-
-fn wallpaper_pixel(x: u32, y: u32) -> Argb {
-    let offset = ((y * WALLPAPER_SOURCE_WIDTH + x) * 2) as usize;
-    let value = u16::from_le_bytes([WALLPAPER_RGB565[offset], WALLPAPER_RGB565[offset + 1]]);
-    let red = ((value >> 11) & 0x1f) as u32;
-    let green = ((value >> 5) & 0x3f) as u32;
-    let blue = (value & 0x1f) as u32;
-    Argb {
-        a: 255,
-        r: ((red * 255 + 15) / 31) as u8,
-        g: ((green * 255 + 31) / 63) as u8,
-        b: ((blue * 255 + 15) / 31) as u8,
-    }
-}
-
-fn mix_color(start: Argb, end: Argb, t: f32) -> Argb {
-    let t = t.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| {
-        (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
-            .round()
-            .clamp(0.0, 255.0) as u8
-    };
-    Argb {
-        a: 255,
-        r: mix(start.r, end.r),
-        g: mix(start.g, end.g),
-        b: mix(start.b, end.b),
     }
 }
 

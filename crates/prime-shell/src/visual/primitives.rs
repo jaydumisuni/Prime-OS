@@ -67,7 +67,6 @@ impl Argb {
         Self { a: alpha, ..self }
     }
 
-    #[cfg(test)]
     fn mix(self, other: Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         Self {
@@ -119,7 +118,6 @@ fn composite_channel(
         as u8
 }
 
-#[cfg(test)]
 fn lerp_channel(start: u8, end: u8, t: f32) -> u8 {
     (f32::from(start) + (f32::from(end) - f32::from(start)) * t)
         .round()
@@ -261,7 +259,6 @@ impl<'a> Canvas<'a> {
         );
     }
 
-    #[cfg(test)]
     pub(crate) fn vertical_gradient(&mut self, rect: Rect, top: Argb, bottom: Argb) {
         if rect.height == 0 {
             return;

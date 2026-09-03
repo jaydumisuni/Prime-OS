@@ -8,10 +8,12 @@ pub(crate) mod rail;
 pub(crate) mod text;
 pub(crate) mod theme;
 
+#[cfg(test)]
+pub(crate) use background::paint_settled_background;
 pub(crate) use background::{
-    paint_settled_background, paint_status_cluster, paint_top_status_strip, StatusClusterLayout,
-    TopStatus, STATUS_CLUSTER_HEIGHT, STATUS_CLUSTER_RIGHT_MARGIN, STATUS_CLUSTER_TOP_MARGIN,
-    STATUS_CLUSTER_WIDTH,
+    paint_background_base, paint_background_motion, paint_status_cluster, paint_top_status_strip,
+    StatusClusterLayout, TopStatus, STATUS_CLUSTER_HEIGHT, STATUS_CLUSTER_RIGHT_MARGIN,
+    STATUS_CLUSTER_TOP_MARGIN, STATUS_CLUSTER_WIDTH,
 };
 pub(crate) use prime_launcher::{
     paint_prime_launcher_surface, PrimeLauncherLayout, PrimeLauncherView, PRIME_LAUNCHER_HEIGHT,
@@ -374,23 +376,51 @@ mod tests {
     }
 
     #[test]
-    fn approved_wallpaper_asset_is_frozen_to_reference_sample() {
-        assert_eq!(
-            background::WALLPAPER_RGB565.len(),
-            (background::WALLPAPER_SOURCE_WIDTH * background::WALLPAPER_SOURCE_HEIGHT * 2) as usize
+    fn wallpaper_composition_scales_without_a_low_resolution_source_grid() {
+        let theme = Theme::prime_dark();
+        let mut small_bytes = vec![0u8; 320 * 180 * 4];
+        let mut large_bytes = vec![0u8; 640 * 360 * 4];
+        let mut small = Canvas::new(&mut small_bytes, 320, 180).unwrap();
+        let mut large = Canvas::new(&mut large_bytes, 640, 360).unwrap();
+        paint_settled_background(&mut small, &theme);
+        paint_settled_background(&mut large, &theme);
+
+        let normalized = [(32, 45), (96, 126), (160, 90), (240, 82), (276, 64)];
+        for (x, y) in normalized {
+            let a = small.pixel(x, y).unwrap();
+            let b = large.pixel(x * 2, y * 2).unwrap();
+            let delta = |left: u8, right: u8| (i16::from(left) - i16::from(right)).abs();
+            assert!(delta(a.r, b.r) <= 14, "red composition drift at {x},{y}");
+            assert!(delta(a.g, b.g) <= 14, "green composition drift at {x},{y}");
+            assert!(delta(a.b, b.b) <= 14, "blue composition drift at {x},{y}");
+        }
+    }
+
+    #[test]
+    fn idle_wallpaper_motion_is_visible_but_bounded() {
+        let theme = Theme::prime_dark();
+        let mut first_bytes = vec![0u8; 480 * 270 * 4];
+        let mut second_bytes = vec![0u8; 480 * 270 * 4];
+        let mut first = Canvas::new(&mut first_bytes, 480, 270).unwrap();
+        let mut second = Canvas::new(&mut second_bytes, 480, 270).unwrap();
+        paint_background_base(&mut first, &theme);
+        paint_background_motion(&mut first, &theme, 0.0);
+        paint_background_base(&mut second, &theme);
+        paint_background_motion(&mut second, &theme, 1.4);
+
+        let changed = (0..270)
+            .flat_map(|y| (0..480).map(move |x| (x, y)))
+            .filter(|(x, y)| first.pixel(*x, *y) != second.pixel(*x, *y))
+            .count();
+        let total = 480 * 270;
+        assert!(
+            changed > 300,
+            "idle animation must produce visible frame delta"
         );
-        let sample = |x: u32, y: u32| {
-            let offset = ((y * background::WALLPAPER_SOURCE_WIDTH + x) * 2) as usize;
-            u16::from_le_bytes([
-                background::WALLPAPER_RGB565[offset],
-                background::WALLPAPER_RGB565[offset + 1],
-            ])
-        };
-        assert_eq!(sample(0, 0), 0x0041);
-        assert_eq!(sample(80, 45), 0x0927);
-        assert_eq!(sample(20, 55), 0x190a);
-        assert_eq!(sample(120, 40), 0x1414);
-        assert_eq!(sample(159, 89), 0x0042);
+        assert!(
+            changed < total / 4,
+            "idle animation must not churn the whole desktop every frame"
+        );
     }
 
     #[test]
@@ -462,11 +492,11 @@ mod tests {
                 && (i16::from(pixel.g) - i16::from(expected.1)).abs() <= tolerance
                 && (i16::from(pixel.b) - i16::from(expected.2)).abs() <= tolerance
         };
-        assert!(near(canvas.pixel(160, 90).unwrap(), (13, 39, 61), 16));
-        assert!(near(canvas.pixel(40, 110).unwrap(), (29, 36, 87), 18));
-        assert!(near(canvas.pixel(240, 80).unwrap(), (23, 128, 160), 20));
-        assert!(near(canvas.pixel(128, 126).unwrap(), (139, 168, 214), 24));
-        assert!(near(canvas.pixel(276, 64).unwrap(), (29, 115, 144), 20));
+        assert!(near(canvas.pixel(160, 90).unwrap(), (32, 47, 79), 14));
+        assert!(near(canvas.pixel(40, 110).unwrap(), (51, 34, 92), 14));
+        assert!(near(canvas.pixel(240, 80).unwrap(), (7, 74, 94), 16));
+        assert!(near(canvas.pixel(128, 126).unwrap(), (45, 40, 93), 16));
+        assert!(near(canvas.pixel(276, 64).unwrap(), (6, 48, 66), 16));
     }
 
     #[test]

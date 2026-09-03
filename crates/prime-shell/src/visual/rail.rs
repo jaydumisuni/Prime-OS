@@ -231,45 +231,108 @@ impl RailLayout {
     }
 }
 
-const PRIME_LOGO_SIZE: u32 = 64;
-const PRIME_LOGO_RGBA: &[u8] = include_bytes!("../../assets/prime-logo-64.rgba");
+const PRIME_LOGO_48: &[u8] = include_bytes!("../../assets/branding/prime-logo-48.rgba");
+const PRIME_LOGO_64: &[u8] = include_bytes!("../../assets/branding/prime-logo-64.rgba");
+const PRIME_LOGO_80: &[u8] = include_bytes!("../../assets/branding/prime-logo-80.rgba");
+const PRIME_LOGO_128: &[u8] = include_bytes!("../../assets/branding/prime-logo-128.rgba");
+
+fn prime_logo_asset(target_size: u32) -> (&'static [u8], u32) {
+    if target_size <= 48 {
+        (PRIME_LOGO_48, 48)
+    } else if target_size <= 64 {
+        (PRIME_LOGO_64, 64)
+    } else if target_size <= 80 {
+        (PRIME_LOGO_80, 80)
+    } else {
+        (PRIME_LOGO_128, 128)
+    }
+}
+
+fn logo_pixel(source: &[u8], source_size: u32, x: u32, y: u32) -> [f32; 4] {
+    let offset = ((y * source_size + x) * 4) as usize;
+    let alpha = f32::from(source[offset + 3]) / 255.0;
+    [
+        f32::from(source[offset]) * alpha,
+        f32::from(source[offset + 1]) * alpha,
+        f32::from(source[offset + 2]) * alpha,
+        f32::from(source[offset + 3]),
+    ]
+}
+
+fn sample_logo_bilinear(source: &[u8], source_size: u32, x: f32, y: f32) -> Argb {
+    let max = source_size.saturating_sub(1);
+    let x = x.clamp(0.0, max as f32);
+    let y = y.clamp(0.0, max as f32);
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(max);
+    let y1 = (y0 + 1).min(max);
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let p00 = logo_pixel(source, source_size, x0, y0);
+    let p10 = logo_pixel(source, source_size, x1, y0);
+    let p01 = logo_pixel(source, source_size, x0, y1);
+    let p11 = logo_pixel(source, source_size, x1, y1);
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let mut mixed = [0.0_f32; 4];
+    for channel in 0..4 {
+        let top = lerp(p00[channel], p10[channel], tx);
+        let bottom = lerp(p01[channel], p11[channel], tx);
+        mixed[channel] = lerp(top, bottom, ty);
+    }
+    let alpha = mixed[3].round().clamp(0.0, 255.0) as u8;
+    if alpha == 0 {
+        return Argb {
+            a: 0,
+            r: 0,
+            g: 0,
+            b: 0,
+        };
+    }
+    let alpha_scale = 255.0 / f32::from(alpha);
+    Argb {
+        a: alpha,
+        r: (mixed[0] * alpha_scale).round().clamp(0.0, 255.0) as u8,
+        g: (mixed[1] * alpha_scale).round().clamp(0.0, 255.0) as u8,
+        b: (mixed[2] * alpha_scale).round().clamp(0.0, 255.0) as u8,
+    }
+}
 
 pub(crate) fn draw_prime_mark(canvas: &mut Canvas<'_>, rect: Rect, theme: &Theme, active: bool) {
-    debug_assert_eq!(
-        PRIME_LOGO_RGBA.len(),
-        (PRIME_LOGO_SIZE * PRIME_LOGO_SIZE * 4) as usize
-    );
     let size = rect.width.min(rect.height).clamp(1, 80);
+    let (source, source_size) = prime_logo_asset(size);
+    debug_assert_eq!(source.len(), (source_size * source_size * 4) as usize);
+    let center_x = rect.center_x() as f32;
+    let center_y = rect.center_y() as f32;
     let x0 = rect.center_x().round() as i32 - size as i32 / 2;
     let y0 = rect.center_y().round() as i32 - size as i32 / 2;
-    if active {
-        canvas.radial_glow(
-            rect.center_x() as f32,
-            rect.center_y() as f32,
-            size as f32 * 0.72,
-            theme.violet.with_alpha(118),
-        );
-        canvas.radial_glow(
-            rect.center_x() as f32 + size as f32 * 0.12,
-            rect.center_y() as f32,
-            size as f32 * 0.58,
-            theme.cyan.with_alpha(78),
-        );
-    }
+
+    // The approved Prime mark always carries a restrained bloom. Active state
+    // increases the same bloom without sacrificing the sharp vector-like edge.
+    canvas.radial_glow(
+        center_x,
+        center_y,
+        size as f32 * 0.78,
+        theme.violet.with_alpha(if active { 118 } else { 58 }),
+    );
+    canvas.radial_glow(
+        center_x + size as f32 * 0.12,
+        center_y,
+        size as f32 * 0.62,
+        theme.cyan.with_alpha(if active { 82 } else { 42 }),
+    );
+
+    let scale = source_size as f32 / size as f32;
     for y in 0..size {
         for x in 0..size {
-            let source_x = x * PRIME_LOGO_SIZE / size;
-            let source_y = y * PRIME_LOGO_SIZE / size;
-            let offset = ((source_y * PRIME_LOGO_SIZE + source_x) * 4) as usize;
-            let r = PRIME_LOGO_RGBA[offset];
-            let g = PRIME_LOGO_RGBA[offset + 1];
-            let b = PRIME_LOGO_RGBA[offset + 2];
-            let mut a = PRIME_LOGO_RGBA[offset + 3];
+            let source_x = (x as f32 + 0.5) * scale - 0.5;
+            let source_y = (y as f32 + 0.5) * scale - 0.5;
+            let mut color = sample_logo_bilinear(source, source_size, source_x, source_y);
             if !active {
-                a = ((u16::from(a) * 245) / 255) as u8;
+                color.a = ((u16::from(color.a) * 248) / 255) as u8;
             }
-            if a != 0 {
-                canvas.blend_pixel(x0 + x as i32, y0 + y as i32, Argb { a, r, g, b });
+            if color.a != 0 {
+                canvas.blend_pixel(x0 + x as i32, y0 + y as i32, color);
             }
         }
     }

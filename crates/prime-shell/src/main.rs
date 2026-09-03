@@ -159,6 +159,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         rail_height,
         rail_actions,
         background_configured: false,
+        background_width: 0,
+        background_height: 0,
+        background_static: Vec::new(),
+        background_started: Instant::now(),
+        background_last_render: Instant::now(),
+        background_motion_frames: 0,
         rail_configured: false,
         status_configured: false,
         baseline_reported: false,
@@ -250,6 +256,12 @@ struct PrimeShell {
     rail_height: u32,
     rail_actions: Vec<visual::RailAction>,
     background_configured: bool,
+    background_width: u32,
+    background_height: u32,
+    background_static: Vec<u8>,
+    background_started: Instant,
+    background_last_render: Instant,
+    background_motion_frames: u64,
     rail_configured: bool,
     status_configured: bool,
     baseline_reported: bool,
@@ -314,6 +326,54 @@ impl PrimeShell {
             self.baseline_reported = true;
             eprintln!(
                 "PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail,status;readiness_unearned"
+            );
+        }
+    }
+
+    fn redraw_background_motion(&mut self, queue_handle: &QueueHandle<Self>, now: Instant) {
+        if !self.background_configured
+            || self.background_width == 0
+            || self.background_height == 0
+            || self.background_static.is_empty()
+        {
+            return;
+        }
+
+        let layer = self.background.clone();
+        // Keep a compositor frame callback alive at the physical refresh rate,
+        // but only upload a changed background buffer every other 60 Hz frame.
+        layer
+            .wl_surface()
+            .frame(queue_handle, layer.wl_surface().clone());
+        if now.duration_since(self.background_last_render) < Duration::from_millis(30) {
+            layer.commit();
+            return;
+        }
+
+        let width = self.background_width;
+        let height = self.background_height;
+        let theme = self.theme;
+        let phase = self.background_started.elapsed().as_secs_f32() * 0.22;
+        let background_static = &self.background_static;
+        if let Err(error) =
+            draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
+                debug_assert_eq!(bytes.len(), background_static.len());
+                bytes.copy_from_slice(background_static);
+                let mut canvas = visual::Canvas::new(bytes, w, h)
+                    .expect("Prime background buffer must match configured dimensions");
+                visual::paint_background_motion(&mut canvas, &theme, phase);
+            })
+        {
+            eprintln!("prime-shell could not animate background: {error}");
+            self.exit = true;
+            return;
+        }
+        self.background_last_render = now;
+        self.background_motion_frames = self.background_motion_frames.saturating_add(1);
+        if self.background_motion_frames.is_multiple_of(300) {
+            eprintln!(
+                "PRIME_SHELL_IDLE_MOTION=active;frames={};phase={phase:.3}",
+                self.background_motion_frames
             );
         }
     }
@@ -829,6 +889,11 @@ impl CompositorHandler for PrimeShell {
         _time: u32,
     ) {
         let now = Instant::now();
+        if surface == self.background.wl_surface() {
+            self.redraw_background_motion(queue_handle, now);
+            return;
+        }
+
         if self
             .prime_launcher
             .as_ref()
@@ -994,19 +1059,36 @@ impl LayerShellHandler for PrimeShell {
                 visual::TopStatus::Limited
             };
             let theme = self.theme;
-            let text = &mut self.text;
+            let mut static_bytes = vec![0u8; width as usize * height as usize * 4];
+            {
+                let mut canvas = visual::Canvas::new(&mut static_bytes, width, height)
+                    .expect("Prime background cache must match configured dimensions");
+                visual::paint_background_base(&mut canvas, &theme);
+                visual::paint_top_status_strip(&mut canvas, &mut self.text, &theme, status);
+            }
+
+            layer
+                .wl_surface()
+                .frame(queue_handle, layer.wl_surface().clone());
             if let Err(error) =
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
+                    debug_assert_eq!(bytes.len(), static_bytes.len());
+                    bytes.copy_from_slice(&static_bytes);
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime background buffer must match configured dimensions");
-                    visual::paint_settled_background(&mut canvas, &theme);
-                    visual::paint_top_status_strip(&mut canvas, text, &theme, status);
+                    visual::paint_background_motion(&mut canvas, &theme, 0.0);
                 })
             {
                 eprintln!("prime-shell could not draw background: {error}");
                 self.exit = true;
                 return;
             }
+            self.background_width = width;
+            self.background_height = height;
+            self.background_static = static_bytes;
+            self.background_started = Instant::now();
+            self.background_last_render = Instant::now();
+            self.background_motion_frames = 0;
             self.background_configured = true;
         } else if layer.wl_surface() == self.rail.wl_surface() {
             let height = NonZeroU32::new(configure.new_size.1)
