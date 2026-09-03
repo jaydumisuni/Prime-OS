@@ -279,3 +279,18 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
     }
     std::fs::write(format!("{directory}/03-quick-controls.bgra"), quick_scene).unwrap();
 }
+
+#[test]
+fn production_wallpaper_can_be_dumped_at_native_4k() {
+    let Ok(directory) = std::env::var("PRIME_VISUAL_PROOF_4K_DIR") else {
+        return;
+    };
+    std::fs::create_dir_all(&directory).unwrap();
+    const WIDTH: u32 = 3840;
+    const HEIGHT: u32 = 2160;
+    let theme = Theme::prime_dark();
+    let mut bytes = vec![0u8; WIDTH as usize * HEIGHT as usize * 4];
+    let mut canvas = Canvas::new(&mut bytes, WIDTH, HEIGHT).unwrap();
+    paint_settled_background(&mut canvas, &theme);
+    std::fs::write(format!("{directory}/04-wallpaper-4k.bgra"), bytes).unwrap();
+}
