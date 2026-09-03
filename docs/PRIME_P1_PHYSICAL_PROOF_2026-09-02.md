@@ -7,7 +7,7 @@
 - Generation: `p1-first-light-5b43c5c7639f`
 - Generation state: `HEALTH_PROVING`
 - `KNOWN_GOOD`: **not proven / not promoted**
-- Owner visual acceptance: **PENDING_OWNER**
+- Owner visual acceptance: **ACCEPTED on `a4ae2c2`; see `docs/PRIME_P1_VISUAL_ACCEPTANCE_2026-09-03.md`**
 - Canonical proof source: `/var/tmp/prime-p1-visual-proof-20260902T141732Z/work/run/prime-p1-local-proof.json`
 - Physical evidence root: `/var/tmp/prime-p1-visual-proof-20260902T144904Z/physical/`
 
@@ -242,7 +242,7 @@ KRATOS was not left on a TTY or stale Prime framebuffer.
 | Ethernet live carrier/traffic | `BLOCKED_EXTERNAL` | Attach an Ethernet cable to an active link partner |
 | Audible HDMI/analog audio | `PENDING_EXTERNAL` | Human/physical confirmation of audible playback |
 | Physical display cable hotplug / DP | `BLOCKED_EXTERNAL` | Perform cable hotplug and/or attach a DP display |
-| Owner visual acceptance | `PENDING_OWNER` | Owner explicitly judges the final Prime monitor experience |
+| Owner visual acceptance | `ACCEPTED` | Closed on accepted visual candidate `a4ae2c2`; see `docs/PRIME_P1_VISUAL_ACCEPTANCE_2026-09-03.md` |
 | `KNOWN_GOOD` promotion | `NOT_EARNED` | Separate generation promotion authority must be satisfied |
 
 No external gate is converted to PASS by inference.

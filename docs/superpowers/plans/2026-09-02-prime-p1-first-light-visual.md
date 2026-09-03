@@ -673,6 +673,8 @@ Stop temporary Prime Shell/compositor units and restore GDM/XFCE. Verify `gdm.se
 
 > Evidence checkpoint may be committed/pushed before owner acceptance, but this step remains open until the owner explicitly accepts the physical visual candidate.
 
+> 2026-09-03 acceptance checkpoint: owner visual acceptance is **ACCEPTED** for runtime source `a4ae2c25f0d9d63119d2dd3d3d959ffd3a7f0330`; exact evidence and fresh canonical proof are recorded in `docs/PRIME_P1_VISUAL_ACCEPTANCE_2026-09-03.md`.
+
 After owner acceptance and clean regression evidence:
 
 ```text

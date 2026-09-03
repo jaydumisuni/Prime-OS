@@ -1,0 +1,52 @@
+{
+  "accepted_runtime_source": "a4ae2c25f0d9d63119d2dd3d3d959ffd3a7f0330",
+  "branch": "design/p1-first-light-visual",
+  "canonical": {
+    "composefs_digest": "e33744ad51ab1b38fd45461eeb256d2d803a0e028d9ae0f06f942a7d6035f3469ebac1c06719c38fe79913b3b5754264a47d33f3d8c0ec05e7ccc09903fcef58",
+    "generation_id": "p1-first-light-a4ae2c25f0d9",
+    "generation_state": "HEALTH_PROVING",
+    "known_good_proven": false,
+    "mechanical_shell_ready": true,
+    "ok": true,
+    "qcow2_sha256": "373394139b21b1af52d86e83146c44fea315f924cc304f19957f9a94d67ce700"
+  },
+  "owner_visual_acceptance": true,
+  "physical": {
+    "frames_submitted": 2250,
+    "input_delivery_ready": true,
+    "input_events_seen": 3232,
+    "keyboard_ready": true,
+    "mapped_surface_frames_submitted": 2226,
+    "mode": "1920x1080@60",
+    "output": "HDMI-A-1",
+    "outputs_ready": true,
+    "phase": "SHELL_READY",
+    "pointer_ready": true,
+    "renderer_ready": true,
+    "seat": "seat0",
+    "shell_ready": true
+  },
+  "production_painter_images": {
+    "01-baseline.png": {
+      "sha256": "66ee729ee4027a2231a5ac32d8a1c37d49f3035d27c2efe690130193c7d85380",
+      "size_bytes": 473217
+    },
+    "02-prime_launcher.png": {
+      "sha256": "860c167dfa11de8bfa584bf575199977d84425d444152b033e85a683629e3abf",
+      "size_bytes": 527232
+    },
+    "03-quick-controls.png": {
+      "sha256": "d4d53f6236b3b93b29e2e1b0a31246fe1060ecfdaf80c4ab27c67782c00ba681",
+      "size_bytes": 484676
+    }
+  },
+  "remaining_external_gates": [
+    "USB3/SuperSpeed physical device path",
+    "Ethernet live carrier/traffic",
+    "Audible HDMI/analog audio",
+    "Physical display cable hotplug/DP",
+    "Separate KNOWN_GOOD generation promotion authority"
+  ],
+  "runtime_shell_sha256": "4e30bc047c4a3d75d010ce92dd0c7e244d1e3822a167f4ccdabb5a6cd9ba507a",
+  "schema": "prime.p1-visual-acceptance.v1"
+}
