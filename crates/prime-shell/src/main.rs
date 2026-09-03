@@ -6,6 +6,7 @@ use std::{
     error::Error,
     io,
     num::NonZeroU32,
+    os::fd::AsRawFd,
     time::{Duration, Instant},
 };
 
@@ -187,7 +188,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm");
 
     while !shell.exit {
-        event_queue.blocking_dispatch(&mut shell)?;
+        event_queue.flush()?;
+        event_queue.dispatch_pending(&mut shell)?;
+
+        if let Some(read_guard) = event_queue.prepare_read() {
+            let fd = read_guard.connection_fd().as_raw_fd();
+            let mut poll_fd = libc::pollfd {
+                fd,
+                events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+                revents: 0,
+            };
+            let ready = unsafe { libc::poll(&mut poll_fd, 1, 16) };
+            if ready < 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(error.into());
+                }
+                drop(read_guard);
+            } else if ready > 0 {
+                read_guard.read()?;
+                event_queue.dispatch_pending(&mut shell)?;
+            } else {
+                drop(read_guard);
+            }
+        }
+
+        shell.redraw_background_motion(Instant::now());
     }
 
     Ok(())
@@ -330,7 +356,7 @@ impl PrimeShell {
         }
     }
 
-    fn redraw_background_motion(&mut self, queue_handle: &QueueHandle<Self>, now: Instant) {
+    fn redraw_background_motion(&mut self, now: Instant) {
         if !self.background_configured
             || self.background_width == 0
             || self.background_height == 0
@@ -340,13 +366,10 @@ impl PrimeShell {
         }
 
         let layer = self.background.clone();
-        // Keep a compositor frame callback alive at the physical refresh rate,
-        // but only upload a changed background buffer every other 60 Hz frame.
-        layer
-            .wl_surface()
-            .frame(queue_handle, layer.wl_surface().clone());
+        // The main event loop wakes on a bounded 16 ms poll even when Wayland is
+        // otherwise idle. Upload only when the wallpaper phase has advanced far
+        // enough to avoid a busy redraw loop.
         if now.duration_since(self.background_last_render) < Duration::from_millis(30) {
-            layer.commit();
             return;
         }
 
@@ -890,7 +913,7 @@ impl CompositorHandler for PrimeShell {
     ) {
         let now = Instant::now();
         if surface == self.background.wl_surface() {
-            self.redraw_background_motion(queue_handle, now);
+            self.redraw_background_motion(now);
             return;
         }
 
@@ -1067,9 +1090,6 @@ impl LayerShellHandler for PrimeShell {
                 visual::paint_top_status_strip(&mut canvas, &mut self.text, &theme, status);
             }
 
-            layer
-                .wl_surface()
-                .frame(queue_handle, layer.wl_surface().clone());
             if let Err(error) =
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
                     debug_assert_eq!(bytes.len(), static_bytes.len());
