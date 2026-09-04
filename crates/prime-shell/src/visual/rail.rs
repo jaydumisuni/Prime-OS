@@ -356,22 +356,6 @@ pub(crate) fn paint_rail_surface(
     );
     canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(RAIL_GLASS_ALPHA));
     canvas.stroke_rounded_rect(body, 24, 1, theme.cyan.with_alpha(74));
-    canvas.stroke_rounded_rect(
-        Rect::new(
-            2,
-            2,
-            canvas.width.saturating_sub(4),
-            canvas.height.saturating_sub(4),
-        ),
-        23,
-        1,
-        theme.text.with_alpha(68),
-    );
-    canvas.fill_rounded_rect(
-        Rect::new(12, 7, canvas.width.saturating_sub(24), 1),
-        1,
-        theme.text.with_alpha(52),
-    );
 
     for (rect, action) in layout.items.iter().zip(actions.iter()) {
         let is_active = active.as_ref() == Some(action);

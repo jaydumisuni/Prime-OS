@@ -570,6 +570,60 @@ mod tests {
     }
 
     #[test]
+    fn rail_surface_has_clean_single_edge_without_hud_highlight_ticks() {
+        let actions = RailConfiguration::default().actions().to_vec();
+        let rail = RailLayout::for_output(1920, 1080, actions.len());
+        let mut bytes = vec![0u8; rail.bounds.width as usize * rail.bounds.height as usize * 4];
+        let mut canvas = Canvas::new(&mut bytes, rail.bounds.width, rail.bounds.height).unwrap();
+        paint_rail_surface(
+            &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
+            &Theme::prime_dark(),
+            &actions,
+            None,
+        );
+
+        let center_x = (rail.bounds.width / 2) as i32;
+        assert_eq!(
+            canvas.pixel(center_x, 7),
+            canvas.pixel(center_x, 8),
+            "rail must not carry a separate HUD-style highlight tick inside its top edge"
+        );
+        assert_eq!(
+            canvas.pixel(center_x, 2),
+            canvas.pixel(center_x, 3),
+            "rail must use one continuous perimeter edge rather than a second inner frame"
+        );
+    }
+
+    #[test]
+    fn prime_launcher_uses_one_clean_perimeter_edge() {
+        let mut bytes =
+            vec![0u8; PRIME_LAUNCHER_WIDTH as usize * PRIME_LAUNCHER_HEIGHT as usize * 4];
+        let mut canvas =
+            Canvas::new(&mut bytes, PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).unwrap();
+        paint_prime_launcher_surface(
+            &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
+            &Theme::prime_dark(),
+            PrimeLauncherView {
+                applications: &[],
+                selected: 0,
+                query: "",
+                message: None,
+                progress: 1.0,
+            },
+        );
+
+        let center_x = (PRIME_LAUNCHER_WIDTH / 2) as i32;
+        assert_eq!(
+            canvas.pixel(center_x, 2),
+            canvas.pixel(center_x, 3),
+            "Home panel must not carry a second inner perimeter frame"
+        );
+    }
+
+    #[test]
     fn top_right_status_cluster_matches_approved_top_chrome_and_is_clickable() {
         let layout = StatusClusterLayout::for_surface(480, 44);
         assert_eq!(layout.bounds, Rect::new(0, 0, 480, 44));

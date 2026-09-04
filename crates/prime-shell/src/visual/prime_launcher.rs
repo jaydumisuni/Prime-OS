@@ -143,19 +143,8 @@ pub(crate) fn paint_prime_launcher_surface(
     canvas.stroke_rounded_rect(
         body,
         28,
-        2,
-        theme.cyan.with_alpha(((105u16 * alpha as u16) / 255) as u8),
-    );
-    canvas.stroke_rounded_rect(
-        Rect::new(
-            body.x + 2,
-            body.y + 2,
-            body.width.saturating_sub(4),
-            body.height.saturating_sub(4),
-        ),
-        27,
         1,
-        theme.text.with_alpha(((62u16 * alpha as u16) / 255) as u8),
+        theme.cyan.with_alpha(((105u16 * alpha as u16) / 255) as u8),
     );
     canvas.radial_glow(
         150.0 + slide as f32,
