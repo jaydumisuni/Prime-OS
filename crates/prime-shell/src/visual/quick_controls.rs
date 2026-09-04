@@ -520,3 +520,38 @@ fn paint_action(
     );
     text.draw(canvas, (rect.x + 52, rect.y + 18), label, style, color);
 }
+
+#[cfg(test)]
+mod final_ui_contract_tests {
+    use super::*;
+
+    #[test]
+    fn quick_controls_shell_body_leaves_gpu_glass_visible() {
+        let mut bytes = vec![0u8; QUICK_WIDTH as usize * QUICK_HEIGHT as usize * 4];
+        let mut canvas = Canvas::new(&mut bytes, QUICK_WIDTH, QUICK_HEIGHT).expect("quick canvas");
+        let mut text = TextSystem::load_system().expect("Prime production font");
+        paint_quick_controls_surface(
+            &mut canvas,
+            &mut text,
+            &Theme::prime_dark(),
+            QuickControlsView {
+                lines: &[],
+                power_ready: false,
+                pending_power: None,
+                message: None,
+                progress: 1.0,
+            },
+        );
+        let sample = canvas.pixel(10, 70).expect("quick material sample");
+        assert!(sample.a <= 64, "Quick Controls hides GPU glass at alpha {}", sample.a);
+    }
+
+    #[test]
+    fn collapse_label_has_a_real_pointer_target() {
+        let layout = QuickControlsLayout::new(QUICK_WIDTH, QUICK_HEIGHT);
+        assert!(layout.collapse_hit(
+            layout.collapse.center_x(),
+            layout.collapse.center_y()
+        ));
+    }
+}
