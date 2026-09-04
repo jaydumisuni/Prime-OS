@@ -44,6 +44,7 @@ const RAIL_NAMESPACE: &str = "prime.shell.rail";
 const STATUS_NAMESPACE: &str = "prime.shell.status";
 const PRIME_NAMESPACE: &str = "prime.shell.prime";
 const QUICK_CONTROLS_NAMESPACE: &str = "prime.shell.quick-controls";
+const MAX_LAUNCHER_QUERY_CHARS: usize = 64;
 
 fn finish_wayland_read(
     result: Result<usize, wayland_client::backend::WaylandError>,
@@ -98,10 +99,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(visual::RailConfiguration::load_from_path)
         .unwrap_or_default();
     if let Some(path) = rail_config_path.as_deref() {
-        if !path.exists() {
-            if let Err(error) = rail_configuration.save_to_path(path) {
-                eprintln!("prime-shell could not persist default rail configuration: {error}");
-            }
+        // Rewrite the effective configuration so legacy Apps/Search pins are
+        // migrated out on first start of the final Home-only rail behavior.
+        if let Err(error) = rail_configuration.save_to_path(path) {
+            eprintln!("prime-shell could not persist rail configuration: {error}");
         }
     }
     let rail_actions = rail_configuration.actions().to_vec();
@@ -234,6 +235,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         core: core_client::CoreClient::from_env(),
         applications: Vec::new(),
         selected_application: 0,
+        launcher_query: String::new(),
         prime_launcher_message: None,
         quick_lines: Vec::new(),
         quick_power_ready: false,
@@ -313,6 +315,15 @@ fn power_action_name(action: SystemPowerAction) -> &'static str {
     }
 }
 
+fn power_confirmation_prompt(action: SystemPowerAction) -> String {
+    format!("SELECT AGAIN TO CONFIRM {}", power_action_name(action))
+}
+
+fn application_name_matches(name: &str, query: &str) -> bool {
+    let query = query.trim();
+    query.is_empty() || name.to_lowercase().contains(&query.to_lowercase())
+}
+
 struct TransientSurface {
     layer: LayerSurface,
     width: u32,
@@ -358,6 +369,7 @@ struct PrimeShell {
     core: core_client::CoreClient,
     applications: Vec<prime_contracts::ApplicationEntry>,
     selected_application: usize,
+    launcher_query: String,
     prime_launcher_message: Option<String>,
     quick_lines: Vec<String>,
     quick_power_ready: bool,
@@ -426,9 +438,6 @@ impl PrimeShell {
         }
 
         let layer = self.background.clone();
-        // The main event loop wakes on a bounded 16 ms poll even when Wayland is
-        // otherwise idle. Upload only when the wallpaper phase has advanced far
-        // enough to avoid a busy redraw loop.
         if now.duration_since(self.background_last_render) < Duration::from_millis(30) {
             return;
         }
@@ -546,6 +555,35 @@ impl PrimeShell {
         }
     }
 
+    fn load_launcher_applications(&mut self) {
+        match self.core.applications() {
+            Ok(projection) => {
+                self.applications = projection
+                    .applications
+                    .into_iter()
+                    .filter(|entry| application_name_matches(&entry.display_name, &self.launcher_query))
+                    .collect();
+                self.selected_application = self
+                    .selected_application
+                    .min(self.applications.len().saturating_sub(1));
+                self.prime_launcher_message = if self.applications.is_empty() {
+                    Some(if self.launcher_query.is_empty() {
+                        "NO ADMITTED APPLICATION PROFILES".to_owned()
+                    } else {
+                        "NO MATCHING APPLICATIONS".to_owned()
+                    })
+                } else {
+                    None
+                };
+            }
+            Err(error) => {
+                self.applications.clear();
+                self.selected_application = 0;
+                self.prime_launcher_message = Some(format!("CORE UNAVAILABLE: {error}"));
+            }
+        }
+    }
+
     fn toggle_prime_launcher(
         &mut self,
         queue_handle: &QueueHandle<Self>,
@@ -557,28 +595,9 @@ impl PrimeShell {
         }
         self.pending_power = None;
         self.quick_message = None;
-        self.quick_power_ready = self
-            .core
-            .system_status()
-            .is_ok_and(|status| status.power_ready);
-        match self.core.applications() {
-            Ok(projection) => {
-                self.applications = projection.applications;
-                self.selected_application = self
-                    .selected_application
-                    .min(self.applications.len().saturating_sub(1));
-                self.prime_launcher_message = if self.applications.is_empty() {
-                    Some("NO ADMITTED APPLICATION PROFILES".to_owned())
-                } else {
-                    None
-                };
-            }
-            Err(error) => {
-                self.applications.clear();
-                self.selected_application = 0;
-                self.prime_launcher_message = Some(format!("CORE UNAVAILABLE: {error}"));
-            }
-        }
+        self.launcher_query.clear();
+        self.selected_application = 0;
+        self.load_launcher_applications();
         self.prime_launcher = Some(self.create_overlay(
             queue_handle,
             PRIME_NAMESPACE,
@@ -706,6 +725,7 @@ impl PrimeShell {
                     visual::PrimeLauncherView {
                         applications: &self.applications,
                         selected: self.selected_application,
+                        query: &self.launcher_query,
                         power_ready: self.quick_power_ready,
                         pending_power: self.pending_power,
                         message: self.prime_launcher_message.as_deref(),
@@ -767,14 +787,7 @@ impl PrimeShell {
         match power_confirmation(self.pending_power, action) {
             PowerConfirmation::Arm(action) => {
                 self.pending_power = Some(action);
-                self.quick_message = Some(format!(
-                    "PRESS {} AGAIN TO CONFIRM {}",
-                    match action {
-                        SystemPowerAction::Reboot => "R",
-                        SystemPowerAction::PowerOff => "P",
-                    },
-                    power_action_name(action)
-                ));
+                self.quick_message = Some(power_confirmation_prompt(action));
             }
             PowerConfirmation::Execute(action) => {
                 self.pending_power = None;
@@ -873,6 +886,7 @@ impl PrimeShell {
                             visual::PrimeLauncherView {
                                 applications: &self.applications,
                                 selected: self.selected_application,
+                                query: &self.launcher_query,
                                 power_ready: self.quick_power_ready,
                                 pending_power: self.pending_power,
                                 message: self.prime_launcher_message.as_deref(),
@@ -1373,6 +1387,24 @@ impl KeyboardHandler for PrimeShell {
                 self.redraw_prime_launcher(queue_handle);
                 return;
             }
+            if event.keysym == Keysym::BackSpace {
+                self.launcher_query.pop();
+                self.selected_application = 0;
+                self.load_launcher_applications();
+                self.redraw_prime_launcher(queue_handle);
+                return;
+            }
+            if let Some(character) = event.keysym.key_char() {
+                if !character.is_control()
+                    && self.launcher_query.chars().count() < MAX_LAUNCHER_QUERY_CHARS
+                {
+                    self.launcher_query.push(character);
+                    self.selected_application = 0;
+                    self.load_launcher_applications();
+                    self.redraw_prime_launcher(queue_handle);
+                }
+                return;
+            }
         }
 
         let Some(character) = event.keysym.key_char() else {
@@ -1517,48 +1549,37 @@ impl PointerHandler for PrimeShell {
                 .as_ref()
                 .is_some_and(|prime_launcher| &event.surface == prime_launcher.layer.wl_surface())
             {
-                let (application, power_action) = self
-                    .prime_launcher
-                    .as_ref()
-                    .map(|prime_launcher| {
-                        let layout = visual::PrimeLauncherLayout::new(
-                            prime_launcher.width,
-                            prime_launcher.height,
-                        );
-                        (
-                            layout.application_at(
-                                event.position.0,
-                                event.position.1,
-                                self.applications.len(),
-                            ),
-                            layout.power_action_at(event.position.0, event.position.1),
-                        )
-                    })
-                    .unwrap_or((None, None));
+                let application = self.prime_launcher.as_ref().and_then(|prime_launcher| {
+                    let layout = visual::PrimeLauncherLayout::new(
+                        prime_launcher.width,
+                        prime_launcher.height,
+                    );
+                    layout.application_at(
+                        event.position.0,
+                        event.position.1,
+                        self.applications.len(),
+                    )
+                });
                 if let Some(index) = application {
                     self.selected_application = index;
                     self.activate_selected_application();
                     self.redraw_prime_launcher(queue_handle);
-                } else if let Some(action) = power_action {
-                    self.stage_power_action(action);
-                    self.prime_launcher_message = self.quick_message.take();
-                    self.redraw_prime_launcher(queue_handle);
                 }
-            } else {
-                let action = self
-                    .quick_controls
-                    .as_ref()
-                    .and_then(|quick_controls| {
-                        (&event.surface == quick_controls.layer.wl_surface()).then(|| {
-                            visual::QuickControlsLayout::new(
-                                quick_controls.width,
-                                quick_controls.height,
-                            )
-                            .power_action_at(event.position.0, event.position.1)
-                        })
-                    })
-                    .flatten();
-                if let Some(action) = action {
+            } else if let Some(quick_controls) = self.quick_controls.as_ref() {
+                if &event.surface != quick_controls.layer.wl_surface() {
+                    continue;
+                }
+                let layout =
+                    visual::QuickControlsLayout::new(quick_controls.width, quick_controls.height);
+                if layout.collapse_hit(event.position.0, event.position.1) {
+                    self.close_transient(
+                        ShellSurfaceKind::QuickControls,
+                        queue_handle,
+                        InteractionSource::Pointer,
+                    );
+                    continue;
+                }
+                if let Some(action) = layout.power_action_at(event.position.0, event.position.1) {
                     self.stage_power_action(action);
                     self.redraw_quick_controls(queue_handle);
                 }
@@ -1620,6 +1641,26 @@ mod tests {
             power_confirmation(Some(SystemPowerAction::Reboot), SystemPowerAction::PowerOff),
             PowerConfirmation::Arm(SystemPowerAction::PowerOff)
         );
+    }
+
+    #[test]
+    fn pointer_and_keyboard_power_confirmation_use_one_truthful_prompt() {
+        assert_eq!(
+            power_confirmation_prompt(SystemPowerAction::Reboot),
+            "SELECT AGAIN TO CONFIRM RESTART"
+        );
+        assert_eq!(
+            power_confirmation_prompt(SystemPowerAction::PowerOff),
+            "SELECT AGAIN TO CONFIRM POWER OFF"
+        );
+    }
+
+    #[test]
+    fn home_search_matches_application_names_case_insensitively() {
+        assert!(application_name_matches("Terminal", "term"));
+        assert!(application_name_matches("Files", "FILES"));
+        assert!(application_name_matches("Settings", ""));
+        assert!(!application_name_matches("Browser", "terminal"));
     }
 }
 
