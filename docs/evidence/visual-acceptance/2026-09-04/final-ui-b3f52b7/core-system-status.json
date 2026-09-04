@@ -1,0 +1,123 @@
+{
+  "capability_id": "prime.system.status",
+  "capability_version": "1.0.0",
+  "family": "system",
+  "provider": {
+    "id": "prime",
+    "generation_id": "p1-physical-b3f52b7"
+  },
+  "availability": "AVAILABLE",
+  "effects": [],
+  "accepts": {
+    "formats": [],
+    "runtime_families": [],
+    "workload_arches": []
+  },
+  "permissions": [
+    "prime.system.read"
+  ],
+  "resources": {
+    "audio_cards": [
+      {
+        "id": "PCH",
+        "kernel_name": "card0"
+      },
+      {
+        "id": "Wireless",
+        "kernel_name": "card1"
+      }
+    ],
+    "audio_control": {
+      "limitations": [
+        "Prime P1 has not earned an audio mixer/control backend yet"
+      ],
+      "ready": false
+    },
+    "limitations": [],
+    "network_control": {
+      "limitations": [
+        "Prime P1 has not earned a network mutation backend yet"
+      ],
+      "ready": false
+    },
+    "network_links": [
+      {
+        "carrier": true,
+        "interface": "enp1s0",
+        "oper_state": "up",
+        "wireless": false
+      },
+      {
+        "carrier": true,
+        "interface": "lo",
+        "oper_state": "unknown",
+        "wireless": false
+      },
+      {
+        "carrier": true,
+        "interface": "wlx00e04c8188ff",
+        "oper_state": "up",
+        "wireless": true
+      }
+    ],
+    "observed_at": "2026-09-04T13:37:54.327868545Z",
+    "power_mutation": {
+      "limitations": [],
+      "ready": true
+    },
+    "power_supplies": [],
+    "schema": "prime.system-status.v1",
+    "thermal_zones": [
+      {
+        "kernel_name": "thermal_zone0",
+        "temperature_millicelsius": 30000,
+        "zone_type": "acpitz"
+      },
+      {
+        "kernel_name": "thermal_zone1",
+        "temperature_millicelsius": 27800,
+        "zone_type": "acpitz"
+      },
+      {
+        "kernel_name": "thermal_zone2",
+        "temperature_millicelsius": 49000,
+        "zone_type": "pch_cometlake"
+      },
+      {
+        "kernel_name": "thermal_zone3",
+        "temperature_millicelsius": 49000,
+        "zone_type": "x86_pkg_temp"
+      }
+    ]
+  },
+  "hardware_requirements": [],
+  "limits": {
+    "audio_control": false,
+    "ip_configuration": false,
+    "network_control": false,
+    "power_mutation": false,
+    "raw_mac_addresses": false
+  },
+  "health": {
+    "status": "HEALTHY",
+    "observed_at": "2026-09-04T13:37:54.327868545Z",
+    "evidence_refs": [
+      "prime.system-status.v1"
+    ]
+  },
+  "limitations": [],
+  "placement": {
+    "scope": "HOST_LOCAL",
+    "host_id": "01a06c98-c24f-70b2-8b50-c21c23418a71"
+  },
+  "expected_evidence": [
+    "prime.system-status.v1"
+  ],
+  "rollback": {
+    "supported": false,
+    "mode": null,
+    "limitations": [
+      "System status is observation, not a rollback object"
+    ]
+  }
+}

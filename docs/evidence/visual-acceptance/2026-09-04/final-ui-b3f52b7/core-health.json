@@ -1,0 +1,12 @@
+{
+  "interface": "prime.capability.v1",
+  "interface_version": "1.0",
+  "host_id": "01a06c98-c24f-70b2-8b50-c21c23418a71",
+  "generation_id": "p1-physical-b3f52b7",
+  "status": "DEGRADED",
+  "observed_at": "2026-09-04T13:25:45.757854906Z",
+  "limitations": [
+    "Current generation is HEALTH_PROVING and has not earned KNOWN_GOOD",
+    "High/medium-confidence hardware fingerprint is not enrolled"
+  ]
+}

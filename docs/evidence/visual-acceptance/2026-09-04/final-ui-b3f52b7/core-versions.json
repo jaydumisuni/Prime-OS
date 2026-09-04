@@ -1,0 +1,6 @@
+{
+  "interface": "prime.capability.v1",
+  "supported_versions": [
+    "1.0"
+  ]
+}

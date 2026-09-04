@@ -1,0 +1,43 @@
+{
+  "schema": "prime.p1-final-ui-physical-evidence.v1",
+  "captured_at": "2026-09-04T13:37:54.352671+00:00",
+  "candidate": "b3f52b7c5bc7862236c0041a916fca20beabdf39",
+  "branch": "work/p1-final-ui",
+  "base": "1c2685d172fbaf14c519c6f3c9831567f5a30aed",
+  "static_verification": {
+    "git_diff_check": "PASS",
+    "workspace_tests": "PASS",
+    "prime_shell_tests": "57/57 PASS",
+    "cargo_fmt_check": "PASS",
+    "clippy_workspace_all_targets_deny_warnings": "PASS",
+    "optimized_prime_shell_compositor_release_build": "PASS",
+    "optimized_primed_release_build": "PASS"
+  },
+  "runtime": {
+    "primed_current_candidate": "ACTIVE",
+    "core_socket": "/run/user/1000/prime-b3f52b7-core.sock",
+    "core_versions_exit": 0,
+    "core_health_exit": 0,
+    "core_system_status_exit": 0,
+    "core_applications_exit": 0,
+    "prime_shell_current_candidate": "ACTIVE",
+    "wayland_display": "wayland-1",
+    "wallpaper": "system-03 / Prime 03",
+    "font": "Noto Sans",
+    "shell_ready": "PASS",
+    "compositor_process_revision": "42cdd8fb139cc5a8363264bcc356e2a15ce0c9ed",
+    "compositor_source_diff_vs_candidate": "NONE",
+    "physical_gpu": "/dev/dri/card1",
+    "seat": "seat0",
+    "output": "HDMI-A-1",
+    "mode": "1920x1080@60",
+    "glass_fallback_limitation_present": false
+  },
+  "truth_boundary": {
+    "compositor_restart_in_required_primed_then_compositor_then_shell_order": "BLOCKED_BY_ORACLE_SYSTEM_AUTHORIZATION",
+    "reason": "Oracle workstation RPC blocks sudo and systemctl restart of the root-owned transient compositor requires interactive authentication.",
+    "physical_home_quick_controls_pointer_keyboard_reexercise": "NOT_REPROVED_THIS_RUN",
+    "reason_interaction": "No permitted input-injection path is available through the current Oracle RPC; current Shell runtime logs contain no new pointer/keyboard activation markers. Shell interaction/search regression coverage is 57/57 PASS and Core data paths are live.",
+    "known_good": "NOT_PROMOTED"
+  }
+}

@@ -1,0 +1,15 @@
+● prime-p1-42cdd8f-physical-compositor.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-compositor
+     Loaded: loaded (/run/systemd/transient/prime-p1-42cdd8f-physical-compositor.service; transient)
+  Transient: yes
+     Active: active (running) since Fri 2026-09-04 11:10:11 CAT; 4h 27min ago
+ Invocation: 28097811b33f4395b5d5e70829625784
+   Main PID: 110110 (prime-composito)
+      Tasks: 0 (limit: 10473)
+     Memory: 2.3M (peak: 3M)
+        CPU: 7ms
+     CGroup: /system.slice/prime-p1-42cdd8f-physical-compositor.service
+             ‣ 110110 /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-compositor
+
+Sep 04 11:10:11 kratos-HP-290-G4-Microtower-PC systemd[1]: Starting prime-p1-42cdd8f-physical-compositor.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-compositor...
+Sep 04 11:10:11 kratos-HP-290-G4-Microtower-PC (prime-compositor)[110110]: pam_unix(login:session): session opened for user kratos(uid=1000) by kratos(uid=0)
+Sep 04 11:10:11 kratos-HP-290-G4-Microtower-PC systemd[1]: Started prime-p1-42cdd8f-physical-compositor.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-compositor.

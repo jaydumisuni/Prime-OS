@@ -1,0 +1,7 @@
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC systemd[1960]: Starting prime-p1-b3f52b7-physical-shell.service - [systemd-run] /home/kratos/prime-p1-final-ui-20260904/target/release/prime-shell...
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC systemd[1960]: Started prime-p1-b3f52b7-physical-shell.service - [systemd-run] /home/kratos/prime-p1-final-ui-20260904/target/release/prime-shell.
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC prime-shell[803548]: PRIME_SHELL_WALLPAPER=system;id=system-03;title=Prime 03
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC prime-shell[803548]: PRIME_SHELL_FONT=Noto Sans
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC prime-shell[803548]: PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm
+Sep 04 15:30:54 kratos-HP-290-G4-Microtower-PC prime-shell[803548]: PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail,status;readiness_unearned
+Sep 04 15:35:27 kratos-HP-290-G4-Microtower-PC prime-shell[803548]: PRIME_SHELL_PRIME_OPEN=pointer
