@@ -69,6 +69,7 @@ pub(crate) struct QuickControlsView<'a> {
 pub(crate) struct QuickControlsLayout {
     pub(crate) bounds: Rect,
     pub(crate) content: Rect,
+    pub(crate) collapse: Rect,
     pub(crate) restart: Rect,
     pub(crate) power_off: Rect,
 }
@@ -80,6 +81,7 @@ impl QuickControlsLayout {
         Self {
             bounds: Rect::new(0, 0, width, height),
             content: Rect::new(26, 92, width.saturating_sub(52), height.saturating_sub(206)),
+            collapse: Rect::new(width.saturating_sub(122) as i32, 14, 104, 44),
             restart: Rect::new(26, action_y, action_width, 56),
             power_off: Rect::new((width / 2 + 8) as i32, action_y, action_width, 56),
         }
@@ -104,6 +106,10 @@ impl QuickControlsLayout {
                 138,
             )
         }
+    }
+
+    pub(crate) fn collapse_hit(self, x: f64, y: f64) -> bool {
+        self.collapse.contains(x.floor() as i32, y.floor() as i32)
     }
 
     pub(crate) fn power_action_at(self, x: f64, y: f64) -> Option<SystemPowerAction> {
@@ -132,9 +138,9 @@ fn paint_card(
         card,
         16,
         if active {
-            Argb::from_u32(0xff183d68).with_alpha(((160u16 * alpha as u16) / 255) as u8)
+            Argb::from_u32(0xff183d68).with_alpha(((76u16 * alpha as u16) / 255) as u8)
         } else {
-            Argb::from_u32(0xff0d1d31).with_alpha(((132u16 * alpha as u16) / 255) as u8)
+            Argb::from_u32(0xff0d1d31).with_alpha(((58u16 * alpha as u16) / 255) as u8)
         },
     );
     canvas.stroke_rounded_rect(
@@ -142,9 +148,9 @@ fn paint_card(
         16,
         1,
         if active {
-            theme.cyan.with_alpha(((132u16 * alpha as u16) / 255) as u8)
+            theme.cyan.with_alpha(((116u16 * alpha as u16) / 255) as u8)
         } else {
-            theme.text.with_alpha(((38u16 * alpha as u16) / 255) as u8)
+            theme.text.with_alpha(((42u16 * alpha as u16) / 255) as u8)
         },
     );
     draw_icon(
@@ -203,19 +209,19 @@ pub(crate) fn paint_quick_controls_surface(
     canvas.fill_rounded_rect(
         body,
         28,
-        Argb::from_u32(0xff081727).with_alpha(((188u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff081727).with_alpha(((52u16 * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         body,
         28,
         1,
-        theme.text.with_alpha(((82u16 * alpha as u16) / 255) as u8),
+        theme.text.with_alpha(((74u16 * alpha as u16) / 255) as u8),
     );
     canvas.radial_glow(
         canvas.width as f32 * 0.78,
         170.0 + slide as f32,
         260.0,
-        theme.cyan.with_alpha(((52u16 * alpha as u16) / 255) as u8),
+        theme.cyan.with_alpha(((38u16 * alpha as u16) / 255) as u8),
     );
     canvas.radial_glow(
         92.0,
@@ -223,7 +229,7 @@ pub(crate) fn paint_quick_controls_surface(
         250.0,
         theme
             .violet
-            .with_alpha(((36u16 * alpha as u16) / 255) as u8),
+            .with_alpha(((28u16 * alpha as u16) / 255) as u8),
     );
 
     text.draw(
@@ -238,7 +244,7 @@ pub(crate) fn paint_quick_controls_surface(
     );
     text.draw(
         canvas,
-        (canvas.width as i32 - 92, 28 + slide),
+        (layout.collapse.x + 8, layout.collapse.y + 12 + slide),
         "Collapse",
         TextStyle {
             size_px: 11,
@@ -248,7 +254,7 @@ pub(crate) fn paint_quick_controls_surface(
     );
     draw_icon(
         canvas,
-        Rect::new(canvas.width as i32 - 32, 25 + slide, 16, 16),
+        Rect::new(layout.collapse.x + 78, layout.collapse.y + 11 + slide, 16, 16),
         Icon::Chevron,
         theme.text.with_alpha(alpha),
     );
@@ -261,7 +267,9 @@ pub(crate) fn paint_quick_controls_surface(
     for (index, card_data) in cards.iter().enumerate().take(3) {
         let base = layout.card_rect(index);
         let card = Rect::new(base.x, base.y + slide, base.width, base.height);
-        paint_card(canvas, text, theme, card, card_data, alpha, index == 0);
+        // Status cards are evidence, not fake toggles. Do not paint any of them
+        // as selected unless a typed control contract exists.
+        paint_card(canvas, text, theme, card, card_data, alpha, false);
     }
 
     let divider_y = layout.content.y + 112 + slide;
@@ -284,13 +292,13 @@ pub(crate) fn paint_quick_controls_surface(
     canvas.fill_rounded_rect(
         state_box,
         16,
-        Argb::from_u32(0xff0b1a2c).with_alpha(((116u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff0b1a2c).with_alpha(((54u16 * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         state_box,
         16,
         1,
-        theme.text.with_alpha(((32u16 * alpha as u16) / 255) as u8),
+        theme.text.with_alpha(((34u16 * alpha as u16) / 255) as u8),
     );
     let mut state_y = state_box.y + 24;
     for card in cards.iter().take(3) {
@@ -351,13 +359,13 @@ pub(crate) fn paint_quick_controls_surface(
         canvas.fill_rounded_rect(
             card,
             16,
-            Argb::from_u32(0xff0d1d31).with_alpha(((126u16 * alpha as u16) / 255) as u8),
+            Argb::from_u32(0xff0d1d31).with_alpha(((58u16 * alpha as u16) / 255) as u8),
         );
         canvas.stroke_rounded_rect(
             card,
             16,
             1,
-            theme.text.with_alpha(((38u16 * alpha as u16) / 255) as u8),
+            theme.text.with_alpha(((40u16 * alpha as u16) / 255) as u8),
         );
         draw_icon(
             canvas,
@@ -487,9 +495,9 @@ fn paint_action(
     let fill = if pending {
         theme
             .violet
-            .with_alpha(((76u16 * alpha as u16) / 255) as u8)
+            .with_alpha(((56u16 * alpha as u16) / 255) as u8)
     } else {
-        Argb::from_u32(0xff0b1a2c).with_alpha(((142u16 * alpha as u16) / 255) as u8)
+        Argb::from_u32(0xff0b1a2c).with_alpha(((66u16 * alpha as u16) / 255) as u8)
     };
     canvas.fill_rounded_rect(rect, 14, fill);
     canvas.stroke_rounded_rect(
@@ -499,7 +507,7 @@ fn paint_action(
         if pending {
             theme.cyan.with_alpha(alpha)
         } else {
-            theme.text.with_alpha(((38u16 * alpha as u16) / 255) as u8)
+            theme.text.with_alpha(((46u16 * alpha as u16) / 255) as u8)
         },
     );
     let color = if ready {
