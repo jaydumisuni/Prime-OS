@@ -7,6 +7,7 @@ pub(crate) mod quick_controls;
 pub(crate) mod rail;
 pub(crate) mod text;
 pub(crate) mod theme;
+pub(crate) mod wallpaper;
 
 #[cfg(test)]
 pub(crate) use background::paint_settled_background;
@@ -695,5 +696,76 @@ mod tests {
             })
             .count();
         assert!(bright_icon_pixels > 40);
+    }
+
+    #[test]
+    fn system_wallpaper_catalog_exposes_exactly_eight_unique_assets() {
+        let catalog = wallpaper::system_wallpapers();
+        assert_eq!(catalog.len(), 8);
+        let mut ids = catalog.iter().map(|entry| entry.id).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 8);
+        assert!(catalog.iter().all(|entry| !entry.encoded.is_empty()));
+    }
+
+    #[test]
+    fn every_system_wallpaper_decodes_as_rgb_source_art() {
+        for index in 0..8 {
+            let decoded =
+                wallpaper::decode_system_wallpaper(index).expect("approved wallpaper decodes");
+            assert_eq!((decoded.width, decoded.height), (1672, 941));
+            assert_eq!(
+                decoded.rgba.len(),
+                decoded.width as usize * decoded.height as usize * 4
+            );
+        }
+    }
+
+    #[test]
+    fn wallpaper_selection_defaults_to_animated_and_round_trips() {
+        assert_eq!(
+            wallpaper::WallpaperSelection::from_json("{}"),
+            wallpaper::WallpaperSelection::Animated
+        );
+        let selected = wallpaper::WallpaperSelection::System(6);
+        let encoded = selected.to_json().expect("selection JSON");
+        assert_eq!(wallpaper::WallpaperSelection::from_json(&encoded), selected);
+        assert_eq!(
+            wallpaper::WallpaperSelection::from_json(
+                r#"{"schema":"prime.wallpaper.v1","selection":"system-99"}"#
+            ),
+            wallpaper::WallpaperSelection::Animated
+        );
+    }
+
+    #[test]
+    fn wallpaper_selection_persists_in_user_writable_json() {
+        let root = std::env::temp_dir().join(format!(
+            "prime-wallpaper-config-test-{}",
+            std::process::id()
+        ));
+        let path = root.join("prime/wallpaper.json");
+        let selected = wallpaper::WallpaperSelection::System(3);
+        selected.save_to_path(&path).expect("save selection");
+        assert_eq!(
+            wallpaper::WallpaperSelection::load_from_path(&path),
+            selected
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn selected_system_wallpaper_cover_scales_into_output_canvas() {
+        let decoded = wallpaper::decode_system_wallpaper(0).expect("approved wallpaper decodes");
+        let mut bytes = vec![0u8; 320 * 180 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 320, 180).unwrap();
+        wallpaper::paint_system_wallpaper(&mut canvas, &decoded);
+        assert_eq!(canvas.pixel(0, 0).unwrap().a, 255);
+        assert_eq!(canvas.pixel(319, 179).unwrap().a, 255);
+        assert_ne!(
+            canvas.pixel(32, 90).unwrap(),
+            canvas.pixel(288, 90).unwrap()
+        );
     }
 }

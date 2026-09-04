@@ -90,7 +90,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(std::path::PathBuf::from)
                 .map(|home| home.join(".config"))
         });
-    let rail_config_path = config_root.map(|root| root.join("prime/rail.json"));
+    let rail_config_path = config_root
+        .as_ref()
+        .map(|root| root.join("prime/rail.json"));
     let rail_configuration = rail_config_path
         .as_deref()
         .map(visual::RailConfiguration::load_from_path)
@@ -104,6 +106,45 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let rail_actions = rail_configuration.actions().to_vec();
     let rail_height = visual::rail_height_for_items(rail_actions.len());
+
+    let wallpaper_config_path = config_root
+        .as_ref()
+        .map(|root| root.join("prime/wallpaper.json"));
+    let requested_wallpaper = wallpaper_config_path
+        .as_deref()
+        .map(visual::wallpaper::WallpaperSelection::load_from_path)
+        .unwrap_or_default();
+    if let Some(path) = wallpaper_config_path.as_deref() {
+        if !path.exists() {
+            if let Err(error) = requested_wallpaper.save_to_path(path) {
+                eprintln!("prime-shell could not persist default wallpaper selection: {error}");
+            }
+        }
+    }
+    let (wallpaper_selection, system_wallpaper) = match requested_wallpaper {
+        visual::wallpaper::WallpaperSelection::Animated => {
+            eprintln!("PRIME_SHELL_WALLPAPER=animated-first-light");
+            (visual::wallpaper::WallpaperSelection::Animated, None)
+        }
+        visual::wallpaper::WallpaperSelection::System(index) => {
+            match visual::wallpaper::decode_system_wallpaper(index) {
+                Ok(decoded) => {
+                    let entry = &visual::wallpaper::system_wallpapers()[index];
+                    eprintln!(
+                        "PRIME_SHELL_WALLPAPER=system;id={};title={}",
+                        entry.id, entry.title
+                    );
+                    (requested_wallpaper, Some(decoded))
+                }
+                Err(error) => {
+                    eprintln!(
+                        "prime-shell rejected selected system wallpaper: {error}; falling back to animated First Light"
+                    );
+                    (visual::wallpaper::WallpaperSelection::Animated, None)
+                }
+            }
+        }
+    };
 
     let background_surface = compositor.create_surface(&queue_handle);
     let background = layer_shell.create_layer_surface(
@@ -167,6 +208,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         pool,
         text,
         theme: visual::Theme::prime_dark(),
+        wallpaper_selection,
+        system_wallpaper,
         background,
         rail,
         status_cluster,
@@ -289,6 +332,8 @@ struct PrimeShell {
     pool: SlotPool,
     text: visual::TextSystem,
     theme: visual::Theme,
+    wallpaper_selection: visual::wallpaper::WallpaperSelection,
+    system_wallpaper: Option<visual::wallpaper::DecodedWallpaper>,
     background: LayerSurface,
     rail: LayerSurface,
     status_cluster: LayerSurface,
@@ -371,7 +416,8 @@ impl PrimeShell {
     }
 
     fn redraw_background_motion(&mut self, now: Instant) {
-        if !self.background_configured
+        if self.wallpaper_selection != visual::wallpaper::WallpaperSelection::Animated
+            || !self.background_configured
             || self.background_width == 0
             || self.background_height == 0
             || self.background_static.is_empty()
@@ -1100,7 +1146,11 @@ impl LayerShellHandler for PrimeShell {
             {
                 let mut canvas = visual::Canvas::new(&mut static_bytes, width, height)
                     .expect("Prime background cache must match configured dimensions");
-                visual::paint_background_base(&mut canvas, &theme);
+                if let Some(wallpaper) = self.system_wallpaper.as_ref() {
+                    visual::wallpaper::paint_system_wallpaper(&mut canvas, wallpaper);
+                } else {
+                    visual::paint_background_base(&mut canvas, &theme);
+                }
                 visual::paint_top_status_strip(&mut canvas, &mut self.text, &theme, status);
             }
 
@@ -1108,9 +1158,11 @@ impl LayerShellHandler for PrimeShell {
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
                     debug_assert_eq!(bytes.len(), static_bytes.len());
                     bytes.copy_from_slice(&static_bytes);
-                    let mut canvas = visual::Canvas::new(bytes, w, h)
-                        .expect("Prime background buffer must match configured dimensions");
-                    visual::paint_background_motion(&mut canvas, &theme, 0.0);
+                    if self.wallpaper_selection == visual::wallpaper::WallpaperSelection::Animated {
+                        let mut canvas = visual::Canvas::new(bytes, w, h)
+                            .expect("Prime background buffer must match configured dimensions");
+                        visual::paint_background_motion(&mut canvas, &theme, 0.0);
+                    }
                 })
             {
                 eprintln!("prime-shell could not draw background: {error}");
