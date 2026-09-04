@@ -80,10 +80,7 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-files",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"FUNCTIONAL",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
     "launch_ready":true,
     "limitations":[]
   },
@@ -93,10 +90,7 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-terminal",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"FUNCTIONAL",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
     "launch_ready":true,
     "limitations":[]
   },
@@ -106,14 +100,9 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-browser",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"RECOGNIZED",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
     "launch_ready":false,
-    "limitations":[
-      "proof fixture: unavailable"
-    ]
+    "limitations":["proof fixture: unavailable"]
   },
   {
     "application_id":"00000000-0000-0000-0000-000000000004",
@@ -121,10 +110,7 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-settings",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"FUNCTIONAL",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"FUNCTIONAL","evidence_refs":[]},
     "launch_ready":true,
     "limitations":[]
   },
@@ -134,14 +120,9 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-health",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"RECOGNIZED",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
     "launch_ready":false,
-    "limitations":[
-      "proof fixture: unavailable"
-    ]
+    "limitations":["proof fixture: unavailable"]
   },
   {
     "application_id":"00000000-0000-0000-0000-000000000006",
@@ -149,14 +130,9 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-network",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"RECOGNIZED",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
     "launch_ready":false,
-    "limitations":[
-      "proof fixture: unavailable"
-    ]
+    "limitations":["proof fixture: unavailable"]
   },
   {
     "application_id":"00000000-0000-0000-0000-000000000007",
@@ -164,14 +140,9 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-media",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"RECOGNIZED",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
     "launch_ready":false,
-    "limitations":[
-      "proof fixture: unavailable"
-    ]
+    "limitations":["proof fixture: unavailable"]
   },
   {
     "application_id":"00000000-0000-0000-0000-000000000008",
@@ -179,14 +150,9 @@ fn applications_fixture() -> Vec<ApplicationEntry> {
     "profile_revision":1,
     "profile_digest":"proof-recovery",
     "execution_backend":"NATIVE",
-    "compatibility":{
-      "state":"RECOGNIZED",
-      "evidence_refs":[]
-    },
+    "compatibility":{"state":"RECOGNIZED","evidence_refs":[]},
     "launch_ready":false,
-    "limitations":[
-      "proof fixture: unavailable"
-    ]
+    "limitations":["proof fixture: unavailable"]
   }
 ]"#,
     )
@@ -225,6 +191,7 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
                 PrimeLauncherView {
                     applications: &applications,
                     selected: 0,
+                    query: "",
                     power_ready: true,
                     pending_power: None,
                     message: None,
