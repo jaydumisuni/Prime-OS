@@ -95,10 +95,19 @@ pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'stat
     if launch_ready { None } else { Some("Unavailable") }
 }
 
+pub(crate) fn search_copy(query: &str) -> &str {
+    if query.is_empty() {
+        "Search Prime apps..."
+    } else {
+        query
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PrimeLauncherView<'a> {
     pub(crate) applications: &'a [ApplicationEntry],
     pub(crate) selected: usize,
+    pub(crate) query: &'a str,
     pub(crate) power_ready: bool,
     pub(crate) pending_power: Option<SystemPowerAction>,
     pub(crate) message: Option<&'a str>,
@@ -142,6 +151,7 @@ pub(crate) fn paint_prime_launcher_surface(
     let PrimeLauncherView {
         applications,
         selected,
+        query,
         power_ready: _,
         pending_power: _,
         message,
@@ -211,7 +221,11 @@ pub(crate) fn paint_prime_launcher_surface(
         search,
         18,
         1,
-        theme.text.with_alpha(((52u16 * alpha as u16) / 255) as u8),
+        if query.is_empty() {
+            theme.text.with_alpha(((52u16 * alpha as u16) / 255) as u8)
+        } else {
+            theme.cyan.with_alpha(((110u16 * alpha as u16) / 255) as u8)
+        },
     );
     draw_icon(
         canvas,
@@ -222,15 +236,19 @@ pub(crate) fn paint_prime_launcher_surface(
     text.draw(
         canvas,
         (search.x + 60, search.y + 20),
-        "Search apps, files, and commands...",
+        search_copy(query),
         TextStyle { size_px: 14, weight: FontWeight::Regular },
-        theme.muted.with_alpha(alpha),
+        if query.is_empty() {
+            theme.muted.with_alpha(alpha)
+        } else {
+            theme.text.with_alpha(alpha)
+        },
     );
 
     text.draw(
         canvas,
         (layout.apps.x + slide, 108),
-        "CORE APPS",
+        if query.is_empty() { "CORE APPS" } else { "SEARCH RESULTS" },
         TextStyle { size_px: 13, weight: FontWeight::Semibold },
         theme.text.with_alpha(((220u16 * alpha as u16) / 255) as u8),
     );
@@ -315,7 +333,11 @@ pub(crate) fn paint_prime_launcher_surface(
         text.draw(
             canvas,
             (empty.x + 24, empty.y + 42),
-            "No admitted applications",
+            if query.is_empty() {
+                "No admitted applications"
+            } else {
+                "No matching applications"
+            },
             TextStyle::body(),
             theme.muted.with_alpha(alpha),
         );
@@ -354,6 +376,7 @@ mod final_ui_contract_tests {
             PrimeLauncherView {
                 applications: &[],
                 selected: 0,
+                query: "",
                 power_ready: true,
                 pending_power: None,
                 message: None,
@@ -369,5 +392,11 @@ mod final_ui_contract_tests {
         let layout = PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT);
         assert_eq!(layout.power_action_at(layout.restart.center_x(), layout.restart.center_y()), None);
         assert_eq!(layout.power_action_at(layout.power_off.center_x(), layout.power_off.center_y()), None);
+    }
+
+    #[test]
+    fn home_search_copy_is_truthful_and_query_driven() {
+        assert_eq!(search_copy(""), "Search Prime apps...");
+        assert_eq!(search_copy("terminal"), "terminal");
     }
 }
