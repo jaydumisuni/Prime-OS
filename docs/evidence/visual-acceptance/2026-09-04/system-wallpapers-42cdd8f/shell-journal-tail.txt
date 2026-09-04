@@ -1,0 +1,40 @@
+PRIME_SHELL_IDLE_MOTION=active;frames=3900;phase=35.313
+PRIME_SHELL_IDLE_MOTION=active;frames=4200;phase=38.043
+PRIME_SHELL_IDLE_MOTION=active;frames=4500;phase=40.768
+PRIME_SHELL_IDLE_MOTION=active;frames=4800;phase=43.512
+PRIME_SHELL_IDLE_MOTION=active;frames=5100;phase=46.225
+PRIME_SHELL_IDLE_MOTION=active;frames=5400;phase=48.936
+PRIME_SHELL_IDLE_MOTION=active;frames=5700;phase=51.652
+PRIME_SHELL_IDLE_MOTION=active;frames=6000;phase=54.405
+PRIME_SHELL_IDLE_MOTION=active;frames=6300;phase=57.119
+PRIME_SHELL_IDLE_MOTION=active;frames=6600;phase=59.826
+PRIME_SHELL_IDLE_MOTION=active;frames=6900;phase=62.550
+Stopping prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell...
+Stopped prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell.
+prime-p1-42cdd8f-physical-shell.service: Consumed 39.279s CPU time over 4min 49.203s wall clock time, 58.2M memory peak.
+Starting prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell...
+Started prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell.
+PRIME_SHELL_WALLPAPER=system;id=system-01;title=Prime 01
+PRIME_SHELL_FONT=Noto Sans
+PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm
+PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail,status;readiness_unearned
+Stopping prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell...
+Stopped prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell.
+Starting prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell...
+Started prime-p1-42cdd8f-physical-shell.service - [systemd-run] /home/kratos/prime-p1-wallpapers-20260904/target/release/prime-shell.
+PRIME_SHELL_WALLPAPER=animated-first-light
+PRIME_SHELL_FONT=Noto Sans
+PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm
+PRIME_SHELL_PERSISTENT_BASELINE_CONFIGURED=background,rail,status;readiness_unearned
+PRIME_SHELL_IDLE_MOTION=active;frames=300;phase=2.734
+PRIME_SHELL_IDLE_MOTION=active;frames=600;phase=5.464
+PRIME_SHELL_IDLE_MOTION=active;frames=900;phase=8.193
+PRIME_SHELL_IDLE_MOTION=active;frames=1200;phase=10.916
+PRIME_SHELL_IDLE_MOTION=active;frames=1500;phase=13.648
+PRIME_SHELL_IDLE_MOTION=active;frames=1800;phase=16.388
+PRIME_SHELL_IDLE_MOTION=active;frames=2100;phase=19.131
+PRIME_SHELL_IDLE_MOTION=active;frames=2400;phase=21.865
+PRIME_SHELL_IDLE_MOTION=active;frames=2700;phase=24.614
+PRIME_SHELL_IDLE_MOTION=active;frames=3000;phase=27.359
+PRIME_SHELL_IDLE_MOTION=active;frames=3300;phase=30.096
+PRIME_SHELL_IDLE_MOTION=active;frames=3600;phase=32.840

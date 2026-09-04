@@ -1,0 +1,201 @@
+{
+  "schema": "prime.p1.system-wallpapers-physical-proof.v1",
+  "observed_date": "2026-09-04",
+  "candidate_revision": "42cdd8fb139cc5a8363264bcc356e2a15ce0c9ed",
+  "parent_visual_revision": "ee783a8c40ffb69a20a4ff06ee2b0ebae84b9f3f",
+  "wallpaper_catalog": {
+    "count": 8,
+    "default": "animated-first-light",
+    "source_bundle": "Prime_OS_Wallpapers_8.zip",
+    "source_bundle_sha256": "f8f11f6473992539a52ad908032eb4926dbaf8e5c6241237dc8efc07fec0c076",
+    "source_dimensions": [
+      1672,
+      941
+    ],
+    "scaling": "centered-cover-bilinear",
+    "entries": [
+      {
+        "id": "system-01",
+        "title": "Prime 01",
+        "file": "Prime_OS_Wallpaper_01.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "38719c9fd416d639ba6392b6b768806967af717cba97f482199ff5945bc1c4f0",
+        "bytes": 1748815
+      },
+      {
+        "id": "system-02",
+        "title": "Prime 02",
+        "file": "Prime_OS_Wallpaper_02.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "c35ee784bb3b73209e9d3d511fe97b4b6e81a7b60f1fe147f78962d2794f70b8",
+        "bytes": 1507512
+      },
+      {
+        "id": "system-03",
+        "title": "Prime 03",
+        "file": "Prime_OS_Wallpaper_03.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "b4cd77c0a10744f4e5c4022da03dad52d9054d3cde9f7f52c1e9e7f23a3ae3be",
+        "bytes": 1544025
+      },
+      {
+        "id": "system-04",
+        "title": "Prime 04",
+        "file": "Prime_OS_Wallpaper_04.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "f4f8108851a042ae15536dca1cecfc94176e32d4dbd781c19ed206267c3c3677",
+        "bytes": 1821247
+      },
+      {
+        "id": "system-05",
+        "title": "Prime OS 05",
+        "file": "Prime_OS_Wallpaper_05_PRIME_OS.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "e8e20597248b02953c4ab000fce7038c562d09bdbb108ec85ff7f6f9f5a17c33",
+        "bytes": 1533068
+      },
+      {
+        "id": "system-06",
+        "title": "Prime OS 06",
+        "file": "Prime_OS_Wallpaper_06_PRIME_OS.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "3b60aad7e34be93ead451ee817f39e9d624af522fa2166db6c14b6aa74fef2d5",
+        "bytes": 1593116
+      },
+      {
+        "id": "system-07",
+        "title": "Prime OS 07",
+        "file": "Prime_OS_Wallpaper_07_PRIME_OS.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "33c51f469c7e1ada844c6dd9e695e0598e4b31164e15839b03413359ecaccd51",
+        "bytes": 1577726
+      },
+      {
+        "id": "system-08",
+        "title": "Prime OS 08",
+        "file": "Prime_OS_Wallpaper_08_PRIME_OS.png",
+        "source_dimensions": [
+          1672,
+          941
+        ],
+        "sha256": "3ec9158a0d2c3ca6494a6ba29849085e94417c12cb07e9efe9e23f6bc4a1c992",
+        "bytes": 2143881
+      }
+    ]
+  },
+  "verification": {
+    "prime_shell_tests": "55/55 PASS",
+    "cargo_test_workspace": "PASS",
+    "cargo_fmt_check": "PASS",
+    "git_diff_check": "PASS",
+    "cargo_clippy_prime_shell_tests_deny_warnings": "PASS",
+    "release_build_prime_shell_and_compositor": "PASS",
+    "system_wallpaper_live_selection": "PASS system-01",
+    "animated_default_restored": "PASS",
+    "animated_idle_motion_resumed": "PASS",
+    "physical_shell_ready": "PASS"
+  },
+  "physical_runtime": {
+    "schema": "prime.compositor-readiness.v1",
+    "observed_at": "2026-09-04T09:19:23.150923546Z",
+    "phase": "SHELL_READY",
+    "direct_tty_backend": true,
+    "seat_name": "seat0",
+    "wayland_socket": "wayland-1",
+    "primary_gpu": "/dev/dri/card1",
+    "gpu_count": 1,
+    "udev_device_count": 1,
+    "drm_access_ready": true,
+    "libinput_bound": true,
+    "session_active": true,
+    "wayland_listener_ready": true,
+    "wayland_protocols_ready": true,
+    "wayland_seat_ready": true,
+    "keyboard_ready": true,
+    "pointer_ready": true,
+    "input_delivery_ready": true,
+    "frame_loop_ready": true,
+    "frame_in_flight": false,
+    "frames_queued": 10744,
+    "frames_submitted": 10744,
+    "mapped_surface_frames_submitted": 10738,
+    "renderer_ready": true,
+    "outputs_ready": true,
+    "shell_ready": true,
+    "clients_accepted": 3,
+    "input_events_seen": 0,
+    "last_udev_event": null,
+    "limitations": [
+      "Touch, tablet and gesture delivery are not initialized in the P1 keyboard/pointer baseline",
+      "Absolute-position pointer events are not routed in the P1 relative-pointer baseline"
+    ]
+  },
+  "usb3": {
+    "device": "Lexar USB Flash Drive 21c4:0cd1",
+    "transport": "SuperSpeed 5000M",
+    "block_device": "/dev/sda",
+    "partition": "/dev/sda1",
+    "filesystem": "NTFS",
+    "mount_mode": "read-only",
+    "filesystem_enumeration": "PASS",
+    "direct_read": {
+      "source": "sources/install.wim",
+      "bytes": 268435456,
+      "result": "PASS",
+      "throughput": "173 MB/s"
+    }
+  },
+  "audio": {
+    "device": "ASUS TUF GAMING H1 Wireless",
+    "alsa": "hw:1,0",
+    "stream": "48000 Hz S16_LE stereo",
+    "mechanical_path": "PASS",
+    "audibility": "PENDING_EXTERNAL"
+  },
+  "input": {
+    "hp_keyboard_enumerated": true,
+    "logitech_mouse_enumerated": true,
+    "compositor_keyboard_ready": true,
+    "compositor_pointer_ready": true,
+    "input_delivery_ready": true,
+    "new_physical_event_counter_advancement_this_unattended_run": false,
+    "note": "No owner physical interaction occurred during this unattended revalidation; prior physical interaction proof remains separate."
+  },
+  "display": {
+    "HDMI-A-1": "connected",
+    "DP-1": "disconnected",
+    "mode": "1920x1080 @ 60 Hz"
+  },
+  "network": {
+    "realtek_usb_wifi": "UP",
+    "ethernet": "NO-CARRIER",
+    "iphone_ipheth_interface": "present; NO-CARRIER"
+  },
+  "limitations": [
+    "Ethernet carrier requires a connected cable/link partner",
+    "DP remains physically disconnected",
+    "Audible sound requires human confirmation",
+    "No new physical keyboard/mouse event-counter movement occurred during this unattended run"
+  ]
+}

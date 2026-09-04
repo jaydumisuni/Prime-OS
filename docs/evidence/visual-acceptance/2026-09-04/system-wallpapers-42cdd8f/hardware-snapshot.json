@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "lsusb",
+      "-t"
+    ],
+    "exit_code": 0,
+    "stdout": "/:  Bus 001.Port 001: Dev 001, Class=root_hub, Driver=xhci_hcd/16p, 480M\n    |__ Port 004: Dev 002, If 0, Class=Human Interface Device, Driver=usbhid, 1.5M\n    |__ Port 004: Dev 002, If 1, Class=Human Interface Device, Driver=usbhid, 1.5M\n    |__ Port 005: Dev 003, If 0, Class=Human Interface Device, Driver=usbhid, 12M\n    |__ Port 006: Dev 004, If 0, Class=Vendor Specific Class, Driver=8188eu, 480M\n    |__ Port 008: Dev 005, If 0, Class=Human Interface Device, Driver=usbhid, 12M\n    |__ Port 010: Dev 006, If 0, Class=Imaging, Driver=[none], 480M\n    |__ Port 010: Dev 006, If 1, Class=Vendor Specific Class, Driver=usbfs, 480M\n    |__ Port 010: Dev 006, If 2, Class=Vendor Specific Class, Driver=ipheth, 480M\n    |__ Port 012: Dev 007, If 0, Class=Audio, Driver=snd-usb-audio, 12M\n    |__ Port 012: Dev 007, If 1, Class=Audio, Driver=snd-usb-audio, 12M\n    |__ Port 012: Dev 007, If 2, Class=Audio, Driver=snd-usb-audio, 12M\n    |__ Port 012: Dev 007, If 3, Class=Human Interface Device, Driver=usbhid, 12M\n/:  Bus 002.Port 001: Dev 001, Class=root_hub, Driver=xhci_hcd/8p, 10000M\n    |__ Port 008: Dev 002, If 0, Class=Mass Storage, Driver=usb-storage, 5000M\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "lsusb"
+    ],
+    "exit_code": 0,
+    "stdout": "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\nBus 001 Device 002: ID 03f0:034a HP, Inc Elite Keyboard\nBus 001 Device 003: ID 046d:c542 Logitech, Inc. M185 compact wireless mouse\nBus 001 Device 004: ID 0bda:8179 Realtek Semiconductor Corp. RTL8188EUS 802.11n Wireless Network Adapter\nBus 001 Device 005: ID 0b05:1a1e ASUSTek Computer, Inc. TUF GAMING H1 Wireless Battery Charger\nBus 001 Device 006: ID 05ac:12a8 Apple, Inc. iPhone 5/5C/5S/6/SE/7/8/X/XR\nBus 001 Device 007: ID 0b05:1a1d ASUSTek Computer, Inc. TUF GAMING H1 Wireless\nBus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub\nBus 002 Device 002: ID 21c4:0cd1 Lexar USB Flash Drive\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "lsblk",
+      "-o",
+      "NAME,TRAN,RM,SIZE,FSTYPE,MOUNTPOINTS,MODEL"
+    ],
+    "exit_code": 0,
+    "stdout": "NAME        TRAN   RM   SIZE FSTYPE   MOUNTPOINTS                         MODEL\nloop0               0 519.4M squashfs /snap/code/258                      \nloop1               0 519.7M squashfs /snap/code/259                      \nloop2               0  63.8M squashfs /snap/core20/2866                   \nloop3               0  66.8M squashfs /snap/core24/1587                   \nloop4               0     4K squashfs /snap/bare/5                        \nloop5               0  66.8M squashfs /snap/core24/1643                   \nloop6               0  19.6M squashfs /snap/desktop-security-center/150   \nloop7               0    20M squashfs /snap/desktop-security-center/151   \nloop8               0 261.1M squashfs /snap/firefox/8803                  \nloop9               0 260.8M squashfs /snap/firefox/8819                  \nloop10              0  16.5M squashfs /snap/firmware-updater/226          \nloop11              0 606.1M squashfs /snap/gnome-46-2404/153             \nloop12              0  91.7M squashfs /snap/gtk-common-themes/1535        \nloop13              0   395M squashfs /snap/mesa-2404/1165                \nloop14              0   402M squashfs /snap/mesa-2404/1839                \nloop15              0  18.8M squashfs /snap/prompting-client/204          \nloop16              0  18.8M squashfs /snap/prompting-client/222          \nloop17              0  15.7M squashfs /snap/snap-store/1367               \nloop18              0  11.8M squashfs /snap/snap-store/1390               \nloop19              0  49.3M squashfs /snap/snapd/26865                   \nloop20              0  50.1M squashfs /snap/snapd/27710                   \nloop21              0   580K squashfs /snap/snapd-desktop-integration/361 \nloop22              0   828K squashfs /snap/snapd-desktop-integration/391 \nloop23              0 100.5M squashfs /snap/telegram-desktop/7127         \nloop24              0 100.5M squashfs /snap/telegram-desktop/7130         \nsda         usb     1 231.1G                                              USB Flash Drive\n\u251c\u2500sda1              1 231.1G ntfs                                         \n\u2514\u2500sda2              1     1M vfat                                         \nsr0         sata    1  1024M                                              hp HLDS DVDRW GUD1N\nnvme0n1     nvme    0 953.9G                                              SAMSUNG MZVL81T0HFLB-00BLL\n\u251c\u2500nvme0n1p1 nvme    0     1G vfat     /boot/efi                           \n\u2514\u2500nvme0n1p2 nvme    0 952.8G ext4     /                                   \n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "ip",
+      "-br",
+      "link"
+    ],
+    "exit_code": 0,
+    "stdout": "lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> \nwlx00e04c8188ff  UP             00:e0:4c:81:88:ff <BROADCAST,MULTICAST,UP,LOWER_UP> \nenp1s0           DOWN           38:ca:84:44:ef:1c <NO-CARRIER,BROADCAST,MULTICAST,UP> \nenx7281ebc1c9b5  DOWN           72:81:eb:c1:c9:b5 <NO-CARRIER,BROADCAST,MULTICAST,UP> \n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "aplay",
+      "-l"
+    ],
+    "exit_code": 0,
+    "stdout": "**** List of PLAYBACK Hardware Devices ****\ncard 0: PCH [HDA Intel PCH], device 0: ALC897 Analog [ALC897 Analog]\n  Subdevices: 1/1\n  Subdevice #0: subdevice #0\ncard 0: PCH [HDA Intel PCH], device 3: HDMI 0 [VG249Q1R]\n  Subdevices: 1/1\n  Subdevice #0: subdevice #0\ncard 0: PCH [HDA Intel PCH], device 7: HDMI 1 [HDMI 1]\n  Subdevices: 1/1\n  Subdevice #0: subdevice #0\ncard 0: PCH [HDA Intel PCH], device 8: HDMI 2 [HDMI 2]\n  Subdevices: 1/1\n  Subdevice #0: subdevice #0\ncard 1: Wireless [TUF GAMING H1 Wireless], device 0: USB Audio [USB Audio]\n  Subdevices: 1/1\n  Subdevice #0: subdevice #0\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "cat",
+      "/sys/class/drm/card1-HDMI-A-1/status"
+    ],
+    "exit_code": 0,
+    "stdout": "connected\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "cat",
+      "/sys/class/drm/card1-DP-1/status"
+    ],
+    "exit_code": 0,
+    "stdout": "disconnected\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit_code": 0,
+    "stdout": "42cdd8fb139cc5a8363264bcc356e2a15ce0c9ed\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "status",
+      "--short"
+    ],
+    "exit_code": 0,
+    "stdout": "?? docs/evidence/visual-acceptance/2026-09-04/\n",
+    "stderr": ""
+  }
+]
