@@ -1,4 +1,4 @@
-use prime_contracts::{ApplicationEntry, SystemPowerAction};
+use prime_contracts::ApplicationEntry;
 
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
@@ -10,6 +10,7 @@ const CARD_COLUMNS: u32 = 4;
 const CARD_GAP: u32 = 18;
 const CARD_HEIGHT: u32 = 208;
 const CARD_ROW_GAP: u32 = 18;
+pub(crate) const LAUNCHER_GLASS_ALPHA: u8 = 48;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrimeLauncherLayout {
@@ -17,10 +18,6 @@ pub(crate) struct PrimeLauncherLayout {
     pub(crate) search: Rect,
     pub(crate) apps: Rect,
     pub(crate) footer: Rect,
-    pub(crate) lock: Rect,
-    pub(crate) log_out: Rect,
-    pub(crate) restart: Rect,
-    pub(crate) power_off: Rect,
 }
 
 impl PrimeLauncherLayout {
@@ -28,36 +25,19 @@ impl PrimeLauncherLayout {
         let bounds = Rect::new(0, 0, width, height);
         let search = Rect::new(42, 34, width.saturating_sub(214), 64);
         let apps_y = 150;
-        let footer_height = 50;
-        let apps_height = height.saturating_sub(apps_y + footer_height + 88);
+        let apps_height = height.saturating_sub(apps_y + 68);
         let apps = Rect::new(42, apps_y as i32, width.saturating_sub(84), apps_height);
         let footer = Rect::new(
             42,
-            height.saturating_sub(44) as i32,
+            height.saturating_sub(36) as i32,
             width.saturating_sub(84),
             18,
         );
-        let actions_y = height.saturating_sub(112) as i32;
-        let actions_width = width.saturating_sub(84);
-        let action_gap = 14;
-        let action_width = actions_width.saturating_sub(action_gap * 3) / 4;
-        let action = |column: u32| {
-            Rect::new(
-                42 + (column * (action_width + action_gap)) as i32,
-                actions_y,
-                action_width,
-                48,
-            )
-        };
         Self {
             bounds,
             search,
             apps,
             footer,
-            lock: action(0),
-            log_out: action(1),
-            restart: action(2),
-            power_off: action(3),
         }
     }
 
@@ -83,18 +63,6 @@ impl PrimeLauncherLayout {
                 .contains(x.floor() as i32, y.floor() as i32)
         })
     }
-
-    pub(crate) fn power_action_at(self, x: f64, y: f64) -> Option<SystemPowerAction> {
-        let x = x.floor() as i32;
-        let y = y.floor() as i32;
-        if self.restart.contains(x, y) {
-            Some(SystemPowerAction::Reboot)
-        } else if self.power_off.contains(x, y) {
-            Some(SystemPowerAction::PowerOff)
-        } else {
-            None
-        }
-    }
 }
 
 pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'static str> {
@@ -109,8 +77,7 @@ pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'stat
 pub(crate) struct PrimeLauncherView<'a> {
     pub(crate) applications: &'a [ApplicationEntry],
     pub(crate) selected: usize,
-    pub(crate) power_ready: bool,
-    pub(crate) pending_power: Option<SystemPowerAction>,
+    pub(crate) query: &'a str,
     pub(crate) message: Option<&'a str>,
     pub(crate) progress: f32,
 }
@@ -142,71 +109,6 @@ fn centered_text_x(text: &TextSystem, label: &str, style: TextStyle, rect: Rect)
     rect.center_x().round() as i32 - text.measure(label, style).width as i32 / 2
 }
 
-#[allow(clippy::too_many_arguments)]
-fn paint_launcher_action(
-    canvas: &mut Canvas<'_>,
-    text: &mut TextSystem,
-    theme: &Theme,
-    rect: Rect,
-    label: &str,
-    icon: Icon,
-    ready: bool,
-    pending: bool,
-    danger: bool,
-    alpha: u8,
-    slide: i32,
-) {
-    let rect = Rect::new(
-        rect.x + slide,
-        rect.y,
-        rect.width.saturating_sub(slide.max(0) as u32),
-        rect.height,
-    );
-    let fill = if pending {
-        theme
-            .violet
-            .with_alpha(((74u16 * alpha as u16) / 255) as u8)
-    } else {
-        Argb::from_u32(0xff0b1529).with_alpha(((132u16 * alpha as u16) / 255) as u8)
-    };
-    canvas.fill_rounded_rect(rect, 13, fill);
-    canvas.stroke_rounded_rect(
-        rect,
-        13,
-        1,
-        if pending {
-            theme.cyan.with_alpha(alpha)
-        } else {
-            theme.text.with_alpha(((36u16 * alpha as u16) / 255) as u8)
-        },
-    );
-    let color = if !ready {
-        theme
-            .muted
-            .with_alpha(((105u16 * alpha as u16) / 255) as u8)
-    } else if danger {
-        Argb::from_u32(0xffff605c).with_alpha(alpha)
-    } else {
-        theme.text.with_alpha(alpha)
-    };
-    draw_icon(
-        canvas,
-        Rect::new(rect.x + 16, rect.y + 15, 18, 18),
-        icon,
-        color,
-    );
-    text.draw(
-        canvas,
-        (rect.x + 44, rect.y + 14),
-        label,
-        TextStyle {
-            size_px: 11,
-            weight: FontWeight::Semibold,
-        },
-        color,
-    );
-}
-
 pub(crate) fn paint_prime_launcher_surface(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
@@ -217,8 +119,7 @@ pub(crate) fn paint_prime_launcher_surface(
     let PrimeLauncherView {
         applications,
         selected,
-        power_ready,
-        pending_power,
+        query,
         message,
         progress,
     } = view;
@@ -236,7 +137,8 @@ pub(crate) fn paint_prime_launcher_surface(
     canvas.fill_rounded_rect(
         body,
         28,
-        Argb::from_u32(0xff0a1326).with_alpha(((184u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff0a1326)
+            .with_alpha(((u16::from(LAUNCHER_GLASS_ALPHA) * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         body,
@@ -283,7 +185,7 @@ pub(crate) fn paint_prime_launcher_surface(
     canvas.fill_rounded_rect(
         search,
         18,
-        Argb::from_u32(0xff0b1529).with_alpha(((172u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff0b1529).with_alpha(((52u16 * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         search,
@@ -301,12 +203,21 @@ pub(crate) fn paint_prime_launcher_surface(
         size_px: 14,
         weight: FontWeight::Regular,
     };
+    let search_text = if query.trim().is_empty() {
+        "Search admitted applications..."
+    } else {
+        query
+    };
     text.draw(
         canvas,
         (search.x + 60, search.y + 20),
-        "Search apps, files, and commands...",
+        search_text,
         search_style,
-        theme.muted.with_alpha(alpha),
+        if query.trim().is_empty() {
+            theme.muted.with_alpha(alpha)
+        } else {
+            theme.text.with_alpha(alpha)
+        },
     );
     let badge = Rect::new(search.x + search.width as i32 - 43, search.y + 18, 26, 28);
     canvas.fill_rounded_rect(
@@ -349,9 +260,9 @@ pub(crate) fn paint_prime_launcher_surface(
         let fill = if selected_card {
             theme
                 .violet
-                .with_alpha(((48u16 * alpha as u16) / 255) as u8)
+                .with_alpha(((42u16 * alpha as u16) / 255) as u8)
         } else {
-            Argb::from_u32(0xff10203a).with_alpha(((118u16 * alpha as u16) / 255) as u8)
+            Argb::from_u32(0xff10203a).with_alpha(((46u16 * alpha as u16) / 255) as u8)
         };
         canvas.fill_rounded_rect(card, 18, fill);
         canvas.stroke_rounded_rect(
@@ -442,106 +353,40 @@ pub(crate) fn paint_prime_launcher_surface(
         canvas.fill_rounded_rect(
             empty,
             18,
-            Argb::from_u32(0xff0b1222).with_alpha(((142u16 * alpha as u16) / 255) as u8),
+            Argb::from_u32(0xff0b1222).with_alpha(((48u16 * alpha as u16) / 255) as u8),
         );
         text.draw(
             canvas,
             (empty.x + 24, empty.y + 42),
-            "No admitted applications",
+            if query.trim().is_empty() {
+                "No admitted applications"
+            } else {
+                "No matching applications"
+            },
             TextStyle::body(),
             theme.muted.with_alpha(alpha),
         );
     }
 
-    let divider_y = layout.restart.y - 38;
-    canvas.fill_rect(
-        Rect::new(
-            layout.apps.x + slide,
-            divider_y,
-            layout.apps.width.saturating_sub(slide.max(0) as u32),
-            1,
-        ),
-        theme.text.with_alpha(((34u16 * alpha as u16) / 255) as u8),
+    let footer_text = message.unwrap_or(if query.trim().is_empty() {
+        "Type to search • ↑/↓ select • Enter open"
+    } else {
+        "↑/↓ select • Enter open • Backspace edit"
+    });
+    let footer = Rect::new(
+        layout.footer.x + slide,
+        layout.footer.y,
+        layout.footer.width.saturating_sub(slide.max(0) as u32),
+        layout.footer.height,
     );
     text.draw(
         canvas,
-        (layout.apps.x + slide, divider_y + 14),
-        "QUICK ACTIONS",
+        (footer.x, footer.y),
+        footer_text,
         TextStyle {
-            size_px: 12,
-            weight: FontWeight::Semibold,
+            size_px: 10,
+            weight: FontWeight::Regular,
         },
-        theme.text.with_alpha(((210u16 * alpha as u16) / 255) as u8),
+        theme.muted.with_alpha(alpha),
     );
-    paint_launcher_action(
-        canvas,
-        text,
-        theme,
-        layout.lock,
-        "LOCK SCREEN",
-        Icon::Shield,
-        false,
-        false,
-        false,
-        alpha,
-        slide,
-    );
-    paint_launcher_action(
-        canvas,
-        text,
-        theme,
-        layout.log_out,
-        "LOG OUT",
-        Icon::Chevron,
-        false,
-        false,
-        false,
-        alpha,
-        slide,
-    );
-    paint_launcher_action(
-        canvas,
-        text,
-        theme,
-        layout.restart,
-        "RESTART",
-        Icon::Restart,
-        power_ready,
-        pending_power == Some(SystemPowerAction::Reboot),
-        false,
-        alpha,
-        slide,
-    );
-    paint_launcher_action(
-        canvas,
-        text,
-        theme,
-        layout.power_off,
-        "SHUT DOWN",
-        Icon::Power,
-        power_ready,
-        pending_power == Some(SystemPowerAction::PowerOff),
-        true,
-        alpha,
-        slide,
-    );
-
-    if let Some(footer_text) = message {
-        let footer = Rect::new(
-            layout.footer.x + slide,
-            layout.footer.y,
-            layout.footer.width.saturating_sub(slide.max(0) as u32),
-            layout.footer.height,
-        );
-        text.draw(
-            canvas,
-            (footer.x, footer.y),
-            footer_text,
-            TextStyle {
-                size_px: 10,
-                weight: FontWeight::Regular,
-            },
-            theme.muted.with_alpha(alpha),
-        );
-    }
 }

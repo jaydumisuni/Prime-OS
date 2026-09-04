@@ -29,7 +29,9 @@ fn base_scene(active: Option<RailAction>) -> Vec<u8> {
     let mut text = TextSystem::load_system().expect("Prime production font");
     let mut bytes = vec![0u8; OUTPUT_WIDTH as usize * OUTPUT_HEIGHT as usize * 4];
     let mut desktop = Canvas::new(&mut bytes, OUTPUT_WIDTH, OUTPUT_HEIGHT).unwrap();
-    paint_settled_background(&mut desktop, &theme);
+    let wallpaper =
+        wallpaper::decode_system_wallpaper(2).expect("Prime 03 proof wallpaper decodes");
+    wallpaper::paint_system_wallpaper(&mut desktop, &wallpaper);
     paint_top_status_strip(&mut desktop, &mut text, &theme, TopStatus::Online);
 
     let mut status_bytes =
@@ -225,8 +227,7 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
                 PrimeLauncherView {
                     applications: &applications,
                     selected: 0,
-                    power_ready: true,
-                    pending_power: None,
+                    query: "",
                     message: None,
                     progress: 1.0,
                 },
@@ -288,9 +289,10 @@ fn production_wallpaper_can_be_dumped_at_native_4k() {
     std::fs::create_dir_all(&directory).unwrap();
     const WIDTH: u32 = 3840;
     const HEIGHT: u32 = 2160;
-    let theme = Theme::prime_dark();
     let mut bytes = vec![0u8; WIDTH as usize * HEIGHT as usize * 4];
     let mut canvas = Canvas::new(&mut bytes, WIDTH, HEIGHT).unwrap();
-    paint_settled_background(&mut canvas, &theme);
+    let wallpaper =
+        wallpaper::decode_system_wallpaper(2).expect("Prime 03 proof wallpaper decodes");
+    wallpaper::paint_system_wallpaper(&mut canvas, &wallpaper);
     std::fs::write(format!("{directory}/04-wallpaper-4k.bgra"), bytes).unwrap();
 }

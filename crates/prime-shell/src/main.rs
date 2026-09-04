@@ -234,6 +234,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         core: core_client::CoreClient::from_env(),
         applications: Vec::new(),
         selected_application: 0,
+        launcher_query: String::new(),
         prime_launcher_message: None,
         quick_lines: Vec::new(),
         quick_power_ready: false,
@@ -313,6 +314,11 @@ fn power_action_name(action: SystemPowerAction) -> &'static str {
     }
 }
 
+fn launcher_query_matches(display_name: &str, query: &str) -> bool {
+    let query = query.trim();
+    query.is_empty() || display_name.to_lowercase().contains(&query.to_lowercase())
+}
+
 struct TransientSurface {
     layer: LayerSurface,
     width: u32,
@@ -358,6 +364,7 @@ struct PrimeShell {
     core: core_client::CoreClient,
     applications: Vec<prime_contracts::ApplicationEntry>,
     selected_application: usize,
+    launcher_query: String,
     prime_launcher_message: Option<String>,
     quick_lines: Vec<String>,
     quick_power_ready: bool,
@@ -557,10 +564,8 @@ impl PrimeShell {
         }
         self.pending_power = None;
         self.quick_message = None;
-        self.quick_power_ready = self
-            .core
-            .system_status()
-            .is_ok_and(|status| status.power_ready);
+        self.launcher_query.clear();
+        self.selected_application = 0;
         match self.core.applications() {
             Ok(projection) => {
                 self.applications = projection.applications;
@@ -645,8 +650,17 @@ impl PrimeShell {
         }
     }
 
+    fn filtered_applications(&self) -> Vec<prime_contracts::ApplicationEntry> {
+        self.applications
+            .iter()
+            .filter(|entry| launcher_query_matches(&entry.display_name, &self.launcher_query))
+            .cloned()
+            .collect()
+    }
+
     fn activate_selected_application(&mut self) {
-        let Some(entry) = self.applications.get(self.selected_application).cloned() else {
+        let visible = self.filtered_applications();
+        let Some(entry) = visible.get(self.selected_application).cloned() else {
             self.prime_launcher_message = Some("NO APPLICATION SELECTED".to_owned());
             return;
         };
@@ -665,11 +679,12 @@ impl PrimeShell {
     }
 
     fn move_application_selection(&mut self, delta: isize) {
-        if self.applications.is_empty() {
+        let visible_count = self.filtered_applications().len();
+        if visible_count == 0 {
             self.selected_application = 0;
             return;
         }
-        let last = self.applications.len() - 1;
+        let last = visible_count - 1;
         self.selected_application = if delta < 0 {
             self.selected_application
                 .saturating_sub(delta.unsigned_abs())
@@ -693,6 +708,7 @@ impl PrimeShell {
                 .wl_surface()
                 .frame(queue_handle, layer.wl_surface().clone());
         }
+        let applications = self.filtered_applications();
         let theme = self.theme;
         let text = &mut self.text;
         if let Err(error) =
@@ -704,10 +720,9 @@ impl PrimeShell {
                     text,
                     &theme,
                     visual::PrimeLauncherView {
-                        applications: &self.applications,
+                        applications: &applications,
                         selected: self.selected_application,
-                        power_ready: self.quick_power_ready,
-                        pending_power: self.pending_power,
+                        query: &self.launcher_query,
                         message: self.prime_launcher_message.as_deref(),
                         progress,
                     },
@@ -768,11 +783,7 @@ impl PrimeShell {
             PowerConfirmation::Arm(action) => {
                 self.pending_power = Some(action);
                 self.quick_message = Some(format!(
-                    "PRESS {} AGAIN TO CONFIRM {}",
-                    match action {
-                        SystemPowerAction::Reboot => "R",
-                        SystemPowerAction::PowerOff => "P",
-                    },
+                    "SELECT {} AGAIN TO CONFIRM",
                     power_action_name(action)
                 ));
             }
@@ -834,6 +845,7 @@ impl PrimeShell {
         layer: &LayerSurface,
         configure: &LayerSurfaceConfigure,
     ) -> bool {
+        let filtered_applications = self.filtered_applications();
         if let Some(prime_launcher) = self.prime_launcher.as_mut() {
             if layer.wl_surface() == prime_launcher.layer.wl_surface() {
                 let width = NonZeroU32::new(configure.new_size.0)
@@ -871,10 +883,9 @@ impl PrimeShell {
                             text,
                             &theme,
                             visual::PrimeLauncherView {
-                                applications: &self.applications,
+                                applications: &filtered_applications,
                                 selected: self.selected_application,
-                                power_ready: self.quick_power_ready,
-                                pending_power: self.pending_power,
+                                query: &self.launcher_query,
                                 message: self.prime_launcher_message.as_deref(),
                                 progress,
                             },
@@ -1358,6 +1369,13 @@ impl KeyboardHandler for PrimeShell {
         }
 
         if self.keyboard_focus == Some(ShellSurfaceKind::PrimeLauncher) {
+            if event.keysym == Keysym::BackSpace {
+                self.launcher_query.pop();
+                self.selected_application = 0;
+                self.prime_launcher_message = None;
+                self.redraw_prime_launcher(queue_handle);
+                return;
+            }
             if event.keysym == Keysym::Up {
                 self.move_application_selection(-1);
                 self.redraw_prime_launcher(queue_handle);
@@ -1371,6 +1389,15 @@ impl KeyboardHandler for PrimeShell {
             if event.keysym == Keysym::Return {
                 self.activate_selected_application();
                 self.redraw_prime_launcher(queue_handle);
+                return;
+            }
+            if let Some(character) = event.keysym.key_char() {
+                if !character.is_control() && self.launcher_query.chars().count() < 64 {
+                    self.launcher_query.push(character);
+                    self.selected_application = 0;
+                    self.prime_launcher_message = None;
+                    self.redraw_prime_launcher(queue_handle);
+                }
                 return;
             }
         }
@@ -1463,11 +1490,7 @@ impl PointerHandler for PrimeShell {
                     self.rail_actions.len(),
                 );
                 match layout.hit(event.position.0, event.position.1, &self.rail_actions) {
-                    Some(
-                        visual::RailAction::Prime
-                        | visual::RailAction::Apps
-                        | visual::RailAction::Search,
-                    ) => {
+                    Some(visual::RailAction::Prime) => {
                         self.toggle_prime_launcher(queue_handle, InteractionSource::Pointer);
                     }
                     Some(
@@ -1517,48 +1540,43 @@ impl PointerHandler for PrimeShell {
                 .as_ref()
                 .is_some_and(|prime_launcher| &event.surface == prime_launcher.layer.wl_surface())
             {
-                let (application, power_action) = self
-                    .prime_launcher
-                    .as_ref()
-                    .map(|prime_launcher| {
-                        let layout = visual::PrimeLauncherLayout::new(
-                            prime_launcher.width,
-                            prime_launcher.height,
-                        );
-                        (
-                            layout.application_at(
-                                event.position.0,
-                                event.position.1,
-                                self.applications.len(),
-                            ),
-                            layout.power_action_at(event.position.0, event.position.1),
-                        )
-                    })
-                    .unwrap_or((None, None));
+                let visible_count = self.filtered_applications().len();
+                let application = self.prime_launcher.as_ref().and_then(|prime_launcher| {
+                    let layout = visual::PrimeLauncherLayout::new(
+                        prime_launcher.width,
+                        prime_launcher.height,
+                    );
+                    layout.application_at(event.position.0, event.position.1, visible_count)
+                });
                 if let Some(index) = application {
                     self.selected_application = index;
                     self.activate_selected_application();
                     self.redraw_prime_launcher(queue_handle);
-                } else if let Some(action) = power_action {
-                    self.stage_power_action(action);
-                    self.prime_launcher_message = self.quick_message.take();
-                    self.redraw_prime_launcher(queue_handle);
                 }
-            } else {
-                let action = self
+            } else if self
+                .quick_controls
+                .as_ref()
+                .is_some_and(|quick_controls| &event.surface == quick_controls.layer.wl_surface())
+            {
+                let layout = self
                     .quick_controls
                     .as_ref()
-                    .and_then(|quick_controls| {
-                        (&event.surface == quick_controls.layer.wl_surface()).then(|| {
-                            visual::QuickControlsLayout::new(
-                                quick_controls.width,
-                                quick_controls.height,
-                            )
-                            .power_action_at(event.position.0, event.position.1)
-                        })
+                    .map(|quick_controls| {
+                        visual::QuickControlsLayout::new(
+                            quick_controls.width,
+                            quick_controls.height,
+                        )
                     })
-                    .flatten();
-                if let Some(action) = action {
+                    .expect("quick controls exists for matched surface");
+                if layout.collapse_at(event.position.0, event.position.1) {
+                    self.close_transient(
+                        ShellSurfaceKind::QuickControls,
+                        queue_handle,
+                        InteractionSource::Pointer,
+                    );
+                    continue;
+                }
+                if let Some(action) = layout.power_action_at(event.position.0, event.position.1) {
                     self.stage_power_action(action);
                     self.redraw_quick_controls(queue_handle);
                 }
@@ -1570,6 +1588,14 @@ impl PointerHandler for PrimeShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_search_is_case_insensitive_and_empty_query_matches_all() {
+        assert!(launcher_query_matches("Files", "fi"));
+        assert!(launcher_query_matches("Terminal", "MIN"));
+        assert!(launcher_query_matches("Prime Settings", ""));
+        assert!(!launcher_query_matches("Browser", "terminal"));
+    }
 
     #[test]
     fn ease_out_cubic_is_monotonic_and_bounded() {

@@ -6,6 +6,7 @@ pub(crate) const QUICK_WIDTH: u32 = 600;
 pub(crate) const QUICK_HEIGHT: u32 = 902;
 const TOP_CARD_GAP: u32 = 12;
 const SUMMARY_GAP: u32 = 14;
+pub(crate) const QUICK_GLASS_ALPHA: u8 = 48;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct QuickControlCard {
@@ -69,6 +70,7 @@ pub(crate) struct QuickControlsView<'a> {
 pub(crate) struct QuickControlsLayout {
     pub(crate) bounds: Rect,
     pub(crate) content: Rect,
+    pub(crate) collapse: Rect,
     pub(crate) restart: Rect,
     pub(crate) power_off: Rect,
 }
@@ -80,6 +82,7 @@ impl QuickControlsLayout {
         Self {
             bounds: Rect::new(0, 0, width, height),
             content: Rect::new(26, 92, width.saturating_sub(52), height.saturating_sub(206)),
+            collapse: Rect::new(width.saturating_sub(142) as i32, 10, 130, 48),
             restart: Rect::new(26, action_y, action_width, 56),
             power_off: Rect::new((width / 2 + 8) as i32, action_y, action_width, 56),
         }
@@ -106,6 +109,10 @@ impl QuickControlsLayout {
         }
     }
 
+    pub(crate) fn collapse_at(self, x: f64, y: f64) -> bool {
+        self.collapse.contains(x.floor() as i32, y.floor() as i32)
+    }
+
     pub(crate) fn power_action_at(self, x: f64, y: f64) -> Option<SystemPowerAction> {
         let x = x.floor() as i32;
         let y = y.floor() as i32;
@@ -126,26 +133,17 @@ fn paint_card(
     card: Rect,
     data: &QuickControlCard,
     alpha: u8,
-    active: bool,
 ) {
     canvas.fill_rounded_rect(
         card,
         16,
-        if active {
-            Argb::from_u32(0xff183d68).with_alpha(((160u16 * alpha as u16) / 255) as u8)
-        } else {
-            Argb::from_u32(0xff0d1d31).with_alpha(((132u16 * alpha as u16) / 255) as u8)
-        },
+        Argb::from_u32(0xff0d1d31).with_alpha(((42u16 * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         card,
         16,
         1,
-        if active {
-            theme.cyan.with_alpha(((132u16 * alpha as u16) / 255) as u8)
-        } else {
-            theme.text.with_alpha(((38u16 * alpha as u16) / 255) as u8)
-        },
+        theme.text.with_alpha(((34u16 * alpha as u16) / 255) as u8),
     );
     draw_icon(
         canvas,
@@ -203,7 +201,8 @@ pub(crate) fn paint_quick_controls_surface(
     canvas.fill_rounded_rect(
         body,
         28,
-        Argb::from_u32(0xff081727).with_alpha(((188u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff081727)
+            .with_alpha(((u16::from(QUICK_GLASS_ALPHA) * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         body,
@@ -261,7 +260,7 @@ pub(crate) fn paint_quick_controls_surface(
     for (index, card_data) in cards.iter().enumerate().take(3) {
         let base = layout.card_rect(index);
         let card = Rect::new(base.x, base.y + slide, base.width, base.height);
-        paint_card(canvas, text, theme, card, card_data, alpha, index == 0);
+        paint_card(canvas, text, theme, card, card_data, alpha);
     }
 
     let divider_y = layout.content.y + 112 + slide;
@@ -284,7 +283,7 @@ pub(crate) fn paint_quick_controls_surface(
     canvas.fill_rounded_rect(
         state_box,
         16,
-        Argb::from_u32(0xff0b1a2c).with_alpha(((116u16 * alpha as u16) / 255) as u8),
+        Argb::from_u32(0xff0b1a2c).with_alpha(((44u16 * alpha as u16) / 255) as u8),
     );
     canvas.stroke_rounded_rect(
         state_box,
@@ -351,7 +350,7 @@ pub(crate) fn paint_quick_controls_surface(
         canvas.fill_rounded_rect(
             card,
             16,
-            Argb::from_u32(0xff0d1d31).with_alpha(((126u16 * alpha as u16) / 255) as u8),
+            Argb::from_u32(0xff0d1d31).with_alpha(((44u16 * alpha as u16) / 255) as u8),
         );
         canvas.stroke_rounded_rect(
             card,
@@ -489,7 +488,7 @@ fn paint_action(
             .violet
             .with_alpha(((76u16 * alpha as u16) / 255) as u8)
     } else {
-        Argb::from_u32(0xff0b1a2c).with_alpha(((142u16 * alpha as u16) / 255) as u8)
+        Argb::from_u32(0xff0b1a2c).with_alpha(((58u16 * alpha as u16) / 255) as u8)
     };
     canvas.fill_rounded_rect(rect, 14, fill);
     canvas.stroke_rounded_rect(

@@ -13,12 +13,11 @@ const RAIL_ITEM_HEIGHT: u32 = 88;
 pub(crate) const RAIL_PRIMARY_ICON_SIZE: u32 = 34;
 const RAIL_ITEM_GAP: u32 = 8;
 const RAIL_SCHEMA: &str = "prime.rail.v1";
+pub(crate) const RAIL_GLASS_ALPHA: u8 = 36;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum RailAction {
     Prime,
-    Apps,
-    Search,
     Status,
     Network,
     Audio,
@@ -31,8 +30,7 @@ impl RailAction {
     fn icon(&self) -> Icon {
         match self {
             Self::Prime => Icon::Prime,
-            Self::Apps | Self::Application(_) => Icon::Applications,
-            Self::Search => Icon::Search,
+            Self::Application(_) => Icon::Applications,
             Self::Status => Icon::Status,
             Self::Network => Icon::Network,
             Self::Audio => Icon::Audio,
@@ -44,8 +42,6 @@ impl RailAction {
     pub(crate) fn label(&self) -> Option<&'static str> {
         match self {
             Self::Prime => None,
-            Self::Apps => Some("APPS"),
-            Self::Search => Some("SEARCH"),
             Self::Status => Some("STATUS"),
             Self::Network => Some("NETWORK"),
             Self::Audio => Some("AUDIO"),
@@ -58,8 +54,6 @@ impl RailAction {
     fn pin_json(&self) -> Option<Value> {
         match self {
             Self::Prime => None,
-            Self::Apps => Some(json!({"kind":"apps"})),
-            Self::Search => Some(json!({"kind":"search"})),
             Self::Status => Some(json!({"kind":"status"})),
             Self::Network => Some(json!({"kind":"network"})),
             Self::Audio => Some(json!({"kind":"audio"})),
@@ -81,7 +75,7 @@ pub(crate) struct RailConfiguration {
 impl Default for RailConfiguration {
     fn default() -> Self {
         Self {
-            actions: vec![RailAction::Prime, RailAction::Apps, RailAction::Search],
+            actions: vec![RailAction::Prime],
         }
     }
 }
@@ -110,9 +104,7 @@ impl RailConfiguration {
                 .and_then(Value::as_str)
                 .ok_or_else(|| "rail pin kind must be a string".to_owned())?;
             let action = match kind {
-                "prime" => continue,
-                "apps" => RailAction::Apps,
-                "search" => RailAction::Search,
+                "prime" | "apps" | "search" => continue,
                 "status" => RailAction::Status,
                 "network" => RailAction::Network,
                 "audio" => RailAction::Audio,
@@ -135,13 +127,22 @@ impl RailConfiguration {
         Ok(Self { actions })
     }
 
-    pub(crate) fn from_json_or_default(source: &str) -> Self {
-        Self::from_json(source).unwrap_or_default()
-    }
-
     pub(crate) fn load_from_path(path: &Path) -> Self {
         match fs::read_to_string(path) {
-            Ok(source) => Self::from_json_or_default(&source),
+            Ok(source) => match Self::from_json(&source) {
+                Ok(config) => {
+                    // Persist normalization so legacy Apps/Search pins cannot
+                    // reappear on the next login after migration.
+                    if config
+                        .to_json()
+                        .is_ok_and(|normalized| normalized.trim() != source.trim())
+                    {
+                        let _ = config.save_to_path(path);
+                    }
+                    config
+                }
+                Err(_) => Self::default(),
+            },
             Err(_) => Self::default(),
         }
     }
@@ -353,8 +354,8 @@ pub(crate) fn paint_rail_surface(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(82));
-    canvas.stroke_rounded_rect(body, 24, 2, theme.cyan.with_alpha(58));
+    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(RAIL_GLASS_ALPHA));
+    canvas.stroke_rounded_rect(body, 24, 1, theme.cyan.with_alpha(74));
     canvas.stroke_rounded_rect(
         Rect::new(
             2,
@@ -364,18 +365,18 @@ pub(crate) fn paint_rail_surface(
         ),
         23,
         1,
-        theme.text.with_alpha(88),
+        theme.text.with_alpha(68),
     );
     canvas.fill_rounded_rect(
         Rect::new(12, 7, canvas.width.saturating_sub(24), 1),
         1,
-        theme.text.with_alpha(40),
+        theme.text.with_alpha(52),
     );
 
     for (rect, action) in layout.items.iter().zip(actions.iter()) {
         let is_active = active.as_ref() == Some(action);
         if is_active {
-            canvas.fill_rounded_rect(*rect, 18, theme.violet.with_alpha(34));
+            canvas.fill_rounded_rect(*rect, 18, theme.violet.with_alpha(24));
             canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(112));
         }
         if matches!(action, RailAction::Prime) {

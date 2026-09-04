@@ -200,10 +200,7 @@ mod tests {
     #[test]
     fn prime_is_the_only_fixed_default_rail_entry() {
         let config = RailConfiguration::default();
-        assert_eq!(
-            config.actions(),
-            &[RailAction::Prime, RailAction::Apps, RailAction::Search,]
-        );
+        assert_eq!(config.actions(), &[RailAction::Prime]);
     }
 
     #[test]
@@ -226,8 +223,6 @@ mod tests {
             config.actions(),
             &[
                 RailAction::Prime,
-                RailAction::Apps,
-                RailAction::Search,
                 RailAction::Network,
                 RailAction::Application("00000000-0000-0000-0000-000000000004".to_owned()),
             ]
@@ -243,7 +238,7 @@ mod tests {
         let encoded = config.to_json().unwrap();
         assert_eq!(RailConfiguration::from_json(&encoded).unwrap(), config);
         assert_eq!(
-            RailConfiguration::from_json_or_default("not-json"),
+            RailConfiguration::from_json("not-json").unwrap_or_default(),
             RailConfiguration::default()
         );
     }
@@ -258,25 +253,30 @@ mod tests {
             RailConfiguration::load_from_path(&path),
             RailConfiguration::default()
         );
-        let configured = RailConfiguration::from_json(
-            r#"{"schema":"prime.rail.v1","pins":[{"kind":"search"},{"kind":"audio"}]}"#,
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"schema":"prime.rail.v1","pins":[{"kind":"apps"},{"kind":"search"},{"kind":"audio"}]}"#,
         )
         .unwrap();
-        configured.save_to_path(&path).unwrap();
-        assert_eq!(RailConfiguration::load_from_path(&path), configured);
+        let migrated = RailConfiguration::load_from_path(&path);
+        assert_eq!(migrated.actions(), &[RailAction::Prime, RailAction::Audio]);
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        assert!(!persisted.contains("\"apps\""));
+        assert!(!persisted.contains("\"search\""));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn rail_height_is_content_driven_and_hit_testing_returns_configured_action() {
-        let actions = vec![RailAction::Prime, RailAction::Apps, RailAction::Search];
+        let actions = vec![RailAction::Prime];
         let rail = RailLayout::for_output(1920, 1080, actions.len());
         assert_eq!(rail.bounds.width, 132);
         assert_eq!(rail.bounds.x, 56);
         assert_eq!(rail.bounds.y, 140);
         assert!(
-            (300..=350).contains(&rail.bounds.height),
-            "three-item rail should preserve the approved proportions while staying content-driven"
+            (110..=140).contains(&rail.bounds.height),
+            "Home-only rail should remain a compact floating glass capsule"
         );
         assert_eq!(rail.items.len(), actions.len());
         for (index, rect) in rail.items.iter().enumerate() {
@@ -301,8 +301,6 @@ mod tests {
     #[test]
     fn rail_actions_have_user_visible_labels_except_prime_mark() {
         assert_eq!(RailAction::Prime.label(), None);
-        assert_eq!(RailAction::Apps.label(), Some("APPS"));
-        assert_eq!(RailAction::Search.label(), Some("SEARCH"));
         assert_eq!(RailAction::Network.label(), Some("NETWORK"));
         assert_eq!(RailAction::Audio.label(), Some("AUDIO"));
         assert_eq!(RailAction::Storage.label(), Some("STORAGE"));
@@ -623,27 +621,28 @@ mod tests {
         assert!(second.x > first.x);
         assert!(third.x > second.x);
         assert_eq!(layout.application_at(8.0, 8.0, 3), None);
-        assert_eq!(
-            layout.power_action_at(layout.restart.center_x(), layout.restart.center_y()),
-            Some(SystemPowerAction::Reboot)
+        assert!(
+            layout.apps.height >= 540,
+            "Home should dedicate its lower body to applications instead of duplicating power controls"
         );
-        assert_eq!(
-            layout.power_action_at(layout.power_off.center_x(), layout.power_off.center_y()),
-            Some(SystemPowerAction::PowerOff)
-        );
-        assert_eq!(
-            layout.power_action_at(layout.lock.center_x(), layout.lock.center_y()),
-            None
-        );
-        assert_eq!(
-            layout.power_action_at(layout.log_out.center_x(), layout.log_out.center_y()),
-            None
-        );
+    }
+
+    #[test]
+    fn shell_surfaces_preserve_real_compositor_glass() {
+        const {
+            assert!(rail::RAIL_GLASS_ALPHA <= 64);
+            assert!(prime_launcher::LAUNCHER_GLASS_ALPHA <= 64);
+            assert!(quick_controls::QUICK_GLASS_ALPHA <= 64);
+        }
     }
 
     #[test]
     fn quick_controls_power_actions_are_bounded_to_cards() {
         let layout = QuickControlsLayout::new(600, 902);
+        assert!(layout.collapse.contains(
+            layout.collapse.center_x() as i32,
+            layout.collapse.center_y() as i32
+        ));
         assert_eq!(
             layout.power_action_at(layout.restart.center_x(), layout.restart.center_y()),
             Some(SystemPowerAction::Reboot)
