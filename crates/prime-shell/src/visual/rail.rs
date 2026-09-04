@@ -58,8 +58,8 @@ impl RailAction {
     fn pin_json(&self) -> Option<Value> {
         match self {
             Self::Prime => None,
-            Self::Apps => Some(json!({"kind":"apps"})),
-            Self::Search => Some(json!({"kind":"search"})),
+            Self::Apps => None,
+            Self::Search => None,
             Self::Status => Some(json!({"kind":"status"})),
             Self::Network => Some(json!({"kind":"network"})),
             Self::Audio => Some(json!({"kind":"audio"})),
@@ -81,7 +81,7 @@ pub(crate) struct RailConfiguration {
 impl Default for RailConfiguration {
     fn default() -> Self {
         Self {
-            actions: vec![RailAction::Prime, RailAction::Apps, RailAction::Search],
+            actions: vec![RailAction::Prime],
         }
     }
 }
@@ -110,9 +110,7 @@ impl RailConfiguration {
                 .and_then(Value::as_str)
                 .ok_or_else(|| "rail pin kind must be a string".to_owned())?;
             let action = match kind {
-                "prime" => continue,
-                "apps" => RailAction::Apps,
-                "search" => RailAction::Search,
+                "prime" | "apps" | "search" => continue,
                 "status" => RailAction::Status,
                 "network" => RailAction::Network,
                 "audio" => RailAction::Audio,
@@ -353,8 +351,8 @@ pub(crate) fn paint_rail_surface(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(82));
-    canvas.stroke_rounded_rect(body, 24, 2, theme.cyan.with_alpha(58));
+    canvas.fill_rounded_rect(body, 24, theme.panel.with_alpha(30));
+    canvas.stroke_rounded_rect(body, 24, 1, theme.cyan.with_alpha(62));
     canvas.stroke_rounded_rect(
         Rect::new(
             2,
@@ -364,19 +362,19 @@ pub(crate) fn paint_rail_surface(
         ),
         23,
         1,
-        theme.text.with_alpha(88),
+        theme.text.with_alpha(46),
     );
     canvas.fill_rounded_rect(
         Rect::new(12, 7, canvas.width.saturating_sub(24), 1),
         1,
-        theme.text.with_alpha(40),
+        theme.text.with_alpha(76),
     );
 
     for (rect, action) in layout.items.iter().zip(actions.iter()) {
         let is_active = active.as_ref() == Some(action);
         if is_active {
-            canvas.fill_rounded_rect(*rect, 18, theme.violet.with_alpha(34));
-            canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(112));
+            canvas.fill_rounded_rect(*rect, 18, theme.violet.with_alpha(20));
+            canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(104));
         }
         if matches!(action, RailAction::Prime) {
             let mark = Rect::new(rect.x + 18, rect.y + 4, rect.width.saturating_sub(36), 80);
