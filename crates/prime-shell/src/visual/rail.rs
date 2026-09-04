@@ -413,3 +413,28 @@ pub(crate) fn paint_rail_surface(
         }
     }
 }
+
+#[cfg(test)]
+mod final_ui_contract_tests {
+    use super::*;
+
+    #[test]
+    fn default_rail_contains_only_prime_home() {
+        assert_eq!(RailConfiguration::default().actions(), &[RailAction::Prime]);
+    }
+
+    #[test]
+    fn legacy_apps_and_search_pins_migrate_out_of_the_rail() {
+        let config = RailConfiguration::from_json(
+            r#"{"schema":"prime.rail.v1","pins":[{"kind":"apps"},{"kind":"search"},{"kind":"application","application_id":"00000000-0000-0000-0000-000000000004"}]}"#,
+        )
+        .expect("legacy rail config should remain readable");
+        assert_eq!(
+            config.actions(),
+            &[
+                RailAction::Prime,
+                RailAction::Application("00000000-0000-0000-0000-000000000004".to_owned()),
+            ]
+        );
+    }
+}
