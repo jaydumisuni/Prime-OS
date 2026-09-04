@@ -1,6 +1,6 @@
 {
   "schema": "prime.wallpaper-catalog.v1",
-  "default": "animated-first-light",
+  "default": "system-03",
   "source_bundle": "Prime_OS_Wallpapers_8.zip",
   "source_bundle_sha256": "f8f11f6473992539a52ad908032eb4926dbaf8e5c6241237dc8efc07fec0c076",
   "scaling": "centered-cover-bilinear",

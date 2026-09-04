@@ -206,27 +206,32 @@ fn rgba_pixel(wallpaper: &DecodedWallpaper, x: u32, y: u32) -> Argb {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WallpaperSelection {
-    #[default]
     Animated,
     System(usize),
+}
+
+impl Default for WallpaperSelection {
+    fn default() -> Self {
+        Self::System(2)
+    }
 }
 
 impl WallpaperSelection {
     pub(crate) fn from_json(source: &str) -> Self {
         let Ok(value) = serde_json::from_str::<Value>(source) else {
-            return Self::Animated;
+            return Self::default();
         };
         if value
             .get("schema")
             .and_then(Value::as_str)
             .is_some_and(|schema| schema != "prime.wallpaper.v1")
         {
-            return Self::Animated;
+            return Self::default();
         }
         let Some(selection) = value.get("selection").and_then(Value::as_str) else {
-            return Self::Animated;
+            return Self::default();
         };
         if selection == "animated" {
             return Self::Animated;
@@ -235,7 +240,7 @@ impl WallpaperSelection {
             .iter()
             .position(|entry| entry.id == selection)
             .map(Self::System)
-            .unwrap_or(Self::Animated)
+            .unwrap_or_default()
     }
 
     pub(crate) fn to_json(self) -> Result<String, serde_json::Error> {

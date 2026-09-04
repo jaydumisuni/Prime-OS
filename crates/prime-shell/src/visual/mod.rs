@@ -723,10 +723,10 @@ mod tests {
     }
 
     #[test]
-    fn wallpaper_selection_defaults_to_animated_and_round_trips() {
+    fn wallpaper_selection_defaults_to_system_03_and_round_trips() {
         assert_eq!(
             wallpaper::WallpaperSelection::from_json("{}"),
-            wallpaper::WallpaperSelection::Animated
+            wallpaper::WallpaperSelection::System(2)
         );
         let selected = wallpaper::WallpaperSelection::System(6);
         let encoded = selected.to_json().expect("selection JSON");
@@ -734,6 +734,16 @@ mod tests {
         assert_eq!(
             wallpaper::WallpaperSelection::from_json(
                 r#"{"schema":"prime.wallpaper.v1","selection":"system-99"}"#
+            ),
+            wallpaper::WallpaperSelection::System(2)
+        );
+        assert_eq!(
+            wallpaper::WallpaperSelection::default(),
+            wallpaper::WallpaperSelection::System(2)
+        );
+        assert_eq!(
+            wallpaper::WallpaperSelection::from_json(
+                r#"{"schema":"prime.wallpaper.v1","selection":"animated"}"#
             ),
             wallpaper::WallpaperSelection::Animated
         );
