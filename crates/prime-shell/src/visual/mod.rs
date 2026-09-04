@@ -623,6 +623,134 @@ mod tests {
         );
     }
 
+    fn premium_test_application(launch_ready: bool) -> prime_contracts::ApplicationEntry {
+        prime_contracts::ApplicationEntry {
+            application_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+            display_name: "Files".to_owned(),
+            profile_revision: 1,
+            profile_digest: "premium-test".to_owned(),
+            execution_backend: prime_contracts::ExecutionBackend::Native,
+            compatibility: prime_contracts::CompatibilityRecord {
+                state: prime_contracts::MechanicalCompatibilityState::Functional,
+                evidence_refs: Vec::new(),
+            },
+            launch_ready,
+            limitations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn premium_launcher_selection_is_single_edge_and_default_footer_is_quiet() {
+        let applications = [premium_test_application(true)];
+        let mut bytes =
+            vec![0u8; PRIME_LAUNCHER_WIDTH as usize * PRIME_LAUNCHER_HEIGHT as usize * 4];
+        let mut canvas =
+            Canvas::new(&mut bytes, PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).unwrap();
+        paint_prime_launcher_surface(
+            &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
+            &Theme::prime_dark(),
+            PrimeLauncherView {
+                applications: &applications,
+                selected: 0,
+                query: "",
+                message: None,
+                progress: 1.0,
+            },
+        );
+
+        let card =
+            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).card_rect(0);
+        let y = card.center_y().round() as i32;
+        let edge = canvas.pixel(card.x, y).unwrap();
+        let inner = canvas.pixel(card.x + 1, y).unwrap();
+        assert!(
+            edge.g > inner.g + 20,
+            "selected card should use one crisp edge pixel, edge={edge:?} inner={inner:?}"
+        );
+
+        let layout = PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT);
+        let bright_footer_pixels = (layout.footer.y..layout.footer.y + layout.footer.height as i32)
+            .flat_map(|y| {
+                (layout.footer.x..layout.footer.x + layout.footer.width as i32).map(move |x| (x, y))
+            })
+            .filter(|&(x, y)| {
+                canvas
+                    .pixel(x, y)
+                    .is_some_and(|p| p.a > 90 && p.r > 100 && p.g > 100)
+            })
+            .count();
+        assert!(
+            bright_footer_pixels < 8,
+            "normal Home surface should not advertise keyboard construction hints; found {bright_footer_pixels} bright footer pixels"
+        );
+    }
+
+    #[test]
+    fn premium_unavailable_state_is_secondary_not_amber_text() {
+        let applications = [premium_test_application(false)];
+        let mut bytes =
+            vec![0u8; PRIME_LAUNCHER_WIDTH as usize * PRIME_LAUNCHER_HEIGHT as usize * 4];
+        let mut canvas =
+            Canvas::new(&mut bytes, PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).unwrap();
+        paint_prime_launcher_surface(
+            &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
+            &Theme::prime_dark(),
+            PrimeLauncherView {
+                applications: &applications,
+                selected: 0,
+                query: "",
+                message: None,
+                progress: 1.0,
+            },
+        );
+        let card =
+            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).card_rect(0);
+        let amber_pixels = (card.y + 170..card.y + card.height as i32)
+            .flat_map(|y| (card.x..card.x + card.width as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                canvas
+                    .pixel(x, y)
+                    .is_some_and(|p| p.r > 180 && p.g > 100 && p.g < 190 && p.b < 100)
+            })
+            .count();
+        assert!(
+            amber_pixels < 20,
+            "Unavailable state should be secondary copy with only a tiny warning indicator; found {amber_pixels} amber pixels"
+        );
+    }
+
+    #[test]
+    fn premium_quick_controls_system_state_has_no_duplicate_box_frame() {
+        let lines = vec![
+            "NET enp1s0: UP CARRIER".to_owned(),
+            "AUDIO PCH: ALC897".to_owned(),
+            "PWR AC: ONLINE".to_owned(),
+            "STORAGE LOCAL: READY".to_owned(),
+            "HEALTH: PROVING".to_owned(),
+        ];
+        let mut bytes = vec![0u8; QUICK_WIDTH as usize * QUICK_HEIGHT as usize * 4];
+        let mut canvas = Canvas::new(&mut bytes, QUICK_WIDTH, QUICK_HEIGHT).unwrap();
+        paint_quick_controls_surface(
+            &mut canvas,
+            &mut TextSystem::load_system().expect("Prime production font"),
+            &Theme::prime_dark(),
+            QuickControlsView {
+                lines: &lines,
+                power_ready: true,
+                pending_power: None,
+                message: None,
+                progress: 1.0,
+            },
+        );
+        let state_frame_probe = canvas.pixel((QUICK_WIDTH / 2) as i32, 260).unwrap();
+        assert!(
+            state_frame_probe.a < 60,
+            "system-state detail rows should not sit inside a second framed box: {state_frame_probe:?}"
+        );
+    }
+
     #[test]
     fn top_right_status_cluster_matches_approved_top_chrome_and_is_clickable() {
         let layout = StatusClusterLayout::for_surface(480, 44);

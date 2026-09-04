@@ -143,7 +143,7 @@ fn paint_card(
         card,
         16,
         1,
-        theme.text.with_alpha(((34u16 * alpha as u16) / 255) as u8),
+        theme.text.with_alpha(((22u16 * alpha as u16) / 255) as u8),
     );
     draw_icon(
         canvas,
@@ -280,19 +280,8 @@ pub(crate) fn paint_quick_controls_surface(
         theme.text.with_alpha(alpha),
     );
     let state_box = Rect::new(26, divider_y + 56, canvas.width.saturating_sub(52), 170);
-    canvas.fill_rounded_rect(
-        state_box,
-        16,
-        Argb::from_u32(0xff0b1a2c).with_alpha(((44u16 * alpha as u16) / 255) as u8),
-    );
-    canvas.stroke_rounded_rect(
-        state_box,
-        16,
-        1,
-        theme.text.with_alpha(((32u16 * alpha as u16) / 255) as u8),
-    );
-    let mut state_y = state_box.y + 24;
-    for card in cards.iter().take(3) {
+    let mut state_y = state_box.y + 18;
+    for (state_index, card) in cards.iter().take(3).enumerate() {
         draw_icon(
             canvas,
             Rect::new(state_box.x + 18, state_y - 2, 20, 20),
@@ -320,6 +309,17 @@ pub(crate) fn paint_quick_controls_surface(
             },
             theme.text.with_alpha(alpha),
         );
+        if state_index < 2 {
+            canvas.fill_rect(
+                Rect::new(
+                    state_box.x + 18,
+                    state_y + 30,
+                    state_box.width.saturating_sub(36),
+                    1,
+                ),
+                theme.text.with_alpha(((18u16 * alpha as u16) / 255) as u8),
+            );
+        }
         state_y += 46;
     }
 
@@ -356,7 +356,7 @@ pub(crate) fn paint_quick_controls_surface(
             card,
             16,
             1,
-            theme.text.with_alpha(((38u16 * alpha as u16) / 255) as u8),
+            theme.text.with_alpha(((24u16 * alpha as u16) / 255) as u8),
         );
         draw_icon(
             canvas,

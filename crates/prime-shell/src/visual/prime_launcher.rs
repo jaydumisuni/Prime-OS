@@ -180,7 +180,7 @@ pub(crate) fn paint_prime_launcher_surface(
         search,
         18,
         1,
-        theme.text.with_alpha(((54u16 * alpha as u16) / 255) as u8),
+        theme.text.with_alpha(((30u16 * alpha as u16) / 255) as u8),
     );
     draw_icon(
         canvas,
@@ -253,15 +253,23 @@ pub(crate) fn paint_prime_launcher_surface(
         } else {
             Argb::from_u32(0xff10203a).with_alpha(((46u16 * alpha as u16) / 255) as u8)
         };
+        if selected_card {
+            canvas.radial_glow(
+                card.center_x() as f32,
+                card.center_y() as f32,
+                card.width.max(card.height) as f32 * 0.72,
+                theme.cyan.with_alpha(((18u16 * alpha as u16) / 255) as u8),
+            );
+        }
         canvas.fill_rounded_rect(card, 18, fill);
         canvas.stroke_rounded_rect(
             card,
             18,
-            if selected_card { 2 } else { 1 },
+            1,
             if selected_card {
-                theme.cyan.with_alpha(((145u16 * alpha as u16) / 255) as u8)
+                theme.cyan.with_alpha(((132u16 * alpha as u16) / 255) as u8)
             } else {
-                theme.text.with_alpha(((40u16 * alpha as u16) / 255) as u8)
+                theme.text.with_alpha(((24u16 * alpha as u16) / 255) as u8)
             },
         );
 
@@ -319,15 +327,24 @@ pub(crate) fn paint_prime_launcher_surface(
         if let Some(state) = application_state_label(application.launch_ready) {
             let state_style = TextStyle {
                 size_px: 10,
-                weight: FontWeight::Semibold,
+                weight: FontWeight::Regular,
             };
-            let sx = centered_text_x(text, state, state_style, card);
+            let state_width = text.measure(state, state_style).width as i32;
+            let group_width = state_width + 10;
+            let group_x = card.center_x().round() as i32 - group_width / 2;
+            canvas.fill_rounded_rect(
+                Rect::new(group_x, card.y + 184, 4, 4),
+                2,
+                Argb::from_u32(0xfff59e0b).with_alpha(((168u16 * alpha as u16) / 255) as u8),
+            );
             text.draw(
                 canvas,
-                (sx, card.y + 181),
+                (group_x + 10, card.y + 179),
                 state,
                 state_style,
-                Argb::from_u32(0xfff59e0b).with_alpha(alpha),
+                theme
+                    .muted
+                    .with_alpha(((190u16 * alpha as u16) / 255) as u8),
             );
         }
     }
@@ -357,25 +374,22 @@ pub(crate) fn paint_prime_launcher_surface(
         );
     }
 
-    let footer_text = message.unwrap_or(if query.trim().is_empty() {
-        "Type to search • ↑/↓ select • Enter open"
-    } else {
-        "↑/↓ select • Enter open • Backspace edit"
-    });
-    let footer = Rect::new(
-        layout.footer.x + slide,
-        layout.footer.y,
-        layout.footer.width.saturating_sub(slide.max(0) as u32),
-        layout.footer.height,
-    );
-    text.draw(
-        canvas,
-        (footer.x, footer.y),
-        footer_text,
-        TextStyle {
-            size_px: 10,
-            weight: FontWeight::Regular,
-        },
-        theme.muted.with_alpha(alpha),
-    );
+    if let Some(message) = message {
+        let footer = Rect::new(
+            layout.footer.x + slide,
+            layout.footer.y,
+            layout.footer.width.saturating_sub(slide.max(0) as u32),
+            layout.footer.height,
+        );
+        text.draw(
+            canvas,
+            (footer.x, footer.y),
+            message,
+            TextStyle {
+                size_px: 10,
+                weight: FontWeight::Regular,
+            },
+            theme.muted.with_alpha(alpha),
+        );
+    }
 }
