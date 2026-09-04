@@ -437,4 +437,26 @@ mod final_ui_contract_tests {
             ]
         );
     }
+
+    #[test]
+    fn rail_shell_overlay_leaves_gpu_glass_visible() {
+        let actions = RailConfiguration::default().actions().to_vec();
+        let height = rail_height_for_items(actions.len());
+        let mut bytes = vec![0u8; RAIL_WIDTH as usize * height as usize * 4];
+        let mut canvas = Canvas::new(&mut bytes, RAIL_WIDTH, height).expect("rail canvas");
+        let mut text = TextSystem::load_system().expect("Prime production font");
+        paint_rail_surface(
+            &mut canvas,
+            &mut text,
+            &Theme::prime_dark(),
+            &actions,
+            None,
+        );
+        let sample = canvas.pixel(8, (height / 2) as i32).expect("rail material sample");
+        assert!(
+            sample.a <= 48,
+            "Shell tint alpha {} hides compositor GPU glass",
+            sample.a
+        );
+    }
 }
