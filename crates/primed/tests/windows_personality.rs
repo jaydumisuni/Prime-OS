@@ -477,6 +477,11 @@ fn windows_systemd_argv_invokes_provider_directly_with_prime_abi() {
     assert!(args.iter().any(|arg| arg == &format!("--property=RuntimeDirectory={}", prepared.runtime_directory_name)));
     assert!(args.iter().any(|arg| arg == "--property=RuntimeDirectoryMode=0700"));
     assert!(args.iter().any(|arg| arg == "--property=PrivateNetwork=yes"));
+    assert!(args.iter().any(|arg| arg == "--property=DynamicUser=yes"));
+    assert!(args.iter().any(|arg| arg == "--property=RemoveIPC=yes"));
+    assert!(args.iter().any(|arg| arg == "--property=UMask=0077"));
+    assert!(args.iter().any(|arg| arg == "--property=SupplementaryGroups=prime-display"));
+    assert!(args.iter().any(|arg| arg == "--setenv=XDG_RUNTIME_DIR=/run/prime-compositor"));
     assert!(!args.iter().any(|arg| matches!(arg.as_str(), "sh" | "/bin/sh" | "bash" | "/bin/bash" | "-c")));
     assert!(!args.iter().any(|arg| arg.contains("prime-shell")));
 }
@@ -516,6 +521,8 @@ fn successful_windows_launch_records_personality_provider_evidence() {
     assert_eq!(evidence.runtime_family, RuntimeFamily::Windows);
     assert_eq!(evidence.provider_id, "prime.windows.fixture");
     assert_eq!(evidence.provider_revision, 1);
+    assert!(evidence.enforcement_properties.iter().any(|property|
+        property.name == "SupplementaryGroups" && property.value == "prime-display"));
     assert_eq!(evidence.outcome, PersonalityLaunchOutcome::ExitedSuccess);
     assert_eq!(evidence.launcher_exit_code, Some(0));
     let evidence_dir = state.path().join("evidence/launches").join(evidence.launch_id.to_string());

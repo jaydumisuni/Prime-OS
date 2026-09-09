@@ -8,6 +8,7 @@ Before=prime-first-light-witness.service
 Type=simple
 User=prime-shell
 Group=prime-shell
+SupplementaryGroups=prime-display
 Environment=XDG_RUNTIME_DIR=/run/prime-compositor
 Environment=PRIME_CORE_SOCKET=/run/prime/core.sock
 Environment=PRIME_COMPOSITOR_READINESS=/run/prime-compositor/readiness.json

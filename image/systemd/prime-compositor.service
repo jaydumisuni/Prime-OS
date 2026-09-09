@@ -8,12 +8,13 @@ Conflicts=getty@tty1.service
 [Service]
 Type=simple
 User=prime-shell
-Group=prime-shell
+Group=prime-display
 PAMName=login
 Environment=XDG_RUNTIME_DIR=/run/prime-compositor
 Environment=PRIME_COMPOSITOR_READINESS=/run/prime-compositor/readiness.json
 RuntimeDirectory=prime-compositor
-RuntimeDirectoryMode=0700
+RuntimeDirectoryMode=0750
+UMask=0007
 ExecStartPre=/usr/bin/rm -f /run/prime-compositor/readiness.json
 ExecStart=/usr/bin/env XDG_RUNTIME_DIR=/run/prime-compositor /usr/libexec/prime/prime-compositor
 Restart=on-failure

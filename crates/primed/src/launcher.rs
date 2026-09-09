@@ -1,11 +1,11 @@
 use crate::exec;
 use crate::identity;
-use crate::policy::{compile_native, NativeEnforcementPlan, PolicyCompileError, SystemdProperty};
+use crate::policy::{compile_native, NativeEnforcementPlan, PolicyCompileError};
 use crate::registry::{self, RegistryError};
 use prime_contracts::{
     ApplicationProfile, ArtifactFormat, ExecutionBackend, GenerationRecord, HostIdentity,
     LaunchEnforcementProperty, MechanicalCompatibilityState, NativeLaunchEvidence,
-    NativeLaunchOutcome, NativeLaunchRequest, PolicyClass, RuntimeFamily,
+    NativeLaunchOutcome, NativeLaunchRequest, RuntimeFamily,
     NATIVE_LAUNCH_EVIDENCE_SCHEMA, NATIVE_LAUNCH_REQUEST_SCHEMA,
 };
 use sha2::{Digest, Sha256};
@@ -106,24 +106,7 @@ pub fn prepare_native_launch(
     if policy.digest != policy_ref.policy_digest {
         return Err(LaunchError::PolicyReferenceMismatch);
     }
-    let mut plan = compile_native(&policy)?;
-    if matches!(
-        policy.class,
-        PolicyClass::UserApp | PolicyClass::Build | PolicyClass::ForeignRuntime
-    ) {
-        plan.properties.push(SystemdProperty {
-            name: "DynamicUser".to_owned(),
-            value: "yes".to_owned(),
-        });
-        plan.properties.push(SystemdProperty {
-            name: "RemoveIPC".to_owned(),
-            value: "yes".to_owned(),
-        });
-        plan.properties.push(SystemdProperty {
-            name: "UMask".to_owned(),
-            value: "0077".to_owned(),
-        });
-    }
+    let plan = compile_native(&policy)?;
 
     let staged_artifact_path =
         stage_artifact(state_dir, candidate, &profile.artifact.identity, host_arch)?;
@@ -475,6 +458,7 @@ fn sha256_labelled(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::SystemdProperty;
     use crate::registry::{
         seal_policy, seal_profile, select_policy_revision, select_profile_revision,
         store_policy_revision, store_profile_revision,

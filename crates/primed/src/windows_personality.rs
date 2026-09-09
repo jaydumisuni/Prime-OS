@@ -460,6 +460,8 @@ pub fn windows_systemd_run_args(prepared: &PreparedWindowsLaunch) -> Vec<String>
         prepared.runtime_directory_name
     ));
     args.push("--property=RuntimeDirectoryMode=0700".to_owned());
+    args.push("--property=SupplementaryGroups=prime-display".to_owned());
+    args.push("--setenv=XDG_RUNTIME_DIR=/run/prime-compositor".to_owned());
     args.push(prepared.provider.adapter_path.display().to_string());
     args.push("--artifact".to_owned());
     args.push(prepared.staged_artifact_path.display().to_string());
@@ -570,6 +572,10 @@ fn windows_evidence_for(
                 LaunchEnforcementProperty {
                     name: "RuntimeDirectoryMode".to_owned(),
                     value: "0700".to_owned(),
+                },
+                LaunchEnforcementProperty {
+                    name: "SupplementaryGroups".to_owned(),
+                    value: "prime-display".to_owned(),
                 },
             ])
             .collect(),

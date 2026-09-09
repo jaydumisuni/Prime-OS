@@ -93,6 +93,11 @@ pub fn compile_systemd(
     }
 
     let mut properties = baseline_properties(restricted_class);
+    if restricted_class {
+        property(&mut properties, "DynamicUser", "yes");
+        property(&mut properties, "RemoveIPC", "yes");
+        property(&mut properties, "UMask", "0077");
+    }
     property(&mut properties, "CPUWeight", policy.cpu.weight);
     if let Some(quota) = policy.cpu.quota_percent {
         property(&mut properties, "CPUQuota", format!("{quota}%"));
@@ -262,6 +267,18 @@ mod tests {
             .properties
             .iter()
             .any(|item| item.name == "ProtectHome" && item.value == "yes"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "DynamicUser" && item.value == "yes"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "RemoveIPC" && item.value == "yes"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "UMask" && item.value == "0077"));
     }
 
     #[test]
