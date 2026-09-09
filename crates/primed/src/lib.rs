@@ -141,40 +141,50 @@ impl CoreState {
         };
         let artifact_store = state_dir.join("artifacts/sha256").display().to_string();
 
-        let windows_support = crate::windows_personality::provider_support(
-            &windows_provider_dir,
-            &host.host_arch,
-        );
-        let (windows_availability, windows_health, windows_formats, windows_arches, windows_limitations) =
-            match windows_support {
-                Ok(support) => {
-                    let mut limitations = support.limitations;
-                    limitations.push("W1 supports portable/simple Win32 only; W2+ features are not claimed".to_owned());
-                    let status = if limitations.is_empty() {
-                        HealthStatus::Healthy
-                    } else {
-                        HealthStatus::Degraded
-                    };
-                    (
-                        CapabilityAvailability::Available,
-                        status,
-                        support.formats.into_iter().map(|format| match format {
+        let windows_support =
+            crate::windows_personality::provider_support(&windows_provider_dir, &host.host_arch);
+        let (
+            windows_availability,
+            windows_health,
+            windows_formats,
+            windows_arches,
+            windows_limitations,
+        ) = match windows_support {
+            Ok(support) => {
+                let mut limitations = support.limitations;
+                limitations.push(
+                    "W1 supports portable/simple Win32 only; W2+ features are not claimed"
+                        .to_owned(),
+                );
+                let status = if limitations.is_empty() {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Degraded
+                };
+                (
+                    CapabilityAvailability::Available,
+                    status,
+                    support
+                        .formats
+                        .into_iter()
+                        .map(|format| match format {
                             prime_contracts::ArtifactFormat::Pe32 => "PE32".to_owned(),
                             prime_contracts::ArtifactFormat::Pe32Plus => "PE32+".to_owned(),
                             _ => unreachable!("provider support filters to PE formats"),
-                        }).collect::<Vec<_>>(),
-                        support.workload_arches,
-                        limitations,
-                    )
-                }
-                Err(error) => (
-                    CapabilityAvailability::Unavailable,
-                    HealthStatus::Failed,
-                    Vec::new(),
-                    Vec::new(),
-                    vec![error.to_string()],
-                ),
-            };
+                        })
+                        .collect::<Vec<_>>(),
+                    support.workload_arches,
+                    limitations,
+                )
+            }
+            Err(error) => (
+                CapabilityAvailability::Unavailable,
+                HealthStatus::Failed,
+                Vec::new(),
+                Vec::new(),
+                vec![error.to_string()],
+            ),
+        };
         let windows_exec_health = CapabilityHealth {
             status: windows_health,
             observed_at: observed_at.clone(),

@@ -122,15 +122,11 @@ pub fn launch_selected(
             "selected Application Profile backend/runtime is not launchable",
         )),
     }
-
 }
 
 fn application_entry(state: &CoreState, profile: ApplicationProfile) -> ApplicationEntry {
-    let mut limitations = profile_limitations(
-        &profile,
-        &state.host.host_arch,
-        &state.windows_provider_dir,
-    );
+    let mut limitations =
+        profile_limitations(&profile, &state.host.host_arch, &state.windows_provider_dir);
     match artifact_path(&state.state_dir, &profile) {
         Ok(path) => match exec::inspect(&path, &state.host.host_arch) {
             Ok(inspection) if inspection.artifact_identity == profile.artifact.identity => {}
@@ -227,7 +223,8 @@ fn profile_limitations(
             | MechanicalCompatibilityState::RequiresVm
             | MechanicalCompatibilityState::RequiresRemoteProvider
     ) {
-        limitations.push("Mechanical compatibility state does not permit a launch attempt".to_owned());
+        limitations
+            .push("Mechanical compatibility state does not permit a launch attempt".to_owned());
     }
     limitations
 }
@@ -318,7 +315,6 @@ fn artifact_path(root: &Path, profile: &ApplicationProfile) -> Result<PathBuf, S
 mod tests {
     use super::*;
 
-
     #[test]
     fn windows_profile_is_launch_ready_only_when_compatible_provider_exists() {
         use prime_contracts::{WindowsProviderManifest, WINDOWS_PROVIDER_MANIFEST_SCHEMA};
@@ -340,7 +336,8 @@ mod tests {
         fs::write(
             providers.path().join("provider.json"),
             serde_json::to_vec(&manifest).expect("serialize"),
-        ).expect("manifest");
+        )
+        .expect("manifest");
         let profile = ApplicationProfile {
             schema: "prime.application-profile.v1".to_owned(),
             application_id: Uuid::now_v7(),
@@ -371,11 +368,12 @@ mod tests {
         };
 
         assert!(profile_limitations(&profile, "x86_64", providers.path()).is_empty());
-        assert!(profile_limitations(&profile, "x86_64", &providers.path().join("missing"))
-            .iter()
-            .any(|value| value.contains("WINDOWS_PERSONALITY_UNAVAILABLE")));
+        assert!(
+            profile_limitations(&profile, "x86_64", &providers.path().join("missing"))
+                .iter()
+                .any(|value| value.contains("WINDOWS_PERSONALITY_UNAVAILABLE"))
+        );
     }
-
 
     #[test]
     fn shell_launch_dispatches_windows_profile_to_windows_personality() {
@@ -401,7 +399,8 @@ mod tests {
         fs::write(
             providers.path().join("provider.json"),
             serde_json::to_vec(&provider).expect("provider json"),
-        ).expect("provider manifest");
+        )
+        .expect("provider manifest");
 
         let mut pe = vec![0_u8; 128];
         pe[0..2].copy_from_slice(b"MZ");
@@ -421,18 +420,39 @@ mod tests {
             revision: 1,
             digest: String::new(),
             class: PolicyClass::ForeignRuntime,
-            cpu: CpuPolicy { weight: 100, quota_percent: None },
-            memory: MemoryPolicy { max_bytes: Some(256 * 1024 * 1024), swap_max_bytes: Some(0) },
-            gpu: GpuPolicy { mode: GpuMode::Deny },
-            storage: StoragePolicy { quota_bytes: None, io_weight: 100 },
-            process: ProcessPolicy { max_processes: Some(32), max_runtime_seconds: Some(30) },
-            network: NetworkPolicy { mode: NetworkMode::Offline, destinations: vec![] },
+            cpu: CpuPolicy {
+                weight: 100,
+                quota_percent: None,
+            },
+            memory: MemoryPolicy {
+                max_bytes: Some(256 * 1024 * 1024),
+                swap_max_bytes: Some(0),
+            },
+            gpu: GpuPolicy {
+                mode: GpuMode::Deny,
+            },
+            storage: StoragePolicy {
+                quota_bytes: None,
+                io_weight: 100,
+            },
+            process: ProcessPolicy {
+                max_processes: Some(32),
+                max_runtime_seconds: Some(30),
+            },
+            network: NetworkPolicy {
+                mode: NetworkMode::Offline,
+                destinations: vec![],
+            },
             filesystem: FilesystemPolicy::default(),
             devices: DevicePolicy::default(),
             secrets: SecretPolicy::default(),
             background: BackgroundPolicy { allowed: false },
-            evidence: EvidencePolicy { required: true, classes: vec!["exit".to_owned()] },
-        }).expect("seal policy");
+            evidence: EvidencePolicy {
+                required: true,
+                classes: vec!["exit".to_owned()],
+            },
+        })
+        .expect("seal policy");
         registry::store_policy_revision(root.path(), &policy).expect("store policy");
         registry::select_policy_revision(root.path(), policy.policy_id, 1).expect("select policy");
 
@@ -464,7 +484,8 @@ mod tests {
             revoked: false,
             revocation_reason: None,
             created_at: "2026-09-10T00:00:00Z".to_owned(),
-        }).expect("seal profile");
+        })
+        .expect("seal profile");
         registry::store_profile_revision(root.path(), &profile).expect("store profile");
         registry::select_profile_revision(root.path(), application_id, 1).expect("select profile");
 
@@ -552,7 +573,8 @@ mod tests {
                 schema: SHELL_LAUNCH_REQUEST_SCHEMA.to_owned(),
                 application_id,
             },
-        ).expect("Windows Shell launch");
+        )
+        .expect("Windows Shell launch");
         assert!(matches!(evidence, LaunchEvidence::Windows(_)));
     }
 
@@ -586,6 +608,9 @@ mod tests {
             revocation_reason: None,
             created_at: "2026-08-20T00:00:00Z".to_owned(),
         };
-        assert_eq!(profile_limitations(&profile, "x86_64", Path::new("/missing")).len(), 1);
+        assert_eq!(
+            profile_limitations(&profile, "x86_64", Path::new("/missing")).len(),
+            1
+        );
     }
 }

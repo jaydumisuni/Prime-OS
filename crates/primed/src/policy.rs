@@ -162,7 +162,6 @@ pub fn compile_systemd(
     })
 }
 
-
 pub type NativeEnforcementPlan = SystemdEnforcementPlan;
 
 pub fn compile_native(

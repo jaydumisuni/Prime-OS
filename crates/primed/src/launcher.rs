@@ -5,8 +5,8 @@ use crate::registry::{self, RegistryError};
 use prime_contracts::{
     ApplicationProfile, ArtifactFormat, ExecutionBackend, GenerationRecord, HostIdentity,
     LaunchEnforcementProperty, MechanicalCompatibilityState, NativeLaunchEvidence,
-    NativeLaunchOutcome, NativeLaunchRequest, RuntimeFamily,
-    NATIVE_LAUNCH_EVIDENCE_SCHEMA, NATIVE_LAUNCH_REQUEST_SCHEMA,
+    NativeLaunchOutcome, NativeLaunchRequest, RuntimeFamily, NATIVE_LAUNCH_EVIDENCE_SCHEMA,
+    NATIVE_LAUNCH_REQUEST_SCHEMA,
 };
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};

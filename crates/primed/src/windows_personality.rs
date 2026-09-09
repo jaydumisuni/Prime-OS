@@ -21,7 +21,10 @@ pub enum WindowsPersonalityError {
     #[error("WINDOWS_PROVIDER_INVALID: {0}")]
     InvalidProvider(String),
     #[error("WINDOWS_WORKLOAD_UNSUPPORTED: no compatible provider for {format:?}/{arch}")]
-    NoCompatibleProvider { format: ArtifactFormat, arch: String },
+    NoCompatibleProvider {
+        format: ArtifactFormat,
+        arch: String,
+    },
     #[error("WINDOWS_PROFILE_MISMATCH: {0}")]
     ProfileMismatch(&'static str),
     #[error("WINDOWS_ARTIFACT_MISMATCH: {0}")]
@@ -67,7 +70,11 @@ pub fn load_provider(
     let mut providers = load_validated_providers(provider_dir)?;
     providers.retain(|provider| {
         provider.manifest.formats.contains(format)
-            && provider.manifest.workload_arches.iter().any(|value| value == arch)
+            && provider
+                .manifest
+                .workload_arches
+                .iter()
+                .any(|value| value == arch)
     });
     if providers.is_empty() {
         return Err(WindowsPersonalityError::NoCompatibleProvider {
@@ -184,7 +191,12 @@ fn sort_providers(providers: &mut [ValidatedWindowsProvider]) {
         left.manifest
             .provider_id
             .cmp(&right.manifest.provider_id)
-            .then_with(|| right.manifest.provider_revision.cmp(&left.manifest.provider_revision))
+            .then_with(|| {
+                right
+                    .manifest
+                    .provider_revision
+                    .cmp(&left.manifest.provider_revision)
+            })
             .then_with(|| compare_paths(&left.manifest_path, &right.manifest_path))
     });
 }
@@ -200,7 +212,8 @@ fn validate_manifest(path: &Path) -> Result<ValidatedWindowsProvider, WindowsPer
     if manifest.schema != WINDOWS_PROVIDER_MANIFEST_SCHEMA {
         return Err(WindowsPersonalityError::InvalidProvider(format!(
             "{} has unsupported schema {}",
-            path.display(), manifest.schema
+            path.display(),
+            manifest.schema
         )));
     }
     if manifest.provider_id.trim().is_empty() {
@@ -262,9 +275,10 @@ fn validate_manifest(path: &Path) -> Result<ValidatedWindowsProvider, WindowsPer
 }
 
 fn compare_paths(left: &Path, right: &Path) -> Ordering {
-    left.as_os_str().as_encoded_bytes().cmp(right.as_os_str().as_encoded_bytes())
+    left.as_os_str()
+        .as_encoded_bytes()
+        .cmp(right.as_os_str().as_encoded_bytes())
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PreparedWindowsLaunch {
@@ -301,13 +315,9 @@ pub fn prepare_windows_launch(
 
     let profile = registry::load_selected_profile(state_dir, application_id)?;
     validate_windows_profile(&profile)?;
-    let workload_arch = profile
-        .artifact
-        .workload_arch
-        .as_deref()
-        .ok_or(WindowsPersonalityError::ProfileMismatch(
-            "Windows workload architecture is unresolved",
-        ))?;
+    let workload_arch = profile.artifact.workload_arch.as_deref().ok_or(
+        WindowsPersonalityError::ProfileMismatch("Windows workload architecture is unresolved"),
+    )?;
     if !matches!(workload_arch, "x86" | "x86_64") {
         return Err(WindowsPersonalityError::ProfileMismatch(
             "W1 supports x86/x86_64 Windows workloads only",
@@ -334,13 +344,9 @@ pub fn prepare_windows_launch(
     verify_inspection_matches_profile(&candidate_inspection, &profile)?;
 
     let provider = load_provider(provider_dir, &profile.artifact.format, workload_arch)?;
-    let staged_artifact_path = launcher::stage_artifact(
-        state_dir,
-        candidate,
-        &profile.artifact.identity,
-        host_arch,
-    )
-    .map_err(|error| WindowsPersonalityError::ArtifactStage(error.to_string()))?;
+    let staged_artifact_path =
+        launcher::stage_artifact(state_dir, candidate, &profile.artifact.identity, host_arch)
+            .map_err(|error| WindowsPersonalityError::ArtifactStage(error.to_string()))?;
     let staged_inspection = exec::inspect(&staged_artifact_path, host_arch)?;
     verify_inspection_matches_profile(&staged_inspection, &profile)?;
 
@@ -379,7 +385,10 @@ fn validate_windows_profile(profile: &ApplicationProfile) -> Result<(), WindowsP
             "runtime family is not WINDOWS",
         ));
     }
-    if !matches!(profile.artifact.format, ArtifactFormat::Pe32 | ArtifactFormat::Pe32Plus) {
+    if !matches!(
+        profile.artifact.format,
+        ArtifactFormat::Pe32 | ArtifactFormat::Pe32Plus
+    ) {
         return Err(WindowsPersonalityError::ProfileMismatch(
             "artifact format is not PE32/PE32+",
         ));
@@ -440,7 +449,6 @@ fn verify_inspection_matches_profile(
     }
     Ok(())
 }
-
 
 pub fn windows_systemd_run_args(prepared: &PreparedWindowsLaunch) -> Vec<String> {
     let mut args = vec![
@@ -504,9 +512,7 @@ pub fn launch_windows(
         .args(windows_systemd_run_args(&prepared))
         .status();
     let (outcome, exit_code) = match status {
-        Ok(status) if status.success() => {
-            (PersonalityLaunchOutcome::ExitedSuccess, status.code())
-        }
+        Ok(status) if status.success() => (PersonalityLaunchOutcome::ExitedSuccess, status.code()),
         Ok(status) => (
             PersonalityLaunchOutcome::SystemdOrWorkloadFailure,
             status.code(),

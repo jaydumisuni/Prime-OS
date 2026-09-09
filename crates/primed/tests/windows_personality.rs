@@ -145,9 +145,11 @@ fn selection_is_deterministic_and_prefers_latest_revision_within_provider() {
         .expect("compatible provider");
     assert_eq!(selected.manifest.provider_id, "prime.windows.a");
     assert_eq!(selected.manifest.provider_revision, 2);
-    assert_eq!(selected.adapter_path, fs::canonicalize(adapter_a2).expect("canonical adapter"));
+    assert_eq!(
+        selected.adapter_path,
+        fs::canonicalize(adapter_a2).expect("canonical adapter")
+    );
 }
-
 
 use prime_contracts::{
     ApplicationArtifact, ApplicationProfile, BackgroundPolicy, CompatibilityRecord, CpuPolicy,
@@ -193,18 +195,39 @@ fn fixture_policy(root: &Path) -> WorkloadPolicy {
         revision: 1,
         digest: String::new(),
         class: PolicyClass::ForeignRuntime,
-        cpu: CpuPolicy { weight: 100, quota_percent: None },
-        memory: MemoryPolicy { max_bytes: Some(256 * 1024 * 1024), swap_max_bytes: Some(0) },
-        gpu: GpuPolicy { mode: GpuMode::Deny },
-        storage: StoragePolicy { quota_bytes: None, io_weight: 100 },
-        process: ProcessPolicy { max_processes: Some(32), max_runtime_seconds: Some(30) },
-        network: NetworkPolicy { mode: NetworkMode::Offline, destinations: vec![] },
+        cpu: CpuPolicy {
+            weight: 100,
+            quota_percent: None,
+        },
+        memory: MemoryPolicy {
+            max_bytes: Some(256 * 1024 * 1024),
+            swap_max_bytes: Some(0),
+        },
+        gpu: GpuPolicy {
+            mode: GpuMode::Deny,
+        },
+        storage: StoragePolicy {
+            quota_bytes: None,
+            io_weight: 100,
+        },
+        process: ProcessPolicy {
+            max_processes: Some(32),
+            max_runtime_seconds: Some(30),
+        },
+        network: NetworkPolicy {
+            mode: NetworkMode::Offline,
+            destinations: vec![],
+        },
         filesystem: FilesystemPolicy::default(),
         devices: DevicePolicy::default(),
         secrets: SecretPolicy::default(),
         background: BackgroundPolicy { allowed: false },
-        evidence: EvidencePolicy { required: true, classes: vec!["exit".to_owned()] },
-    }).expect("seal policy");
+        evidence: EvidencePolicy {
+            required: true,
+            classes: vec!["exit".to_owned()],
+        },
+    })
+    .expect("seal policy");
     store_policy_revision(root, &policy).expect("store policy");
     select_policy_revision(root, policy.policy_id, policy.revision).expect("select policy");
     policy
@@ -247,7 +270,8 @@ fn fixture_profile(
         revoked: false,
         revocation_reason: None,
         created_at: "2026-09-10T00:00:00Z".to_owned(),
-    }).expect("seal profile");
+    })
+    .expect("seal profile");
     store_profile_revision(root, &profile).expect("store profile");
     select_profile_revision(root, application_id, 1).expect("select profile");
     application_id
@@ -291,12 +315,24 @@ fn prepare_admits_exact_x64_windows_personality_profile() {
         application_id,
         &candidate,
         "x86_64",
-    ).expect("prepare Windows launch");
+    )
+    .expect("prepare Windows launch");
     assert_eq!(prepared.profile.application_id, application_id);
-    assert_eq!(prepared.provider.manifest.provider_id, "prime.windows.fixture");
-    assert_eq!(prepared.profile.execution_backend, ExecutionBackend::Personality);
-    assert_eq!(prepared.profile.artifact.runtime_family, RuntimeFamily::Windows);
-    assert!(prepared.staged_artifact_path.starts_with(state.path().join("artifacts/sha256")));
+    assert_eq!(
+        prepared.provider.manifest.provider_id,
+        "prime.windows.fixture"
+    );
+    assert_eq!(
+        prepared.profile.execution_backend,
+        ExecutionBackend::Personality
+    );
+    assert_eq!(
+        prepared.profile.artifact.runtime_family,
+        RuntimeFamily::Windows
+    );
+    assert!(prepared
+        .staged_artifact_path
+        .starts_with(state.path().join("artifacts/sha256")));
 }
 
 #[test]
@@ -319,8 +355,13 @@ fn prepare_admits_x86_pe_on_x64_w1_host() {
     );
 
     prepare_windows_launch(
-        state.path(), providers.path(), application_id, &candidate, "x86_64",
-    ).expect("prepare x86 Windows launch");
+        state.path(),
+        providers.path(),
+        application_id,
+        &candidate,
+        "x86_64",
+    )
+    .expect("prepare x86 Windows launch");
 }
 
 #[test]
@@ -343,7 +384,13 @@ fn native_profile_is_rejected_by_windows_personality() {
     );
 
     assert!(matches!(
-        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "x86_64"),
+        prepare_windows_launch(
+            state.path(),
+            providers.path(),
+            application_id,
+            &candidate,
+            "x86_64"
+        ),
         Err(WindowsPersonalityError::ProfileMismatch(_))
     ));
 }
@@ -370,7 +417,13 @@ fn mismatched_candidate_bytes_are_rejected_before_provider_execution() {
     );
 
     assert!(matches!(
-        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "x86_64"),
+        prepare_windows_launch(
+            state.path(),
+            providers.path(),
+            application_id,
+            &candidate,
+            "x86_64"
+        ),
         Err(WindowsPersonalityError::ArtifactMismatch(_))
     ));
 }
@@ -395,11 +448,16 @@ fn w1_rejects_non_x64_prime_host_before_launch() {
     );
 
     assert!(matches!(
-        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "aarch64"),
+        prepare_windows_launch(
+            state.path(),
+            providers.path(),
+            application_id,
+            &candidate,
+            "aarch64"
+        ),
         Err(WindowsPersonalityError::UnsupportedHostArchitecture(_))
     ));
 }
-
 
 use prime_contracts::{
     FingerprintConfidence, GenerationRecord, GenerationState, HardwareFingerprint, HostIdentity,
@@ -439,7 +497,11 @@ fn fixture_generation() -> GenerationRecord {
     }
 }
 
-fn prepared_fixture() -> (tempfile::TempDir, tempfile::TempDir, primed::windows_personality::PreparedWindowsLaunch) {
+fn prepared_fixture() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    primed::windows_personality::PreparedWindowsLaunch,
+) {
     let state = tempfile::tempdir().expect("state");
     let providers = tempfile::tempdir().expect("providers");
     fixture_provider(providers.path(), &["x86", "x86_64"]);
@@ -457,8 +519,13 @@ fn prepared_fixture() -> (tempfile::TempDir, tempfile::TempDir, primed::windows_
         Some("x86_64"),
     );
     let prepared = prepare_windows_launch(
-        state.path(), providers.path(), application_id, &candidate, "x86_64",
-    ).expect("prepare");
+        state.path(),
+        providers.path(),
+        application_id,
+        &candidate,
+        "x86_64",
+    )
+    .expect("prepare");
     (state, providers, prepared)
 }
 
@@ -470,19 +537,39 @@ fn windows_systemd_argv_invokes_provider_directly_with_prime_abi() {
     let runtime_path = format!("/run/{}", prepared.runtime_directory_name);
 
     assert!(args.iter().any(|arg| arg == &adapter));
-    assert!(args.windows(2).any(|pair| pair[0] == "--artifact" && pair[1] == prepared.staged_artifact_path.display().to_string()));
-    assert!(args.windows(2).any(|pair| pair[0] == "--application-id" && pair[1] == prepared.profile.application_id.to_string()));
-    assert!(args.windows(2).any(|pair| pair[0] == "--launch-id" && pair[1] == prepared.launch_id.to_string()));
-    assert!(args.windows(2).any(|pair| pair[0] == "--runtime-dir" && pair[1] == runtime_path));
-    assert!(args.iter().any(|arg| arg == &format!("--property=RuntimeDirectory={}", prepared.runtime_directory_name)));
-    assert!(args.iter().any(|arg| arg == "--property=RuntimeDirectoryMode=0700"));
-    assert!(args.iter().any(|arg| arg == "--property=PrivateNetwork=yes"));
+    assert!(args.windows(2).any(|pair| pair[0] == "--artifact"
+        && pair[1] == prepared.staged_artifact_path.display().to_string()));
+    assert!(args.windows(2).any(|pair| pair[0] == "--application-id"
+        && pair[1] == prepared.profile.application_id.to_string()));
+    assert!(args
+        .windows(2)
+        .any(|pair| pair[0] == "--launch-id" && pair[1] == prepared.launch_id.to_string()));
+    assert!(args
+        .windows(2)
+        .any(|pair| pair[0] == "--runtime-dir" && pair[1] == runtime_path));
+    assert!(args.iter().any(|arg| arg
+        == &format!(
+            "--property=RuntimeDirectory={}",
+            prepared.runtime_directory_name
+        )));
+    assert!(args
+        .iter()
+        .any(|arg| arg == "--property=RuntimeDirectoryMode=0700"));
+    assert!(args
+        .iter()
+        .any(|arg| arg == "--property=PrivateNetwork=yes"));
     assert!(args.iter().any(|arg| arg == "--property=DynamicUser=yes"));
     assert!(args.iter().any(|arg| arg == "--property=RemoveIPC=yes"));
     assert!(args.iter().any(|arg| arg == "--property=UMask=0077"));
-    assert!(args.iter().any(|arg| arg == "--property=SupplementaryGroups=prime-display"));
-    assert!(args.iter().any(|arg| arg == "--setenv=XDG_RUNTIME_DIR=/run/prime-compositor"));
-    assert!(!args.iter().any(|arg| matches!(arg.as_str(), "sh" | "/bin/sh" | "bash" | "/bin/bash" | "-c")));
+    assert!(args
+        .iter()
+        .any(|arg| arg == "--property=SupplementaryGroups=prime-display"));
+    assert!(args
+        .iter()
+        .any(|arg| arg == "--setenv=XDG_RUNTIME_DIR=/run/prime-compositor"));
+    assert!(!args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "sh" | "/bin/sh" | "bash" | "/bin/bash" | "-c")));
     assert!(!args.iter().any(|arg| arg.contains("prime-shell")));
 }
 
@@ -515,21 +602,28 @@ fn successful_windows_launch_records_personality_provider_evidence() {
         &generation,
         application_id,
         &candidate,
-    ).expect("launch");
+    )
+    .expect("launch");
 
     assert_eq!(evidence.execution_backend, ExecutionBackend::Personality);
     assert_eq!(evidence.runtime_family, RuntimeFamily::Windows);
     assert_eq!(evidence.provider_id, "prime.windows.fixture");
     assert_eq!(evidence.provider_revision, 1);
-    assert!(evidence.enforcement_properties.iter().any(|property|
-        property.name == "SupplementaryGroups" && property.value == "prime-display"));
+    assert!(evidence
+        .enforcement_properties
+        .iter()
+        .any(
+            |property| property.name == "SupplementaryGroups" && property.value == "prime-display"
+        ));
     assert_eq!(evidence.outcome, PersonalityLaunchOutcome::ExitedSuccess);
     assert_eq!(evidence.launcher_exit_code, Some(0));
-    let evidence_dir = state.path().join("evidence/launches").join(evidence.launch_id.to_string());
+    let evidence_dir = state
+        .path()
+        .join("evidence/launches")
+        .join(evidence.launch_id.to_string());
     assert!(evidence_dir.join("01-admitted.json").is_file());
     assert!(evidence_dir.join("02-completed.json").is_file());
 }
-
 
 #[test]
 fn provider_support_reports_validated_union_without_overclaiming() {
@@ -539,7 +633,12 @@ fn provider_support_reports_validated_union_without_overclaiming() {
     write_adapter(&adapter_x64, 0o755);
     write_adapter(&adapter_x86, 0o755);
     write_manifest(
-        dir.path(), "x64.json", "prime.windows.compat", 2, &adapter_x64, &["x86_64"],
+        dir.path(),
+        "x64.json",
+        "prime.windows.compat",
+        2,
+        &adapter_x64,
+        &["x86_64"],
     );
     let manifest = WindowsProviderManifest {
         schema: WINDOWS_PROVIDER_MANIFEST_SCHEMA.to_owned(),
@@ -553,10 +652,17 @@ fn provider_support_reports_validated_union_without_overclaiming() {
     fs::write(
         dir.path().join("x86.json"),
         serde_json::to_vec_pretty(&manifest).expect("serialize"),
-    ).expect("write manifest");
+    )
+    .expect("write manifest");
 
     let support = provider_support(dir.path(), "x86_64").expect("support");
     assert_eq!(support.provider_count, 2);
-    assert_eq!(support.formats, vec![ArtifactFormat::Pe32, ArtifactFormat::Pe32Plus]);
-    assert_eq!(support.workload_arches, vec!["x86".to_owned(), "x86_64".to_owned()]);
+    assert_eq!(
+        support.formats,
+        vec![ArtifactFormat::Pe32, ArtifactFormat::Pe32Plus]
+    );
+    assert_eq!(
+        support.workload_arches,
+        vec!["x86".to_owned(), "x86_64".to_owned()]
+    );
 }
