@@ -1,15 +1,18 @@
 use crate::{exec, identity, launcher, policy, registry};
 use prime_contracts::{
-    ApplicationProfile, ArtifactFormat, ExecutionBackend, MechanicalCompatibilityState, PolicyClass,
-    RuntimeFamily, WindowsProviderManifest, WINDOWS_PROVIDER_MANIFEST_SCHEMA,
+    ApplicationProfile, ArtifactFormat, ExecutionBackend, GenerationRecord, HostIdentity,
+    LaunchEnforcementProperty, MechanicalCompatibilityState, PersonalityLaunchOutcome, PolicyClass,
+    RuntimeFamily, WindowsLaunchEvidence, WindowsProviderManifest, WINDOWS_LAUNCH_EVIDENCE_SCHEMA,
+    WINDOWS_PROVIDER_MANIFEST_SCHEMA,
 };
 use std::cmp::Ordering;
-use std::fs;
-use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
+use std::process::Command;
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum WindowsPersonalityError {
@@ -355,5 +358,165 @@ fn verify_inspection_matches_profile(
             "Windows PE must not be marked native-compatible",
         ));
     }
+    Ok(())
+}
+
+
+pub fn windows_systemd_run_args(prepared: &PreparedWindowsLaunch) -> Vec<String> {
+    let mut args = vec![
+        "--system".to_owned(),
+        format!("--unit={}", prepared.unit_name),
+        "--service-type=exec".to_owned(),
+        "--wait".to_owned(),
+        "--collect".to_owned(),
+        "--no-ask-password".to_owned(),
+        "--quiet".to_owned(),
+    ];
+    for property in &prepared.plan.properties {
+        args.push(format!("--property={}={}", property.name, property.value));
+    }
+    args.push(format!(
+        "--property=RuntimeDirectory={}",
+        prepared.runtime_directory_name
+    ));
+    args.push("--property=RuntimeDirectoryMode=0700".to_owned());
+    args.push(prepared.provider.adapter_path.display().to_string());
+    args.push("--artifact".to_owned());
+    args.push(prepared.staged_artifact_path.display().to_string());
+    args.push("--application-id".to_owned());
+    args.push(prepared.profile.application_id.to_string());
+    args.push("--launch-id".to_owned());
+    args.push(prepared.launch_id.to_string());
+    args.push("--runtime-dir".to_owned());
+    args.push(format!("/run/{}", prepared.runtime_directory_name));
+    args
+}
+
+pub fn launch_windows(
+    state_dir: &Path,
+    provider_dir: &Path,
+    systemd_run: &Path,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    application_id: Uuid,
+    candidate: &Path,
+) -> Result<WindowsLaunchEvidence, WindowsPersonalityError> {
+    let prepared = prepare_windows_launch(
+        state_dir,
+        provider_dir,
+        application_id,
+        candidate,
+        &host.host_arch,
+    )?;
+    let admitted = windows_evidence_for(
+        &prepared,
+        host,
+        generation,
+        PersonalityLaunchOutcome::Admitted,
+        None,
+        None,
+    );
+    store_windows_evidence(state_dir, &admitted, 1, "admitted")?;
+
+    let status = Command::new(systemd_run)
+        .args(windows_systemd_run_args(&prepared))
+        .status();
+    let (outcome, exit_code) = match status {
+        Ok(status) if status.success() => {
+            (PersonalityLaunchOutcome::ExitedSuccess, status.code())
+        }
+        Ok(status) => (
+            PersonalityLaunchOutcome::SystemdOrWorkloadFailure,
+            status.code(),
+        ),
+        Err(_) => (PersonalityLaunchOutcome::LauncherFailure, None),
+    };
+    let completed_at = identity::now_rfc3339()?;
+    let completed = windows_evidence_for(
+        &prepared,
+        host,
+        generation,
+        outcome,
+        exit_code,
+        Some(completed_at),
+    );
+    store_windows_evidence(state_dir, &completed, 2, "completed")?;
+    Ok(completed)
+}
+
+fn windows_evidence_for(
+    prepared: &PreparedWindowsLaunch,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    outcome: PersonalityLaunchOutcome,
+    launcher_exit_code: Option<i32>,
+    completed_at: Option<String>,
+) -> WindowsLaunchEvidence {
+    WindowsLaunchEvidence {
+        schema: WINDOWS_LAUNCH_EVIDENCE_SCHEMA.to_owned(),
+        launch_id: prepared.launch_id,
+        host_id: host.host_id,
+        generation_id: generation.generation_id.clone(),
+        application_id: prepared.profile.application_id,
+        profile_revision: prepared.profile.profile_revision,
+        profile_digest: prepared.profile.profile_digest.clone(),
+        policy_id: prepared.policy_id,
+        policy_revision: prepared.policy_revision,
+        policy_digest: prepared.policy_digest.clone(),
+        artifact_identity: prepared.profile.artifact.identity.clone(),
+        staged_artifact_path: prepared.staged_artifact_path.display().to_string(),
+        execution_backend: ExecutionBackend::Personality,
+        runtime_family: RuntimeFamily::Windows,
+        provider_id: prepared.provider.manifest.provider_id.clone(),
+        provider_revision: prepared.provider.manifest.provider_revision,
+        unit_name: prepared.unit_name.clone(),
+        requested_at: prepared.requested_at.clone(),
+        completed_at,
+        outcome,
+        launcher_exit_code,
+        enforcement_properties: prepared
+            .plan
+            .properties
+            .iter()
+            .map(|property| LaunchEnforcementProperty {
+                name: property.name.clone(),
+                value: property.value.clone(),
+            })
+            .chain([
+                LaunchEnforcementProperty {
+                    name: "RuntimeDirectory".to_owned(),
+                    value: prepared.runtime_directory_name.clone(),
+                },
+                LaunchEnforcementProperty {
+                    name: "RuntimeDirectoryMode".to_owned(),
+                    value: "0700".to_owned(),
+                },
+            ])
+            .collect(),
+    }
+}
+
+fn store_windows_evidence(
+    state_dir: &Path,
+    evidence: &WindowsLaunchEvidence,
+    sequence: u8,
+    phase: &str,
+) -> Result<(), WindowsPersonalityError> {
+    let root = state_dir
+        .join("evidence/launches")
+        .join(evidence.launch_id.to_string());
+    fs::create_dir_all(&root)?;
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+    let path = root.join(format!("{sequence:02}-{phase}.json"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    let encoded = serde_json::to_vec_pretty(evidence).map_err(registry::RegistryError::from)?;
+    file.write_all(&encoded)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    File::open(&root)?.sync_all()?;
     Ok(())
 }

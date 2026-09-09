@@ -399,3 +399,126 @@ fn w1_rejects_non_x64_prime_host_before_launch() {
         Err(WindowsPersonalityError::UnsupportedHostArchitecture(_))
     ));
 }
+
+
+use prime_contracts::{
+    FingerprintConfidence, GenerationRecord, GenerationState, HardwareFingerprint, HostIdentity,
+    PersonalityLaunchOutcome, ReleaseChannel,
+};
+use primed::windows_personality::{launch_windows, windows_systemd_run_args};
+
+fn fixture_host() -> HostIdentity {
+    HostIdentity {
+        schema: "prime.host-identity.v1".to_owned(),
+        host_id: Uuid::now_v7(),
+        lineage_id: Uuid::now_v7(),
+        created_at: "2026-09-10T00:00:00Z".to_owned(),
+        host_arch: "x86_64".to_owned(),
+        hardware_fingerprint: HardwareFingerprint {
+            algorithm: "fixture".to_owned(),
+            digest: None,
+            confidence: FingerprintConfidence::Unprobed,
+            observed_at: None,
+        },
+        rebind_revision: 0,
+        supersedes_host_id: None,
+    }
+}
+
+fn fixture_generation() -> GenerationRecord {
+    GenerationRecord {
+        schema: "prime.generation.v1".to_owned(),
+        generation_id: "prime-w1-fixture".to_owned(),
+        image_digest: format!("sha256:{}", "1".repeat(64)),
+        channel: ReleaseChannel::Lab,
+        created_at: "2026-09-10T00:00:00Z".to_owned(),
+        source_revision: "fixture".to_owned(),
+        state: GenerationState::KnownGood,
+        boot_attempts_remaining: None,
+        evidence_refs: vec![],
+    }
+}
+
+fn prepared_fixture() -> (tempfile::TempDir, tempfile::TempDir, primed::windows_personality::PreparedWindowsLaunch) {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86", "x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let prepared = prepare_windows_launch(
+        state.path(), providers.path(), application_id, &candidate, "x86_64",
+    ).expect("prepare");
+    (state, providers, prepared)
+}
+
+#[test]
+fn windows_systemd_argv_invokes_provider_directly_with_prime_abi() {
+    let (_state, _providers, prepared) = prepared_fixture();
+    let args = windows_systemd_run_args(&prepared);
+    let adapter = prepared.provider.adapter_path.display().to_string();
+    let runtime_path = format!("/run/{}", prepared.runtime_directory_name);
+
+    assert!(args.iter().any(|arg| arg == &adapter));
+    assert!(args.windows(2).any(|pair| pair[0] == "--artifact" && pair[1] == prepared.staged_artifact_path.display().to_string()));
+    assert!(args.windows(2).any(|pair| pair[0] == "--application-id" && pair[1] == prepared.profile.application_id.to_string()));
+    assert!(args.windows(2).any(|pair| pair[0] == "--launch-id" && pair[1] == prepared.launch_id.to_string()));
+    assert!(args.windows(2).any(|pair| pair[0] == "--runtime-dir" && pair[1] == runtime_path));
+    assert!(args.iter().any(|arg| arg == &format!("--property=RuntimeDirectory={}", prepared.runtime_directory_name)));
+    assert!(args.iter().any(|arg| arg == "--property=RuntimeDirectoryMode=0700"));
+    assert!(args.iter().any(|arg| arg == "--property=PrivateNetwork=yes"));
+    assert!(!args.iter().any(|arg| matches!(arg.as_str(), "sh" | "/bin/sh" | "bash" | "/bin/bash" | "-c")));
+    assert!(!args.iter().any(|arg| arg.contains("prime-shell")));
+}
+
+#[test]
+fn successful_windows_launch_records_personality_provider_evidence() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let host = fixture_host();
+    let generation = fixture_generation();
+
+    let evidence = launch_windows(
+        state.path(),
+        providers.path(),
+        Path::new("/usr/bin/true"),
+        &host,
+        &generation,
+        application_id,
+        &candidate,
+    ).expect("launch");
+
+    assert_eq!(evidence.execution_backend, ExecutionBackend::Personality);
+    assert_eq!(evidence.runtime_family, RuntimeFamily::Windows);
+    assert_eq!(evidence.provider_id, "prime.windows.fixture");
+    assert_eq!(evidence.provider_revision, 1);
+    assert_eq!(evidence.outcome, PersonalityLaunchOutcome::ExitedSuccess);
+    assert_eq!(evidence.launcher_exit_code, Some(0));
+    let evidence_dir = state.path().join("evidence/launches").join(evidence.launch_id.to_string());
+    assert!(evidence_dir.join("01-admitted.json").is_file());
+    assert!(evidence_dir.join("02-completed.json").is_file());
+}
