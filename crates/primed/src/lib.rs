@@ -18,6 +18,7 @@ use prime_contracts::{
     CapabilityPlacement, CapabilityProvider, CapabilityRollback, FingerprintConfidence,
     GenerationRecord, HardwareGraph, HealthStatus, HostIdentity, StorageInventory, StorageScope,
     NATIVE_LAUNCH_EVIDENCE_SCHEMA, STORAGE_INVENTORY_SCHEMA, STORAGE_PRESSURE_SCHEMA,
+    WINDOWS_LAUNCH_EVIDENCE_SCHEMA,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -33,6 +34,7 @@ pub struct CoreState {
     pub health_limitations: Arc<Vec<String>>,
     pub state_dir: Arc<PathBuf>,
     pub systemd_run: Arc<PathBuf>,
+    pub windows_provider_dir: Arc<PathBuf>,
     pub storage_mountinfo: Arc<PathBuf>,
     pub storage_policy_file: Arc<PathBuf>,
     pub system_root: Arc<PathBuf>,
@@ -48,6 +50,7 @@ impl CoreState {
         storage: StorageInventory,
         state_dir: PathBuf,
         systemd_run: PathBuf,
+        windows_provider_dir: PathBuf,
         storage_mountinfo: PathBuf,
         storage_policy_file: PathBuf,
         system_root: PathBuf,
@@ -137,6 +140,46 @@ impl CoreState {
             evidence_refs: Vec::new(),
         };
         let artifact_store = state_dir.join("artifacts/sha256").display().to_string();
+
+        let windows_support = crate::windows_personality::provider_support(
+            &windows_provider_dir,
+            &host.host_arch,
+        );
+        let (windows_availability, windows_health, windows_formats, windows_arches, windows_limitations) =
+            match windows_support {
+                Ok(support) => {
+                    let mut limitations = support.limitations;
+                    limitations.push("W1 supports portable/simple Win32 only; W2+ features are not claimed".to_owned());
+                    let status = if limitations.is_empty() {
+                        HealthStatus::Healthy
+                    } else {
+                        HealthStatus::Degraded
+                    };
+                    (
+                        CapabilityAvailability::Available,
+                        status,
+                        support.formats.into_iter().map(|format| match format {
+                            prime_contracts::ArtifactFormat::Pe32 => "PE32".to_owned(),
+                            prime_contracts::ArtifactFormat::Pe32Plus => "PE32+".to_owned(),
+                            _ => unreachable!("provider support filters to PE formats"),
+                        }).collect::<Vec<_>>(),
+                        support.workload_arches,
+                        limitations,
+                    )
+                }
+                Err(error) => (
+                    CapabilityAvailability::Unavailable,
+                    HealthStatus::Failed,
+                    Vec::new(),
+                    Vec::new(),
+                    vec![error.to_string()],
+                ),
+            };
+        let windows_exec_health = CapabilityHealth {
+            status: windows_health,
+            observed_at: observed_at.clone(),
+            evidence_refs: Vec::new(),
+        };
 
         let mut storage_limitations = storage.limitations.clone();
         storage_limitations.extend(storage.reserve.limitations.clone());
@@ -335,6 +378,47 @@ impl CoreState {
                     ],
                 },
             },
+            CapabilityDescriptor {
+                capability_id: "prime.exec.windows-personality".to_owned(),
+                capability_version: "0.1.0".to_owned(),
+                family: "execution".to_owned(),
+                provider: provider.clone(),
+                availability: windows_availability,
+                effects: vec!["process".to_owned(), "window".to_owned()],
+                accepts: CapabilityAccepts {
+                    formats: windows_formats,
+                    runtime_families: vec!["WINDOWS".to_owned()],
+                    workload_arches: windows_arches,
+                },
+                permissions: vec!["prime.exec.windows-personality.launch".to_owned()],
+                resources: json!({
+                    "artifact_store": artifact_store,
+                    "provider_registry": windows_provider_dir.display().to_string(),
+                    "supervisor": "systemd transient service",
+                }),
+                hardware_requirements: vec!["x86_64 Prime Host for W1".to_owned()],
+                limits: json!({
+                    "portable_win32": true,
+                    "installers": false,
+                    "dotnet": false,
+                    "directx_acceleration": false,
+                    "windows_services": false,
+                    "usb_integration": false,
+                    "vm_fallback": false,
+                }),
+                health: windows_exec_health,
+                limitations: windows_limitations,
+                placement: placement.clone(),
+                expected_evidence: vec![WINDOWS_LAUNCH_EVIDENCE_SCHEMA.to_owned()],
+                rollback: CapabilityRollback {
+                    supported: false,
+                    mode: None,
+                    limitations: vec![
+                        "A completed personality process launch is not rolled back as a generation"
+                            .to_owned(),
+                    ],
+                },
+            },
             crate::system_status::capability_descriptor(
                 &system_root,
                 &hardware,
@@ -375,6 +459,7 @@ impl CoreState {
             health_limitations: Arc::new(health_limitations),
             state_dir: Arc::new(state_dir),
             systemd_run: Arc::new(systemd_run),
+            windows_provider_dir: Arc::new(windows_provider_dir),
             storage_mountinfo: Arc::new(storage_mountinfo),
             storage_policy_file: Arc::new(storage_policy_file),
             system_root: Arc::new(system_root),

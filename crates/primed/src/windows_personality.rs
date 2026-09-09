@@ -51,18 +51,108 @@ pub struct ValidatedWindowsProvider {
     pub adapter_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsProviderSupport {
+    pub provider_count: usize,
+    pub formats: Vec<ArtifactFormat>,
+    pub workload_arches: Vec<String>,
+    pub limitations: Vec<String>,
+}
+
 pub fn load_provider(
     provider_dir: &Path,
     format: &ArtifactFormat,
     arch: &str,
 ) -> Result<ValidatedWindowsProvider, WindowsPersonalityError> {
+    let mut providers = load_validated_providers(provider_dir)?;
+    providers.retain(|provider| {
+        provider.manifest.formats.contains(format)
+            && provider.manifest.workload_arches.iter().any(|value| value == arch)
+    });
+    if providers.is_empty() {
+        return Err(WindowsPersonalityError::NoCompatibleProvider {
+            format: format.clone(),
+            arch: arch.to_owned(),
+        });
+    }
+    sort_providers(&mut providers);
+    Ok(providers.remove(0))
+}
+
+pub fn provider_support(
+    provider_dir: &Path,
+    host_arch: &str,
+) -> Result<WindowsProviderSupport, WindowsPersonalityError> {
+    if !matches!(host_arch, "x86_64" | "amd64") {
+        return Err(WindowsPersonalityError::UnsupportedHostArchitecture(
+            host_arch.to_owned(),
+        ));
+    }
+    let providers = load_validated_providers(provider_dir)?;
+    let mut formats = Vec::new();
+    let mut workload_arches = Vec::new();
+    let mut limitations = Vec::new();
+    let mut provider_count = 0usize;
+    for provider in providers {
+        let has_w1_format = provider
+            .manifest
+            .formats
+            .iter()
+            .any(|format| matches!(format, ArtifactFormat::Pe32 | ArtifactFormat::Pe32Plus));
+        let has_w1_arch = provider
+            .manifest
+            .workload_arches
+            .iter()
+            .any(|arch| matches!(arch.as_str(), "x86" | "x86_64"));
+        if !has_w1_format || !has_w1_arch {
+            continue;
+        }
+        provider_count += 1;
+        for format in provider.manifest.formats {
+            if matches!(format, ArtifactFormat::Pe32 | ArtifactFormat::Pe32Plus)
+                && !formats.contains(&format)
+            {
+                formats.push(format);
+            }
+        }
+        for arch in provider.manifest.workload_arches {
+            if matches!(arch.as_str(), "x86" | "x86_64") && !workload_arches.contains(&arch) {
+                workload_arches.push(arch);
+            }
+        }
+        limitations.extend(provider.manifest.limitations);
+    }
+    if provider_count == 0 {
+        return Err(WindowsPersonalityError::ProviderUnavailable(format!(
+            "no W1-compatible provider manifests found in {}",
+            provider_dir.display()
+        )));
+    }
+    formats.sort_by_key(|format| match format {
+        ArtifactFormat::Pe32 => 0,
+        ArtifactFormat::Pe32Plus => 1,
+        _ => 2,
+    });
+    workload_arches.sort();
+    limitations.sort();
+    limitations.dedup();
+    Ok(WindowsProviderSupport {
+        provider_count,
+        formats,
+        workload_arches,
+        limitations,
+    })
+}
+
+fn load_validated_providers(
+    provider_dir: &Path,
+) -> Result<Vec<ValidatedWindowsProvider>, WindowsPersonalityError> {
     if !provider_dir.is_dir() {
         return Err(WindowsPersonalityError::ProviderUnavailable(format!(
             "trusted provider directory is unavailable: {}",
             provider_dir.display()
         )));
     }
-
     let mut providers = Vec::new();
     let mut saw_manifest = false;
     for entry in fs::read_dir(provider_dir)? {
@@ -80,25 +170,16 @@ pub fn load_provider(
         }
         providers.push(validate_manifest(&path)?);
     }
-
     if !saw_manifest {
         return Err(WindowsPersonalityError::ProviderUnavailable(format!(
             "no provider manifests found in {}",
             provider_dir.display()
         )));
     }
+    Ok(providers)
+}
 
-    providers.retain(|provider| {
-        provider.manifest.formats.contains(format)
-            && provider.manifest.workload_arches.iter().any(|value| value == arch)
-    });
-    if providers.is_empty() {
-        return Err(WindowsPersonalityError::NoCompatibleProvider {
-            format: format.clone(),
-            arch: arch.to_owned(),
-        });
-    }
-
+fn sort_providers(providers: &mut [ValidatedWindowsProvider]) {
     providers.sort_by(|left, right| {
         left.manifest
             .provider_id
@@ -106,7 +187,6 @@ pub fn load_provider(
             .then_with(|| right.manifest.provider_revision.cmp(&left.manifest.provider_revision))
             .then_with(|| compare_paths(&left.manifest_path, &right.manifest_path))
     });
-    Ok(providers.remove(0))
 }
 
 fn validate_manifest(path: &Path) -> Result<ValidatedWindowsProvider, WindowsPersonalityError> {

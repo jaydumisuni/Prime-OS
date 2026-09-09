@@ -405,7 +405,7 @@ use prime_contracts::{
     FingerprintConfidence, GenerationRecord, GenerationState, HardwareFingerprint, HostIdentity,
     PersonalityLaunchOutcome, ReleaseChannel,
 };
-use primed::windows_personality::{launch_windows, windows_systemd_run_args};
+use primed::windows_personality::{launch_windows, provider_support, windows_systemd_run_args};
 
 fn fixture_host() -> HostIdentity {
     HostIdentity {
@@ -521,4 +521,35 @@ fn successful_windows_launch_records_personality_provider_evidence() {
     let evidence_dir = state.path().join("evidence/launches").join(evidence.launch_id.to_string());
     assert!(evidence_dir.join("01-admitted.json").is_file());
     assert!(evidence_dir.join("02-completed.json").is_file());
+}
+
+
+#[test]
+fn provider_support_reports_validated_union_without_overclaiming() {
+    let dir = tempfile::tempdir().expect("providers");
+    let adapter_x64 = dir.path().join("adapter-x64");
+    let adapter_x86 = dir.path().join("adapter-x86");
+    write_adapter(&adapter_x64, 0o755);
+    write_adapter(&adapter_x86, 0o755);
+    write_manifest(
+        dir.path(), "x64.json", "prime.windows.compat", 2, &adapter_x64, &["x86_64"],
+    );
+    let manifest = WindowsProviderManifest {
+        schema: WINDOWS_PROVIDER_MANIFEST_SCHEMA.to_owned(),
+        provider_id: "prime.windows.compat32".to_owned(),
+        provider_revision: 1,
+        adapter_path: adapter_x86.display().to_string(),
+        formats: vec![ArtifactFormat::Pe32],
+        workload_arches: vec!["x86".to_owned()],
+        limitations: vec!["W1_PORTABLE_ONLY".to_owned()],
+    };
+    fs::write(
+        dir.path().join("x86.json"),
+        serde_json::to_vec_pretty(&manifest).expect("serialize"),
+    ).expect("write manifest");
+
+    let support = provider_support(dir.path(), "x86_64").expect("support");
+    assert_eq!(support.provider_count, 2);
+    assert_eq!(support.formats, vec![ArtifactFormat::Pe32, ArtifactFormat::Pe32Plus]);
+    assert_eq!(support.workload_arches, vec!["x86".to_owned(), "x86_64".to_owned()]);
 }

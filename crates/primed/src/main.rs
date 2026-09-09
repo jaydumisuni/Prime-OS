@@ -17,6 +17,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let systemd_run = env::var_os("PRIME_SYSTEMD_RUN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/usr/sbin/systemd-run"));
+    let windows_provider_dir = env::var_os("PRIME_WINDOWS_PROVIDER_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/usr/lib/prime/windows-providers"));
     let bootc = PathBuf::from("/usr/sbin/bootc");
     let storage_mountinfo = PathBuf::from("/proc/self/mountinfo");
     let storage_policy_file = env::var_os("PRIME_STORAGE_POLICY_FILE")
@@ -65,6 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         storage_inventory,
         state_dir,
         systemd_run,
+        windows_provider_dir,
         storage_mountinfo,
         storage_policy_file,
         PathBuf::from("/"),
