@@ -272,7 +272,7 @@ fn validate_profile_for_native(profile: &ApplicationProfile) -> Result<(), Launc
     Ok(())
 }
 
-fn stage_artifact(
+pub(crate) fn stage_artifact(
     state_dir: &Path,
     source: &Path,
     expected_identity: &str,

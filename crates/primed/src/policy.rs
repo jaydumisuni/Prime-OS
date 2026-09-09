@@ -9,7 +9,7 @@ pub struct SystemdProperty {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NativeEnforcementPlan {
+pub struct SystemdEnforcementPlan {
     pub properties: Vec<SystemdProperty>,
     pub background_allowed: bool,
     pub evidence_required: bool,
@@ -25,9 +25,9 @@ pub enum PolicyCompileError {
     Unsupported(&'static str),
 }
 
-pub fn compile_native(
+pub fn compile_systemd(
     policy: &WorkloadPolicy,
-) -> Result<NativeEnforcementPlan, PolicyCompileError> {
+) -> Result<SystemdEnforcementPlan, PolicyCompileError> {
     verify_policy(policy)?;
     if !(1..=10_000).contains(&policy.cpu.weight) {
         return Err(PolicyCompileError::Invalid("cpu.weight must be 1..=10000"));
@@ -150,11 +150,20 @@ pub fn compile_native(
         }
     }
 
-    Ok(NativeEnforcementPlan {
+    Ok(SystemdEnforcementPlan {
         properties,
         background_allowed: policy.background.allowed,
         evidence_required: policy.evidence.required,
     })
+}
+
+
+pub type NativeEnforcementPlan = SystemdEnforcementPlan;
+
+pub fn compile_native(
+    policy: &WorkloadPolicy,
+) -> Result<NativeEnforcementPlan, PolicyCompileError> {
+    compile_systemd(policy)
 }
 
 fn baseline_properties(restricted_class: bool) -> Vec<SystemdProperty> {

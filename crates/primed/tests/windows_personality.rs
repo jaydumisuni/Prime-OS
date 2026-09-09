@@ -147,3 +147,255 @@ fn selection_is_deterministic_and_prefers_latest_revision_within_provider() {
     assert_eq!(selected.manifest.provider_revision, 2);
     assert_eq!(selected.adapter_path, fs::canonicalize(adapter_a2).expect("canonical adapter"));
 }
+
+
+use prime_contracts::{
+    ApplicationArtifact, ApplicationProfile, BackgroundPolicy, CompatibilityRecord, CpuPolicy,
+    DevicePolicy, EvidencePolicy, ExecutionBackend, FilesystemPolicy, GpuMode, GpuPolicy,
+    MechanicalCompatibilityState, MemoryPolicy, NetworkMode, NetworkPolicy, PolicyClass,
+    PolicyReference, ProcessPolicy, RuntimeFamily, SecretPolicy, StoragePolicy, WorkloadPolicy,
+    APPLICATION_PROFILE_SCHEMA, WORKLOAD_POLICY_SCHEMA,
+};
+use primed::registry::{
+    seal_policy, seal_profile, select_policy_revision, select_profile_revision,
+    store_policy_revision, store_profile_revision,
+};
+use primed::windows_personality::prepare_windows_launch;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+fn pe(machine: u16, optional_magic: u16) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 128];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x40_u32.to_le_bytes());
+    bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+    bytes[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+    bytes[0x58..0x5a].copy_from_slice(&optional_magic.to_le_bytes());
+    bytes
+}
+
+fn pe64() -> Vec<u8> {
+    pe(0x8664, 0x20b)
+}
+
+fn pe32() -> Vec<u8> {
+    pe(0x014c, 0x10b)
+}
+
+fn labelled_sha256(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn fixture_policy(root: &Path) -> WorkloadPolicy {
+    let policy = seal_policy(WorkloadPolicy {
+        schema: WORKLOAD_POLICY_SCHEMA.to_owned(),
+        policy_id: Uuid::now_v7(),
+        revision: 1,
+        digest: String::new(),
+        class: PolicyClass::ForeignRuntime,
+        cpu: CpuPolicy { weight: 100, quota_percent: None },
+        memory: MemoryPolicy { max_bytes: Some(256 * 1024 * 1024), swap_max_bytes: Some(0) },
+        gpu: GpuPolicy { mode: GpuMode::Deny },
+        storage: StoragePolicy { quota_bytes: None, io_weight: 100 },
+        process: ProcessPolicy { max_processes: Some(32), max_runtime_seconds: Some(30) },
+        network: NetworkPolicy { mode: NetworkMode::Offline, destinations: vec![] },
+        filesystem: FilesystemPolicy::default(),
+        devices: DevicePolicy::default(),
+        secrets: SecretPolicy::default(),
+        background: BackgroundPolicy { allowed: false },
+        evidence: EvidencePolicy { required: true, classes: vec!["exit".to_owned()] },
+    }).expect("seal policy");
+    store_policy_revision(root, &policy).expect("store policy");
+    select_policy_revision(root, policy.policy_id, policy.revision).expect("select policy");
+    policy
+}
+
+fn fixture_profile(
+    root: &Path,
+    policy: &WorkloadPolicy,
+    identity: String,
+    format: ArtifactFormat,
+    runtime_family: RuntimeFamily,
+    backend: ExecutionBackend,
+    arch: Option<&str>,
+) -> Uuid {
+    let application_id = Uuid::now_v7();
+    let profile = seal_profile(ApplicationProfile {
+        schema: APPLICATION_PROFILE_SCHEMA.to_owned(),
+        application_id,
+        profile_revision: 1,
+        profile_digest: String::new(),
+        display_name: "Windows W1 Fixture".to_owned(),
+        artifact: ApplicationArtifact {
+            identity,
+            format,
+            runtime_family,
+            workload_arch: arch.map(str::to_owned),
+        },
+        execution_backend: backend,
+        dependencies: vec![],
+        workload_policy: PolicyReference {
+            policy_id: policy.policy_id,
+            policy_revision: policy.revision,
+            policy_digest: policy.digest.clone(),
+        },
+        permissions: vec![],
+        compatibility: CompatibilityRecord {
+            state: MechanicalCompatibilityState::Recognized,
+            evidence_refs: vec![],
+        },
+        revoked: false,
+        revocation_reason: None,
+        created_at: "2026-09-10T00:00:00Z".to_owned(),
+    }).expect("seal profile");
+    store_profile_revision(root, &profile).expect("store profile");
+    select_profile_revision(root, application_id, 1).expect("select profile");
+    application_id
+}
+
+fn fixture_provider(dir: &Path, arches: &[&str]) {
+    let adapter = dir.join("adapter");
+    write_adapter(&adapter, 0o755);
+    write_manifest(
+        dir,
+        "provider.json",
+        "prime.windows.fixture",
+        1,
+        &adapter,
+        arches,
+    );
+}
+
+#[test]
+fn prepare_admits_exact_x64_windows_personality_profile() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86", "x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+
+    let prepared = prepare_windows_launch(
+        state.path(),
+        providers.path(),
+        application_id,
+        &candidate,
+        "x86_64",
+    ).expect("prepare Windows launch");
+    assert_eq!(prepared.profile.application_id, application_id);
+    assert_eq!(prepared.provider.manifest.provider_id, "prime.windows.fixture");
+    assert_eq!(prepared.profile.execution_backend, ExecutionBackend::Personality);
+    assert_eq!(prepared.profile.artifact.runtime_family, RuntimeFamily::Windows);
+    assert!(prepared.staged_artifact_path.starts_with(state.path().join("artifacts/sha256")));
+}
+
+#[test]
+fn prepare_admits_x86_pe_on_x64_w1_host() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86", "x86_64"]);
+    let candidate = state.path().join("fixture32.exe");
+    let bytes = pe32();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86"),
+    );
+
+    prepare_windows_launch(
+        state.path(), providers.path(), application_id, &candidate, "x86_64",
+    ).expect("prepare x86 Windows launch");
+}
+
+#[test]
+fn native_profile_is_rejected_by_windows_personality() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Native,
+        Some("x86_64"),
+    );
+
+    assert!(matches!(
+        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "x86_64"),
+        Err(WindowsPersonalityError::ProfileMismatch(_))
+    ));
+}
+
+#[test]
+fn mismatched_candidate_bytes_are_rejected_before_provider_execution() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let expected = pe64();
+    let mut actual = pe64();
+    actual.push(0xaa);
+    fs::write(&candidate, &actual).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&expected),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+
+    assert!(matches!(
+        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "x86_64"),
+        Err(WindowsPersonalityError::ArtifactMismatch(_))
+    ));
+}
+
+#[test]
+fn w1_rejects_non_x64_prime_host_before_launch() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+
+    assert!(matches!(
+        prepare_windows_launch(state.path(), providers.path(), application_id, &candidate, "aarch64"),
+        Err(WindowsPersonalityError::UnsupportedHostArchitecture(_))
+    ));
+}
