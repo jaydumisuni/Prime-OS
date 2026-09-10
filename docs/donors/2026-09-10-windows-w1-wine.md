@@ -24,7 +24,7 @@ No Application Profile, Shell request, capability consumer, or normal user actio
 
 ## Why this donor is sufficient for W1
 
-Fedora 44 publishes `wine-core-11.0-3.fc44` for x86_64. The package provides `/usr/bin/wine`, `/usr/bin/wine64`, `wine-wow64`, PE runtime modules and Wayland client dependencies. That fits the W1 requirement to attempt portable/simple PE32 x86 and PE32+ x86_64 workloads on an x86_64 Prime Host.
+Fedora 44 publishes `wine-core-11.0-3.fc44` for x86_64. The Prime image installs it with `install_weak_deps=False`: the core package remains large because it carries the compatibility runtime, but Prime does not pull optional Fedora desktop/portal/media weak dependencies merely to satisfy W1. The image also disables the external `fedora-cisco-openh264` repository for this transaction; Fedora resolves the dependency with its main-repository `noopenh264` package, removing that external mirror from Prime build availability. The package provides `/usr/bin/wine`, `/usr/bin/wine64`, `wine-wow64`, PE runtime modules and Wayland client dependencies. That fits the W1 requirement to attempt portable/simple PE32 x86 and PE32+ x86_64 workloads on an x86_64 Prime Host.
 
 W1 does **not** infer support for installers, .NET, DirectX acceleration, COM completeness, Windows services, USB/device passthrough or VM fallback. Those remain W2-W8 obligations.
 

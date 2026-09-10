@@ -105,7 +105,7 @@ RUN set -eux; \
     test -n "${PRIME_BASE_DIGEST}"; \
     grep -q '^ID=fedora$' /usr/lib/os-release; \
     grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
-    dnf -y --setopt=install_weak_deps=False install \
+    dnf -y --setopt=install_weak_deps=False --disablerepo=fedora-cisco-openh264 install \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
