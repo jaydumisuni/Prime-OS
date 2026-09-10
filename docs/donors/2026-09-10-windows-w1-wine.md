@@ -1,7 +1,7 @@
 # Windows Personality W1 donor decision — Wine
 
-**Date:** 2026-09-10  
-**Prime scope:** P4A / W1 portable-simple Win32  
+**Date:** 2026-09-10
+**Prime scope:** P4A / W1 portable-simple Win32
 **Decision:** use the complete pinned Fedora 44 W1 runtime closure — `wine-core-11.0-3.fc44`, `wine-common-11.0-3.fc44`, and `wine-mono-10.4.1-2.fc44` — as the first implementation donor behind a Prime-owned provider adapter.
 
 ## Authority boundary
