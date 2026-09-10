@@ -1,5 +1,5 @@
 use prime_contracts::{ArtifactFormat, RuntimeFamily};
-use primed::exec;
+use primed::{exec, windows_state};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -17,7 +17,6 @@ const DONOR_WINESERVER: &str = "/usr/sbin/wineserver";
 const DONOR_FINGERPRINT: &str =
     "wine-core-11.0-3.fc44+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44";
 const PRIME_INIT_MARKER: &str = ".prime-w1-initialized";
-const PRIME_INIT_LOCK: &str = ".prime-w1-init.lock";
 const COMPOSITOR_READINESS: &str = "/run/prime-compositor/readiness.json";
 const COMPOSITOR_RUNTIME: &str = "/run/prime-compositor";
 const COMPOSITOR_READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
@@ -208,30 +207,14 @@ fn prepare_runtime_state(request: &ProviderRequest) -> Result<(), AdapterError> 
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), AdapterError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-                return Err(AdapterError::RuntimePath(
-                    "state path is not a regular non-symlink directory",
-                ));
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => match fs::create_dir(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(path)?;
-                if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-                    return Err(AdapterError::RuntimePath(
-                        "state path raced to a non-directory or symlink",
-                    ));
-                }
-            }
-            Err(error) => return Err(error.into()),
-        },
-        Err(error) => return Err(error.into()),
+    windows_state::ensure_private_directory(path).map_err(map_state_error)
+}
+
+fn map_state_error(error: windows_state::WindowsStateError) -> AdapterError {
+    match error {
+        windows_state::WindowsStateError::Io(error) => AdapterError::Io(error),
+        windows_state::WindowsStateError::UnsafePath(message) => AdapterError::RuntimePath(message),
     }
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    Ok(())
 }
 
 fn validate_donor() -> Result<(), AdapterError> {
@@ -261,14 +244,11 @@ fn validate_donor_binary(binary: &str) -> Result<(), AdapterError> {
 }
 
 fn application_state_root(request: &ProviderRequest) -> PathBuf {
-    PathBuf::from(format!(
-        "/var/lib/prime-win-app-{}",
-        request.application_id.to_string().replace('-', "")
-    ))
+    windows_state::application_state_root(request.application_id)
 }
 
 fn application_prefix(request: &ProviderRequest) -> PathBuf {
-    application_state_root(request).join("wine-prefix")
+    windows_state::application_prefix(request.application_id)
 }
 
 fn donor_environment(
@@ -323,24 +303,7 @@ fn prefix_initialization_commands(
 }
 
 fn acquire_initialization_lock(state_root: &Path) -> Result<fs::File, AdapterError> {
-    let path = state_root.join(PRIME_INIT_LOCK);
-    if let Ok(metadata) = fs::symlink_metadata(&path) {
-        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-            return Err(AdapterError::RuntimePath(
-                "initialization lock path is not a regular non-symlink file",
-            ));
-        }
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(&path)?;
-    file.lock()?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    Ok(file)
+    windows_state::acquire_compatibility_lock(state_root).map_err(map_state_error)
 }
 
 fn initialize_prefix(
@@ -569,7 +532,11 @@ mod tests {
         let second = OpenOptions::new()
             .read(true)
             .write(true)
-            .open(dir.path().join(PRIME_INIT_LOCK))
+            .open(
+                dir.path()
+                    .join("locks")
+                    .join(windows_state::COMPATIBILITY_LOCK_NAME),
+            )
             .expect("second handle");
         assert!(second.try_lock().is_err());
         drop(first);

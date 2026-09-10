@@ -13,6 +13,7 @@ pub mod storage;
 pub mod system_status;
 pub mod windows_components;
 pub mod windows_personality;
+pub mod windows_state;
 
 use prime_contracts::{
     CapabilityAccepts, CapabilityAvailability, CapabilityDescriptor, CapabilityHealth,
