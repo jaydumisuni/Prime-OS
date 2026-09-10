@@ -4,6 +4,7 @@ pub mod generation;
 pub mod policy;
 pub mod storage;
 pub mod system;
+pub mod windows_component;
 
 pub use application::*;
 pub use exec::*;
@@ -11,6 +12,7 @@ pub use generation::*;
 pub use policy::*;
 pub use storage::*;
 pub use system::*;
+pub use windows_component::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
