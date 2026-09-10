@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prime.windows-w2-installer-proof.schema.json",
+  "title": "Prime Windows W2 installer lifecycle proof",
+  "type": "object",
+  "required": [
+    "schema",
+    "artifact",
+    "artifact_sha256",
+    "first_result",
+    "second_result",
+    "verification_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "prime.windows-w2-installer-proof.v1"
+    },
+    "artifact": {
+      "type": "string"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "first_result": {
+      "enum": [
+        "INSTALLED",
+        "ALREADY_SATISFIED"
+      ]
+    },
+    "second_result": {
+      "enum": [
+        "INSTALLED",
+        "ALREADY_SATISFIED"
+      ]
+    },
+    "verification_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "marker_present": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

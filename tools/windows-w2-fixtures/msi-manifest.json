@@ -1,0 +1,28 @@
+{
+  "schema": "prime.windows-component.v1",
+  "component_id": "proof.msi.installer",
+  "revision": 1,
+  "digest": "sha256:7697ac05949691d15b98f78c63ff9f9835df6c20537e427373e84c192a5d5a15",
+  "display_name": "Prime W2 MSI Proof",
+  "kind": "APPLICATION_INSTALLER",
+  "workload_arches": [
+    "x86_64"
+  ],
+  "depends_on": [],
+  "installer_kind": "MSI",
+  "artifact_identity": "sha256:c8d1e2c3e272a8e917d307bd30edaa6d07358cc386fb3f3c8d7c9052c53118df",
+  "artifact_path": "/proof/w2-msi-installer.msi",
+  "installer_args": [],
+  "accepted_exit_codes": [
+    0
+  ],
+  "restart_compatibility_environment": false,
+  "verification": [
+    {
+      "kind": "FILE_SHA256",
+      "path": "drive_c/PrimeW2/msi-installed.txt",
+      "sha256": "sha256:5ed9e7fc7f39dd6d9173d2e32c7fd5a3f54a35661344a64ba8c09c223b47df9d"
+    }
+  ],
+  "limitations": []
+}

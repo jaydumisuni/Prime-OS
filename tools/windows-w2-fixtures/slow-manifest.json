@@ -1,0 +1,32 @@
+{
+  "schema": "prime.windows-component.v1",
+  "component_id": "proof.exe.slow",
+  "revision": 1,
+  "digest": "sha256:37f732e05bd50d952eb6260454fcea4aafa8b4cb0cf9ecca57364a738d9d9bcb",
+  "display_name": "Prime W2 Slow EXE Proof",
+  "kind": "APPLICATION_INSTALLER",
+  "workload_arches": [
+    "x86_64"
+  ],
+  "depends_on": [],
+  "installer_kind": "EXE",
+  "artifact_identity": "sha256:a06746ebab03af5676fe9d351e99d34c2e31666c8eba4f40660cf59a19b3d183",
+  "artifact_path": "/proof/w2-slow-installer.exe",
+  "installer_args": [],
+  "accepted_exit_codes": [
+    0
+  ],
+  "restart_compatibility_environment": false,
+  "verification": [
+    {
+      "kind": "FILE_SHA256",
+      "path": "drive_c/PrimeW2/slow-installed.txt",
+      "sha256": "sha256:0416c1840ec8c7c1d17639d6db8a7cba8fb3510d83361370af80625c8d31246f"
+    },
+    {
+      "kind": "FILE_EXISTS",
+      "path": "drive_c/PrimeW2/mutation-window.txt"
+    }
+  ],
+  "limitations": []
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "prime.windows-component.v1",
+  "component_id": "proof.exe.installer",
+  "revision": 1,
+  "digest": "sha256:7c9259304a3e0ea53d31f925081f948308c24c80342f64fba6d9c39b255261b5",
+  "display_name": "Prime W2 EXE Proof",
+  "kind": "APPLICATION_INSTALLER",
+  "workload_arches": [
+    "x86_64"
+  ],
+  "depends_on": [],
+  "installer_kind": "EXE",
+  "artifact_identity": "sha256:5591777f3543d0d3f6e9c70e38f5c7030b076a5f923a3f15cd5ebbb3e7b5291c",
+  "artifact_path": "/proof/w2-exe-installer.exe",
+  "installer_args": [],
+  "accepted_exit_codes": [
+    0
+  ],
+  "restart_compatibility_environment": false,
+  "verification": [
+    {
+      "kind": "FILE_SHA256",
+      "path": "drive_c/PrimeW2/exe-installed.txt",
+      "sha256": "sha256:cb0b32c5a0f61ad5d162b01939d3c71855c7f275fb36fb9ba2e3d7c6b1ec113d"
+    }
+  ],
+  "limitations": []
+}

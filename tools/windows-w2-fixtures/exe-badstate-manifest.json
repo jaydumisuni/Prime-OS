@@ -1,0 +1,28 @@
+{
+  "schema": "prime.windows-component.v1",
+  "component_id": "proof.exe.badstate",
+  "revision": 1,
+  "digest": "sha256:aa09bbfaf18efed013b037a41ad9fcfb74e18f73741a9b7a6f4bfe9647574d83",
+  "display_name": "Prime W2 EXE Bad-State Negative",
+  "kind": "APPLICATION_INSTALLER",
+  "workload_arches": [
+    "x86_64"
+  ],
+  "depends_on": [],
+  "installer_kind": "EXE",
+  "artifact_identity": "sha256:5591777f3543d0d3f6e9c70e38f5c7030b076a5f923a3f15cd5ebbb3e7b5291c",
+  "artifact_path": "/proof/w2-exe-installer.exe",
+  "installer_args": [],
+  "accepted_exit_codes": [
+    0
+  ],
+  "restart_compatibility_environment": false,
+  "verification": [
+    {
+      "kind": "FILE_SHA256",
+      "path": "drive_c/PrimeW2/exe-installed.txt",
+      "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "limitations": []
+}

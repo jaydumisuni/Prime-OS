@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="{A1111111-1111-4111-8111-111111111111}" Name="Prime W2 MSI Fixture" Language="1033" Version="1.0.0" Manufacturer="THETECHGUY DIGITAL SOLUTIONS" UpgradeCode="{B2222222-2222-4222-8222-222222222222}">
+    <Package Id="{C3333333-3333-4333-8333-333333333333}" InstallerVersion="200" Compressed="yes" InstallScope="perUser"/>
+    <Media Id="1" Cabinet="fixture.cab" EmbedCab="yes"/>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="WindowsVolume">
+        <Directory Id="PrimeW2Dir" Name="PrimeW2">
+          <Component Id="MsiProofComponent" Guid="{D4444444-4444-4444-8444-444444444444}">
+            <File Id="MsiProofFile" Name="msi-installed.txt" Source="msi-installed.txt" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="Complete" Title="Prime W2 MSI Fixture" Level="1">
+      <ComponentRef Id="MsiProofComponent"/>
+    </Feature>
+  </Product>
+</Wix>
