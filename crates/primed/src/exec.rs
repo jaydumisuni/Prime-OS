@@ -4,7 +4,7 @@ use prime_contracts::{
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use thiserror::Error;
 
@@ -111,6 +111,217 @@ pub fn inspect(path: &Path, host_arch: &str) -> Result<ExecInspection, ExecError
         native_compatible: classification.native_compatible,
         limitations: classification.limitations,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedPeInspection {
+    pub cli_header_rva: u32,
+    pub metadata_rva: u32,
+    pub metadata_size: u32,
+    pub flags: u32,
+    pub entry_point_token: u32,
+}
+
+#[derive(Debug, Error)]
+pub enum ManagedPeError {
+    #[error("managed PE inspection I/O failed: {0}")]
+    Io(#[from] io::Error),
+    #[error("managed PE artifact path is a symbolic link")]
+    Symlink,
+    #[error("managed PE artifact is not a regular file")]
+    NotRegularFile,
+    #[error("managed PE artifact changed while it was being inspected")]
+    ChangedDuringInspection,
+    #[error("malformed managed PE: {0}")]
+    Malformed(&'static str),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PeSection {
+    virtual_size: u32,
+    virtual_address: u32,
+    raw_size: u32,
+    raw_offset: u32,
+}
+
+pub fn inspect_managed_pe(path: &Path) -> Result<Option<ManagedPeInspection>, ManagedPeError> {
+    let before_path = fs::symlink_metadata(path)?;
+    if before_path.file_type().is_symlink() {
+        return Err(ManagedPeError::Symlink);
+    }
+    if !before_path.file_type().is_file() {
+        return Err(ManagedPeError::NotRegularFile);
+    }
+    let stamp = FileStamp::from(&before_path);
+    let file = File::open(path)?;
+    let opened = file.metadata()?;
+    if FileStamp::from(&opened) != stamp {
+        return Err(ManagedPeError::ChangedDuringInspection);
+    }
+
+    let mut dos = [0_u8; 64];
+    read_exact_checked(&file, stamp.length, 0, &mut dos)?;
+    if &dos[0..2] != b"MZ" {
+        return Ok(None);
+    }
+    let pe_offset = u32::from_le_bytes(dos[0x3c..0x40].try_into().unwrap()) as u64;
+    let mut coff = [0_u8; 24];
+    read_exact_checked(&file, stamp.length, pe_offset, &mut coff)?;
+    if &coff[0..4] != b"PE\0\0" {
+        return Err(ManagedPeError::Malformed("PE signature is invalid"));
+    }
+    let section_count = u16::from_le_bytes([coff[6], coff[7]]) as usize;
+    if section_count == 0 || section_count > 96 {
+        return Err(ManagedPeError::Malformed(
+            "PE section count is out of bounds",
+        ));
+    }
+    let optional_size = u16::from_le_bytes([coff[20], coff[21]]) as usize;
+    if optional_size < 2 || optional_size > 4096 {
+        return Err(ManagedPeError::Malformed(
+            "PE optional header size is out of bounds",
+        ));
+    }
+    let optional_offset = pe_offset.checked_add(24).ok_or(ManagedPeError::Malformed(
+        "PE optional header offset overflow",
+    ))?;
+    let mut optional = vec![0_u8; optional_size];
+    read_exact_checked(&file, stamp.length, optional_offset, &mut optional)?;
+    let magic = u16::from_le_bytes([optional[0], optional[1]]);
+    let directory_base = match magic {
+        0x10b => 96usize,
+        0x20b => 112usize,
+        _ => {
+            return Err(ManagedPeError::Malformed(
+                "PE optional header magic is unsupported",
+            ))
+        }
+    };
+    let cli_dir = directory_base + 14 * 8;
+    if cli_dir + 8 > optional.len() {
+        return Err(ManagedPeError::Malformed(
+            "PE optional header omits CLR data directory",
+        ));
+    }
+    let cli_rva = u32::from_le_bytes(optional[cli_dir..cli_dir + 4].try_into().unwrap());
+    let cli_size = u32::from_le_bytes(optional[cli_dir + 4..cli_dir + 8].try_into().unwrap());
+    if cli_rva == 0 && cli_size == 0 {
+        verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    if cli_rva == 0 || cli_size < 0x48 {
+        return Err(ManagedPeError::Malformed(
+            "CLR data directory is incomplete",
+        ));
+    }
+
+    let section_table_offset =
+        optional_offset
+            .checked_add(optional_size as u64)
+            .ok_or(ManagedPeError::Malformed(
+                "PE section table offset overflow",
+            ))?;
+    let mut section_bytes = vec![0_u8; section_count * 40];
+    read_exact_checked(
+        &file,
+        stamp.length,
+        section_table_offset,
+        &mut section_bytes,
+    )?;
+    let mut sections = Vec::with_capacity(section_count);
+    for section in section_bytes.chunks_exact(40) {
+        sections.push(PeSection {
+            virtual_size: u32::from_le_bytes(section[8..12].try_into().unwrap()),
+            virtual_address: u32::from_le_bytes(section[12..16].try_into().unwrap()),
+            raw_size: u32::from_le_bytes(section[16..20].try_into().unwrap()),
+            raw_offset: u32::from_le_bytes(section[20..24].try_into().unwrap()),
+        });
+    }
+
+    let cli_offset = map_pe_rva(cli_rva, 24, &sections).ok_or(ManagedPeError::Malformed(
+        "CLR header RVA is not mapped by a PE section",
+    ))?;
+    let mut cli = [0_u8; 24];
+    read_exact_checked(&file, stamp.length, cli_offset, &mut cli)?;
+    let cli_cb = u32::from_le_bytes(cli[0..4].try_into().unwrap());
+    if cli_cb < 0x48 || cli_cb > cli_size {
+        return Err(ManagedPeError::Malformed("CLR header size is invalid"));
+    }
+    let metadata_rva = u32::from_le_bytes(cli[8..12].try_into().unwrap());
+    let metadata_size = u32::from_le_bytes(cli[12..16].try_into().unwrap());
+    if metadata_rva == 0 || metadata_size < 4 {
+        return Err(ManagedPeError::Malformed(
+            "CLR metadata directory is incomplete",
+        ));
+    }
+    let metadata_offset = map_pe_rva(metadata_rva, 4, &sections).ok_or(
+        ManagedPeError::Malformed("CLR metadata RVA is not mapped by a PE section"),
+    )?;
+    let mut signature = [0_u8; 4];
+    read_exact_checked(&file, stamp.length, metadata_offset, &mut signature)?;
+    if &signature != b"BSJB" {
+        return Err(ManagedPeError::Malformed(
+            "CLR metadata signature is not BSJB",
+        ));
+    }
+    let result = ManagedPeInspection {
+        cli_header_rva: cli_rva,
+        metadata_rva,
+        metadata_size,
+        flags: u32::from_le_bytes(cli[16..20].try_into().unwrap()),
+        entry_point_token: u32::from_le_bytes(cli[20..24].try_into().unwrap()),
+    };
+    verify_unchanged(path, &file, &stamp)?;
+    Ok(Some(result))
+}
+
+fn read_exact_checked(
+    file: &File,
+    file_len: u64,
+    offset: u64,
+    buffer: &mut [u8],
+) -> Result<(), ManagedPeError> {
+    let end = offset
+        .checked_add(buffer.len() as u64)
+        .ok_or(ManagedPeError::Malformed("managed PE read offset overflow"))?;
+    if end > file_len {
+        return Err(ManagedPeError::Malformed(
+            "managed PE structure extends beyond file",
+        ));
+    }
+    file.read_exact_at(buffer, offset)?;
+    Ok(())
+}
+
+fn map_pe_rva(rva: u32, required: u32, sections: &[PeSection]) -> Option<u64> {
+    for section in sections {
+        let span = section.virtual_size.max(section.raw_size);
+        let Some(relative) = rva.checked_sub(section.virtual_address) else {
+            continue;
+        };
+        if relative >= span {
+            continue;
+        }
+        let raw_end = relative.checked_add(required)?;
+        if raw_end > section.raw_size {
+            continue;
+        }
+        return Some(section.raw_offset.checked_add(relative)? as u64);
+    }
+    None
+}
+
+fn verify_unchanged(path: &Path, file: &File, stamp: &FileStamp) -> Result<(), ManagedPeError> {
+    let after_open = file.metadata()?;
+    let after_path = fs::symlink_metadata(path)?;
+    if after_path.file_type().is_symlink()
+        || !after_path.file_type().is_file()
+        || FileStamp::from(&after_open) != *stamp
+        || FileStamp::from(&after_path) != *stamp
+    {
+        return Err(ManagedPeError::ChangedDuringInspection);
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -422,6 +633,93 @@ mod tests {
         assert_eq!(result.format, ArtifactFormat::Wasm);
         assert_eq!(result.runtime_family, RuntimeFamily::Wasm);
         assert_eq!(result.suggested_backend, None);
+    }
+
+    fn managed_pe64() -> Vec<u8> {
+        let mut bytes = vec![0_u8; 0x600];
+        bytes[0..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        let pe = 0x80usize;
+        bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
+        bytes[pe + 4..pe + 6].copy_from_slice(&0x8664_u16.to_le_bytes());
+        bytes[pe + 6..pe + 8].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[pe + 20..pe + 22].copy_from_slice(&0x00f0_u16.to_le_bytes());
+        let opt = pe + 24;
+        bytes[opt..opt + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        bytes[opt + 108..opt + 112].copy_from_slice(&16_u32.to_le_bytes());
+        let cli_dir = opt + 112 + 14 * 8;
+        bytes[cli_dir..cli_dir + 4].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[cli_dir + 4..cli_dir + 8].copy_from_slice(&0x48_u32.to_le_bytes());
+        let section = opt + 0xf0;
+        bytes[section..section + 5].copy_from_slice(b".text");
+        bytes[section + 8..section + 12].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 12..section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[section + 16..section + 20].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+        let cli = 0x200usize;
+        bytes[cli..cli + 4].copy_from_slice(&0x48_u32.to_le_bytes());
+        bytes[cli + 4..cli + 6].copy_from_slice(&2_u16.to_le_bytes());
+        bytes[cli + 6..cli + 8].copy_from_slice(&5_u16.to_le_bytes());
+        bytes[cli + 8..cli + 12].copy_from_slice(&0x2100_u32.to_le_bytes());
+        bytes[cli + 12..cli + 16].copy_from_slice(&0x40_u32.to_le_bytes());
+        bytes[cli + 16..cli + 20].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[cli + 20..cli + 24].copy_from_slice(&0x0600_0001_u32.to_le_bytes());
+        bytes[0x300..0x304].copy_from_slice(b"BSJB");
+        bytes
+    }
+
+    #[test]
+    fn clr_inspection_distinguishes_native_and_managed_pe() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let managed = dir.path().join("managed.exe");
+        fs::write(&managed, managed_pe64()).expect("managed fixture");
+        let info = inspect_managed_pe(&managed)
+            .expect("inspect managed PE")
+            .expect("CLR metadata");
+        assert_eq!(info.cli_header_rva, 0x2000);
+        assert_eq!(info.metadata_rva, 0x2100);
+        assert_eq!(info.metadata_size, 0x40);
+        assert_eq!(info.flags, 1);
+        assert_eq!(info.entry_point_token, 0x0600_0001);
+
+        let native = dir.path().join("native.exe");
+        let mut native_bytes = managed_pe64();
+        let opt = 0x80 + 24;
+        let cli_dir = opt + 112 + 14 * 8;
+        native_bytes[cli_dir..cli_dir + 8].fill(0);
+        fs::write(&native, native_bytes).expect("native fixture");
+        assert_eq!(
+            inspect_managed_pe(&native).expect("inspect native PE"),
+            None
+        );
+    }
+
+    #[test]
+    fn clr_inspection_rejects_unmapped_cli_rva_and_bad_metadata_signature() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bad_rva = dir.path().join("bad-rva.exe");
+        let mut bad_rva_bytes = managed_pe64();
+        let opt = 0x80 + 24;
+        let cli_dir = opt + 112 + 14 * 8;
+        bad_rva_bytes[cli_dir..cli_dir + 4].copy_from_slice(&0x9000_u32.to_le_bytes());
+        fs::write(&bad_rva, bad_rva_bytes).expect("bad RVA fixture");
+        assert!(matches!(
+            inspect_managed_pe(&bad_rva),
+            Err(ManagedPeError::Malformed(
+                "CLR header RVA is not mapped by a PE section"
+            ))
+        ));
+
+        let bad_meta = dir.path().join("bad-meta.exe");
+        let mut bad_meta_bytes = managed_pe64();
+        bad_meta_bytes[0x300..0x304].copy_from_slice(b"NOPE");
+        fs::write(&bad_meta, bad_meta_bytes).expect("bad metadata fixture");
+        assert!(matches!(
+            inspect_managed_pe(&bad_meta),
+            Err(ManagedPeError::Malformed(
+                "CLR metadata signature is not BSJB"
+            ))
+        ));
     }
 
     #[test]
