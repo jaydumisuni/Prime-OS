@@ -1,0 +1,35 @@
+{
+  "schema": "prime.windows-component.v1",
+  "component_id": "runtime.wine-mono",
+  "revision": 1,
+  "digest": "sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689",
+  "display_name": "Wine Mono 10.4.1",
+  "kind": "RUNTIME",
+  "workload_arches": [
+    "x86_64"
+  ],
+  "depends_on": [],
+  "installer_kind": "BUILTIN",
+  "artifact_identity": null,
+  "artifact_path": null,
+  "installer_args": [],
+  "accepted_exit_codes": [],
+  "restart_compatibility_environment": false,
+  "verification": [
+    {
+      "kind": "FILE_SHA256",
+      "path": "drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll",
+      "sha256": "sha256:57dad5c007d52244b7681eacbbf83f9cf03824e83b86884e84f3461bf40cccdf"
+    },
+    {
+      "kind": "REGISTRY_VALUE_EQUALS",
+      "hive": "HKLM",
+      "key": "Software\\Microsoft\\.NETFramework",
+      "name": "InstallRoot",
+      "value": "C:\\windows\\Microsoft.NET\\Framework64\\"
+    }
+  ],
+  "limitations": [
+    "W2 verifies Wine Mono runtime presence only; managed application execution is W3."
+  ]
+}

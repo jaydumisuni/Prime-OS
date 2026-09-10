@@ -95,6 +95,7 @@ cargo build --locked --release -p primed
 [[ -x target/release/primed ]] || fail "primed release binary missing"
 [[ -x target/release/prime-recovery ]] || fail "prime-recovery release binary missing"
 [[ -x target/release/prime-windows-provider-w1 ]] || fail "prime-windows-provider-w1 release binary missing"
+[[ -x target/release/prime-windows-component-engine ]] || fail "prime-windows-component-engine release binary missing"
 
 log "Verify locked Fedora bootc filesystem"
 "${PODMAN[@]}" pull "$BASE_IMAGE"

@@ -172,16 +172,23 @@ RUN set -eux; \
     chmod 0444 /usr/lib/prime/substrate-release.json; \
     python3 -c 'import json; d=json.load(open("/usr/lib/prime/substrate-release.json", "r", encoding="utf-8")); assert d["schema"]=="prime.substrate-release.v1"; assert d["id"]=="fedora"; assert d["version_id"]=="44"'
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime/windows-providers /usr/lib/bootc/install /usr/lib/sysusers.d /usr/lib/tmpfiles.d
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime/windows-providers /usr/lib/prime/windows-components /usr/lib/bootc/install /usr/lib/sysusers.d /usr/lib/tmpfiles.d
 COPY target/release/primed /usr/libexec/prime/primed
 COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
 COPY target/release/prime-windows-provider-w1 /usr/libexec/prime/prime-windows-provider-w1
+COPY target/release/prime-windows-component-engine /usr/libexec/prime/prime-windows-component-engine
 COPY image/windows-providers/wine-v1.json /usr/lib/prime/windows-providers/w1-default.json
+COPY image/windows-components /usr/lib/prime/windows-components
 RUN set -eux; \
-    chmod 0555 /usr/libexec/prime/prime-windows-provider-w1; \
+    chmod 0555 /usr/libexec/prime/prime-windows-provider-w1 /usr/libexec/prime/prime-windows-component-engine; \
     chmod 0444 /usr/lib/prime/windows-providers/w1-default.json; \
+    find /usr/lib/prime/windows-components -type d -exec chmod 0555 {} +; \
+    find /usr/lib/prime/windows-components -type f -exec chmod 0444 {} +; \
     test -x /usr/libexec/prime/prime-windows-provider-w1; \
-    python3 -c 'import json; p=json.load(open("/usr/lib/prime/windows-providers/w1-default.json", "r", encoding="utf-8")); assert p["schema"]=="prime.windows-provider-manifest.v1"; assert p["provider_id"]=="prime.windows.w1.default"; assert p["provider_revision"]==1; assert p["adapter_path"]=="/usr/libexec/prime/prime-windows-provider-w1"; assert p["formats"]==["PE32","PE32+"]; assert p["workload_arches"]==["x86","x86_64"]'
+    test -x /usr/libexec/prime/prime-windows-component-engine; \
+    test -f /usr/lib/prime/windows-components/runtime.wine-mono/revisions/00000000000000000001.json; \
+    python3 -c 'import json; p=json.load(open("/usr/lib/prime/windows-providers/w1-default.json", "r", encoding="utf-8")); assert p["schema"]=="prime.windows-provider-manifest.v1"; assert p["provider_id"]=="prime.windows.w1.default"; assert p["provider_revision"]==1; assert p["adapter_path"]=="/usr/libexec/prime/prime-windows-provider-w1"; assert p["formats"]==["PE32","PE32+"]; assert p["workload_arches"]==["x86","x86_64"]'; \
+    python3 -c 'import json; p=json.load(open("/usr/lib/prime/windows-components/runtime.wine-mono/revisions/00000000000000000001.json", "r", encoding="utf-8")); assert p["schema"]=="prime.windows-component.v1"; assert p["component_id"]=="runtime.wine-mono"; assert p["revision"]==1; assert p["digest"]=="sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689"; assert p["installer_kind"]=="BUILTIN"'
 COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
 COPY --from=compositor-builder /source/target/release/prime-shell /usr/libexec/prime/prime-shell
 COPY image/scripts/prime-shell-session /usr/libexec/prime/prime-shell-session

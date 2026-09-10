@@ -869,3 +869,46 @@ fn provider_support_reports_validated_union_without_overclaiming() {
         vec!["x86".to_owned(), "x86_64".to_owned()]
     );
 }
+
+#[test]
+fn shipped_wine_mono_dependency_resolves_from_real_application_profile() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let component_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../image/windows-components");
+    let mono =
+        primed::windows_components::load_component_revision(&component_dir, "runtime.wine-mono", 1)
+            .expect("load shipped Wine Mono component");
+    add_profile_dependencies(
+        state.path(),
+        application_id,
+        vec![component_reference(&mono)],
+    );
+
+    let prepared = prepare_windows_launch(
+        state.path(),
+        providers.path(),
+        application_id,
+        &candidate,
+        "x86_64",
+    )
+    .expect("prepare dependency-bearing Windows launch");
+    let dependencies = prepare_windows_dependencies(&component_dir, &prepared)
+        .expect("resolve shipped Wine Mono dependency from profile");
+    assert_eq!(dependencies.components.len(), 1);
+    assert_eq!(dependencies.components[0].manifest, mono);
+}

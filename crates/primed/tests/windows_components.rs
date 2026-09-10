@@ -152,3 +152,24 @@ fn resolver_rejects_duplicate_roots_and_wrong_architecture() {
         Err(WindowsComponentRegistryError::ArchitectureUnsupported { .. })
     ));
 }
+
+#[test]
+fn shipped_wine_mono_component_resolves_from_trusted_registry() {
+    let component_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../image/windows-components");
+    let manifest =
+        primed::windows_components::load_component_revision(&component_dir, "runtime.wine-mono", 1)
+            .expect("load shipped Wine Mono component");
+    assert_eq!(
+        manifest.digest,
+        "sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689"
+    );
+    assert_eq!(manifest.installer_kind, WindowsInstallerKind::Builtin);
+    assert!(manifest
+        .limitations
+        .iter()
+        .any(|item| item.contains("managed application execution is W3")));
+    let plan = resolve_component_plan(&component_dir, &[reference(&manifest)], "x86_64")
+        .expect("resolve shipped Wine Mono component");
+    assert_eq!(plan.ordered, vec![manifest]);
+}
