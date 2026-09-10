@@ -1,5 +1,8 @@
 use prime_contracts::{ArtifactFormat, WindowsProviderManifest, WINDOWS_PROVIDER_MANIFEST_SCHEMA};
-use primed::windows_personality::{load_provider, WindowsPersonalityError};
+use primed::windows_personality::{
+    launch_windows_with_components, load_provider, prepare_windows_dependencies,
+    windows_component_systemd_run_args, WindowsLaunchRuntime, WindowsPersonalityError,
+};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -162,6 +165,7 @@ use primed::registry::{
     seal_policy, seal_profile, select_policy_revision, select_profile_revision,
     store_policy_revision, store_profile_revision,
 };
+use primed::windows_components::{seal_component, store_component_revision};
 use primed::windows_personality::prepare_windows_launch;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -288,6 +292,195 @@ fn fixture_provider(dir: &Path, arches: &[&str]) {
         &adapter,
         arches,
     );
+}
+
+fn fixture_component(
+    root: &Path,
+    id: &str,
+    arch: &str,
+) -> prime_contracts::WindowsComponentManifest {
+    use prime_contracts::{
+        WindowsComponentKind, WindowsComponentManifest, WindowsInstallerKind,
+        WindowsVerificationProbe, WINDOWS_COMPONENT_SCHEMA,
+    };
+    let sealed = seal_component(WindowsComponentManifest {
+        schema: WINDOWS_COMPONENT_SCHEMA.to_owned(),
+        component_id: id.to_owned(),
+        revision: 1,
+        digest: String::new(),
+        display_name: id.to_owned(),
+        kind: WindowsComponentKind::Runtime,
+        workload_arches: vec![arch.to_owned()],
+        depends_on: vec![],
+        installer_kind: WindowsInstallerKind::Builtin,
+        artifact_identity: None,
+        artifact_path: None,
+        installer_args: vec![],
+        accepted_exit_codes: vec![],
+        restart_compatibility_environment: false,
+        verification: vec![WindowsVerificationProbe::FileExists {
+            path: format!("drive_c/PrimeW2/{id}.txt"),
+        }],
+        limitations: vec![],
+    })
+    .expect("seal component");
+    store_component_revision(root, &sealed).expect("store component");
+    sealed
+}
+
+fn add_profile_dependencies(root: &Path, application_id: Uuid, dependencies: Vec<String>) {
+    let mut profile =
+        primed::registry::load_profile_revision(root, application_id, 1).expect("load profile");
+    profile.profile_revision = 2;
+    profile.profile_digest.clear();
+    profile.dependencies = dependencies;
+    let profile = seal_profile(profile).expect("reseal profile");
+    store_profile_revision(root, &profile).expect("store dependent profile");
+    select_profile_revision(root, application_id, 2).expect("select dependent profile");
+}
+
+fn component_reference(component: &prime_contracts::WindowsComponentManifest) -> String {
+    format!(
+        "windows-component:{}@{}#{}",
+        component.component_id, component.revision, component.digest
+    )
+}
+
+#[test]
+fn dependency_bearing_windows_profile_prepares_exact_component_engine_transaction() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    let components = tempfile::tempdir().expect("components");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let component = fixture_component(components.path(), "runtime.fixture", "x86_64");
+    add_profile_dependencies(
+        state.path(),
+        application_id,
+        vec![component_reference(&component)],
+    );
+
+    let prepared = prepare_windows_launch(
+        state.path(),
+        providers.path(),
+        application_id,
+        &candidate,
+        "x86_64",
+    )
+    .expect("dependency-bearing profile remains a valid Windows launch");
+    let dependencies = prepare_windows_dependencies(components.path(), &prepared)
+        .expect("resolve W2 dependency plan");
+    assert_eq!(dependencies.components.len(), 1);
+    assert_eq!(dependencies.components[0].manifest, component);
+
+    let engine = Path::new("/usr/libexec/prime/prime-windows-component-engine");
+    let args = windows_component_systemd_run_args(engine, &prepared, &dependencies.components[0]);
+    assert!(args.iter().any(|arg| arg == "--pipe"));
+    assert!(args.iter().any(|arg| arg == engine.to_str().unwrap()));
+    assert!(args.windows(2).any(|pair| {
+        pair[0] == "--manifest"
+            && pair[1]
+                == dependencies.components[0]
+                    .manifest_path
+                    .display()
+                    .to_string()
+    }));
+    assert!(args
+        .windows(2)
+        .any(|pair| { pair[0] == "--application-id" && pair[1] == application_id.to_string() }));
+    assert!(args
+        .iter()
+        .any(|arg| arg.starts_with("--property=StateDirectory=prime-win-app-")));
+    assert!(!args.iter().any(|arg| arg.contains("prime-shell")));
+    assert!(!args.iter().any(|arg| arg.contains("prime-display")));
+}
+
+#[test]
+fn dependency_preparation_records_exact_outcome_before_windows_launch() {
+    use prime_contracts::{PersonalityLaunchOutcome, WindowsComponentOutcome};
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    let components = tempfile::tempdir().expect("components");
+    let tools = tempfile::tempdir().expect("tools");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("fixture.exe");
+    let bytes = pe64();
+    fs::write(&candidate, &bytes).expect("write PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let component = fixture_component(components.path(), "runtime.fixture", "x86_64");
+    add_profile_dependencies(
+        state.path(),
+        application_id,
+        vec![component_reference(&component)],
+    );
+
+    let engine = tools.path().join("prime-windows-component-engine");
+    write_adapter(&engine, 0o755);
+    let systemd = tools.path().join("systemd-run-fixture");
+    fs::write(
+        &systemd,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *{}*) printf 'INSTALLED\\n' ;;\nesac\nexit 0\n",
+            engine.display()
+        ),
+    )
+    .expect("write systemd fixture");
+    fs::set_permissions(&systemd, fs::Permissions::from_mode(0o755)).expect("chmod systemd");
+
+    let host = fixture_host();
+    let generation = fixture_generation();
+    let runtime = WindowsLaunchRuntime {
+        provider_dir: providers.path(),
+        component_dir: components.path(),
+        component_engine: &engine,
+        systemd_run: &systemd,
+    };
+    let evidence = launch_windows_with_components(
+        state.path(),
+        &runtime,
+        &host,
+        &generation,
+        application_id,
+        &candidate,
+    )
+    .expect("dependency preparation then W1 launch");
+    assert_eq!(evidence.outcome, PersonalityLaunchOutcome::ExitedSuccess);
+
+    let evidence_root = state.path().join("evidence/windows-components");
+    let transaction_dirs = fs::read_dir(&evidence_root)
+        .expect("component evidence root")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("component evidence entries");
+    assert_eq!(transaction_dirs.len(), 1);
+    let transaction = transaction_dirs[0].path();
+    assert!(transaction.join("01-admitted.json").is_file());
+    let completed: prime_contracts::WindowsComponentEvidence = serde_json::from_slice(
+        &fs::read(transaction.join("02-completed.json")).expect("completed evidence"),
+    )
+    .expect("component evidence json");
+    assert_eq!(completed.outcome, WindowsComponentOutcome::Installed);
+    assert_eq!(completed.component_id, "runtime.fixture");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::{exec, launcher, registry, windows_personality, CoreState};
+use crate::{exec, launcher, registry, windows_components, windows_personality, CoreState};
 use prime_contracts::{
     ApplicationEntry, ApplicationProfile, ApplicationsProjection, ArtifactFormat, ExecutionBackend,
     LaunchEvidence, MechanicalCompatibilityState, NativeLaunchRequest, RuntimeFamily,
@@ -106,10 +106,19 @@ pub fn launch_selected(
         .map(LaunchEvidence::Native)
         .map_err(Into::into),
         (ExecutionBackend::Personality, RuntimeFamily::Windows) => {
-            windows_personality::launch_windows(
+            let component_dir = state.system_root.join("usr/lib/prime/windows-components");
+            let component_engine = state
+                .system_root
+                .join("usr/libexec/prime/prime-windows-component-engine");
+            let runtime = windows_personality::WindowsLaunchRuntime {
+                provider_dir: &state.windows_provider_dir,
+                component_dir: &component_dir,
+                component_engine: &component_engine,
+                systemd_run: &state.systemd_run,
+            };
+            windows_personality::launch_windows_with_components(
                 &state.state_dir,
-                &state.windows_provider_dir,
-                &state.systemd_run,
+                &runtime,
                 &state.host,
                 &state.generation,
                 request.application_id,
@@ -125,8 +134,13 @@ pub fn launch_selected(
 }
 
 fn application_entry(state: &CoreState, profile: ApplicationProfile) -> ApplicationEntry {
-    let mut limitations =
-        profile_limitations(&profile, &state.host.host_arch, &state.windows_provider_dir);
+    let component_dir = state.system_root.join("usr/lib/prime/windows-components");
+    let mut limitations = profile_limitations(
+        &profile,
+        &state.host.host_arch,
+        &state.windows_provider_dir,
+        &component_dir,
+    );
     match artifact_path(&state.state_dir, &profile) {
         Ok(path) => match exec::inspect(&path, &state.host.host_arch) {
             Ok(inspection) if inspection.artifact_identity == profile.artifact.identity => {}
@@ -157,6 +171,7 @@ fn profile_limitations(
     profile: &ApplicationProfile,
     host_arch: &str,
     windows_provider_dir: &Path,
+    windows_component_dir: &Path,
 ) -> Vec<String> {
     let mut limitations = Vec::new();
     if profile.revoked {
@@ -196,6 +211,15 @@ fn profile_limitations(
                     ) {
                         limitations.push(error.to_string());
                     }
+                    if !profile.dependencies.is_empty() {
+                        if let Err(error) = windows_components::resolve_component_plan(
+                            windows_component_dir,
+                            &profile.dependencies,
+                            arch,
+                        ) {
+                            limitations.push(error.to_string());
+                        }
+                    }
                 }
                 Some(_) => limitations.push(
                     "Windows Personality W1 supports x86/x86_64 workloads only".to_owned(),
@@ -209,8 +233,15 @@ fn profile_limitations(
         ),
     }
 
-    if !profile.dependencies.is_empty() {
-        limitations.push("W1 dependency admission is not implemented".to_owned());
+    if !profile.dependencies.is_empty()
+        && !matches!(
+            (&profile.execution_backend, &profile.artifact.runtime_family),
+            (ExecutionBackend::Personality, RuntimeFamily::Windows)
+        )
+    {
+        limitations.push(
+            "Dependency preparation is implemented only for Windows Personality W2".to_owned(),
+        );
     }
     if !profile.permissions.is_empty() {
         limitations.push("W1 application permission mediation is not implemented".to_owned());
@@ -316,6 +347,101 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_profile_with_resolvable_w2_dependency_is_launch_ready() {
+        use prime_contracts::{
+            WindowsComponentKind, WindowsComponentManifest, WindowsInstallerKind,
+            WindowsProviderManifest, WindowsVerificationProbe, WINDOWS_COMPONENT_SCHEMA,
+            WINDOWS_PROVIDER_MANIFEST_SCHEMA,
+        };
+        use std::os::unix::fs::PermissionsExt;
+
+        let providers = tempfile::tempdir().expect("providers");
+        let components = tempfile::tempdir().expect("components");
+        let adapter = providers.path().join("adapter");
+        fs::write(&adapter, b"adapter").expect("write adapter");
+        fs::set_permissions(&adapter, fs::Permissions::from_mode(0o755)).expect("chmod");
+        let provider = WindowsProviderManifest {
+            schema: WINDOWS_PROVIDER_MANIFEST_SCHEMA.to_owned(),
+            provider_id: "prime.windows.compat".to_owned(),
+            provider_revision: 1,
+            adapter_path: adapter.display().to_string(),
+            formats: vec![ArtifactFormat::Pe32Plus],
+            workload_arches: vec!["x86_64".to_owned()],
+            limitations: vec![],
+        };
+        fs::write(
+            providers.path().join("provider.json"),
+            serde_json::to_vec(&provider).unwrap(),
+        )
+        .unwrap();
+        let component = crate::windows_components::seal_component(WindowsComponentManifest {
+            schema: WINDOWS_COMPONENT_SCHEMA.to_owned(),
+            component_id: "runtime.shell-fixture".to_owned(),
+            revision: 1,
+            digest: String::new(),
+            display_name: "Shell Fixture Runtime".to_owned(),
+            kind: WindowsComponentKind::Runtime,
+            workload_arches: vec!["x86_64".to_owned()],
+            depends_on: vec![],
+            installer_kind: WindowsInstallerKind::Builtin,
+            artifact_identity: None,
+            artifact_path: None,
+            installer_args: vec![],
+            accepted_exit_codes: vec![],
+            restart_compatibility_environment: false,
+            verification: vec![WindowsVerificationProbe::FileExists {
+                path: "drive_c/PrimeW2/shell-fixture.txt".to_owned(),
+            }],
+            limitations: vec![],
+        })
+        .unwrap();
+        crate::windows_components::store_component_revision(components.path(), &component).unwrap();
+        let profile = ApplicationProfile {
+            schema: "prime.application-profile.v1".to_owned(),
+            application_id: Uuid::now_v7(),
+            profile_revision: 1,
+            profile_digest: "sha256:test".to_owned(),
+            display_name: "Windows Fixture".to_owned(),
+            artifact: prime_contracts::ApplicationArtifact {
+                identity: format!("sha256:{}", "0".repeat(64)),
+                format: ArtifactFormat::Pe32Plus,
+                runtime_family: RuntimeFamily::Windows,
+                workload_arch: Some("x86_64".to_owned()),
+            },
+            execution_backend: ExecutionBackend::Personality,
+            dependencies: vec![format!(
+                "windows-component:{}@{}#{}",
+                component.component_id, component.revision, component.digest
+            )],
+            workload_policy: prime_contracts::PolicyReference {
+                policy_id: Uuid::now_v7(),
+                policy_revision: 1,
+                policy_digest: "sha256:test".to_owned(),
+            },
+            permissions: vec![],
+            compatibility: prime_contracts::CompatibilityRecord {
+                state: MechanicalCompatibilityState::Recognized,
+                evidence_refs: vec![],
+            },
+            revoked: false,
+            revocation_reason: None,
+            created_at: "2026-09-10T00:00:00Z".to_owned(),
+        };
+        assert!(
+            profile_limitations(&profile, "x86_64", providers.path(), components.path(),)
+                .is_empty()
+        );
+        assert!(profile_limitations(
+            &profile,
+            "x86_64",
+            providers.path(),
+            &components.path().join("missing"),
+        )
+        .iter()
+        .any(|value| value.contains("WINDOWS_COMPONENT")));
+    }
+
+    #[test]
     fn windows_profile_is_launch_ready_only_when_compatible_provider_exists() {
         use prime_contracts::{WindowsProviderManifest, WINDOWS_PROVIDER_MANIFEST_SCHEMA};
         use std::os::unix::fs::PermissionsExt;
@@ -367,12 +493,21 @@ mod tests {
             created_at: "2026-09-10T00:00:00Z".to_owned(),
         };
 
-        assert!(profile_limitations(&profile, "x86_64", providers.path()).is_empty());
-        assert!(
-            profile_limitations(&profile, "x86_64", &providers.path().join("missing"))
-                .iter()
-                .any(|value| value.contains("WINDOWS_PERSONALITY_UNAVAILABLE"))
-        );
+        assert!(profile_limitations(
+            &profile,
+            "x86_64",
+            providers.path(),
+            Path::new("/missing-components")
+        )
+        .is_empty());
+        assert!(profile_limitations(
+            &profile,
+            "x86_64",
+            &providers.path().join("missing"),
+            Path::new("/missing-components")
+        )
+        .iter()
+        .any(|value| value.contains("WINDOWS_PERSONALITY_UNAVAILABLE")));
     }
 
     #[test]
@@ -609,7 +744,13 @@ mod tests {
             created_at: "2026-08-20T00:00:00Z".to_owned(),
         };
         assert_eq!(
-            profile_limitations(&profile, "x86_64", Path::new("/missing")).len(),
+            profile_limitations(
+                &profile,
+                "x86_64",
+                Path::new("/missing"),
+                Path::new("/missing-components")
+            )
+            .len(),
             1
         );
     }

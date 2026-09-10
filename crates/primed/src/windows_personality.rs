@@ -1,8 +1,12 @@
-use crate::{exec, identity, launcher, policy, registry};
+use crate::{
+    exec, identity, launcher, policy, registry, windows_components, windows_state, windows_wine,
+};
 use prime_contracts::{
     ApplicationProfile, ArtifactFormat, ExecutionBackend, GenerationRecord, HostIdentity,
     LaunchEnforcementProperty, MechanicalCompatibilityState, PersonalityLaunchOutcome, PolicyClass,
-    RuntimeFamily, WindowsLaunchEvidence, WindowsProviderManifest, WINDOWS_LAUNCH_EVIDENCE_SCHEMA,
+    RuntimeFamily, WindowsComponentEvidence, WindowsComponentManifest, WindowsComponentOperation,
+    WindowsComponentOutcome, WindowsLaunchEvidence, WindowsProviderManifest,
+    WINDOWS_COMPONENT_EVIDENCE_SCHEMA, WINDOWS_LAUNCH_EVIDENCE_SCHEMA,
     WINDOWS_PROVIDER_MANIFEST_SCHEMA,
 };
 use std::cmp::Ordering;
@@ -33,6 +37,14 @@ pub enum WindowsPersonalityError {
     UnsupportedHostArchitecture(String),
     #[error("selected profile policy reference does not match the stored policy")]
     PolicyReferenceMismatch,
+    #[error(transparent)]
+    ComponentRegistry(#[from] windows_components::WindowsComponentRegistryError),
+    #[error("WINDOWS_COMPONENT_ENGINE_UNAVAILABLE: {0}")]
+    ComponentEngineUnavailable(String),
+    #[error("WINDOWS_COMPONENT_ENGINE_FAILED: {0}")]
+    ComponentEngineFailed(String),
+    #[error("WINDOWS_COMPONENT_ENGINE_PROTOCOL_INVALID: {0}")]
+    ComponentEngineProtocol(String),
     #[error(transparent)]
     Registry(#[from] registry::RegistryError),
     #[error(transparent)]
@@ -374,6 +386,98 @@ pub fn prepare_windows_launch(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedWindowsComponent {
+    pub transaction_id: Uuid,
+    pub manifest: WindowsComponentManifest,
+    pub manifest_path: PathBuf,
+    pub unit_name: String,
+    pub runtime_directory_name: String,
+    pub requested_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WindowsDependencyPreparation {
+    pub components: Vec<PreparedWindowsComponent>,
+}
+
+pub fn prepare_windows_dependencies(
+    component_dir: &Path,
+    prepared: &PreparedWindowsLaunch,
+) -> Result<WindowsDependencyPreparation, WindowsPersonalityError> {
+    if prepared.profile.dependencies.is_empty() {
+        return Ok(WindowsDependencyPreparation::default());
+    }
+    let arch = prepared.profile.artifact.workload_arch.as_deref().ok_or(
+        WindowsPersonalityError::ProfileMismatch("Windows workload architecture is unresolved"),
+    )?;
+    let resolved = windows_components::resolve_component_plan(
+        component_dir,
+        &prepared.profile.dependencies,
+        arch,
+    )?;
+    let compact_app = prepared.profile.application_id.to_string().replace('-', "");
+    let mut components = Vec::with_capacity(resolved.ordered.len());
+    for manifest in resolved.ordered {
+        let transaction_id = Uuid::now_v7();
+        let compact_tx = transaction_id.to_string().replace('-', "");
+        let manifest_path = windows_components::component_revision_path(
+            component_dir,
+            &manifest.component_id,
+            manifest.revision,
+        );
+        components.push(PreparedWindowsComponent {
+            transaction_id,
+            manifest,
+            manifest_path,
+            unit_name: format!("prime-win-component-{compact_app}-{compact_tx}.service"),
+            runtime_directory_name: format!("prime-win-component-{compact_tx}"),
+            requested_at: identity::now_rfc3339()?,
+        });
+    }
+    Ok(WindowsDependencyPreparation { components })
+}
+
+pub fn windows_component_systemd_run_args(
+    component_engine: &Path,
+    prepared: &PreparedWindowsLaunch,
+    component: &PreparedWindowsComponent,
+) -> Vec<String> {
+    let mut args = vec![
+        "--system".to_owned(),
+        format!("--unit={}", component.unit_name),
+        "--service-type=exec".to_owned(),
+        "--wait".to_owned(),
+        "--collect".to_owned(),
+        "--pipe".to_owned(),
+        "--no-ask-password".to_owned(),
+        "--quiet".to_owned(),
+    ];
+    for property in &prepared.plan.properties {
+        args.push(format!("--property={}={}", property.name, property.value));
+    }
+    args.push(format!(
+        "--property=RuntimeDirectory={}",
+        component.runtime_directory_name
+    ));
+    args.push("--property=RuntimeDirectoryMode=0700".to_owned());
+    args.push(format!(
+        "--property=StateDirectory={}",
+        windows_state::application_state_directory_name(prepared.profile.application_id)
+    ));
+    args.push("--property=StateDirectoryMode=0700".to_owned());
+    args.push(component_engine.display().to_string());
+    args.push("--manifest".to_owned());
+    args.push(component.manifest_path.display().to_string());
+    args.push("--application-id".to_owned());
+    args.push(prepared.profile.application_id.to_string());
+    args.push("--transaction-id".to_owned());
+    args.push(component.transaction_id.to_string());
+    args.push("--runtime-dir".to_owned());
+    args.push(format!("/run/{}", component.runtime_directory_name));
+    args
+}
+
 fn validate_windows_profile(profile: &ApplicationProfile) -> Result<(), WindowsPersonalityError> {
     if profile.execution_backend != ExecutionBackend::Personality {
         return Err(WindowsPersonalityError::ProfileMismatch(
@@ -391,11 +495,6 @@ fn validate_windows_profile(profile: &ApplicationProfile) -> Result<(), WindowsP
     ) {
         return Err(WindowsPersonalityError::ProfileMismatch(
             "artifact format is not PE32/PE32+",
-        ));
-    }
-    if !profile.dependencies.is_empty() {
-        return Err(WindowsPersonalityError::ProfileMismatch(
-            "W1 dependency admission is not implemented",
         ));
     }
     if !profile.permissions.is_empty() {
@@ -490,6 +589,228 @@ pub fn windows_systemd_run_args(prepared: &PreparedWindowsLaunch) -> Vec<String>
     args
 }
 
+fn validate_component_engine(path: &Path) -> Result<(), WindowsPersonalityError> {
+    if !path.is_absolute() {
+        return Err(WindowsPersonalityError::ComponentEngineUnavailable(
+            "component engine path is not absolute".to_owned(),
+        ));
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        WindowsPersonalityError::ComponentEngineUnavailable(format!(
+            "{} cannot be inspected: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(WindowsPersonalityError::ComponentEngineUnavailable(
+            format!("{} is not a regular non-symlink file", path.display()),
+        ));
+    }
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(WindowsPersonalityError::ComponentEngineUnavailable(
+            format!("{} is not executable", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_component_engine_outcome(
+    stdout: &[u8],
+) -> Result<WindowsComponentOutcome, WindowsPersonalityError> {
+    let text = std::str::from_utf8(stdout).map_err(|_| {
+        WindowsPersonalityError::ComponentEngineProtocol("stdout is not UTF-8".to_owned())
+    })?;
+    match text.trim() {
+        "INSTALLED" => Ok(WindowsComponentOutcome::Installed),
+        "ALREADY_SATISFIED" => Ok(WindowsComponentOutcome::AlreadySatisfied),
+        other => Err(WindowsPersonalityError::ComponentEngineProtocol(format!(
+            "unexpected result {other:?}"
+        ))),
+    }
+}
+
+fn run_windows_dependencies(
+    state_dir: &Path,
+    component_dir: &Path,
+    component_engine: &Path,
+    systemd_run: &Path,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    prepared: &PreparedWindowsLaunch,
+) -> Result<(), WindowsPersonalityError> {
+    let dependencies = prepare_windows_dependencies(component_dir, prepared)?;
+    if dependencies.components.is_empty() {
+        return Ok(());
+    }
+    validate_component_engine(component_engine)?;
+
+    for component in dependencies.components {
+        let admitted = component_evidence_for(
+            &component,
+            prepared,
+            host,
+            generation,
+            WindowsComponentOutcome::Admitted,
+            None,
+        );
+        store_component_evidence(state_dir, &admitted, 1, "admitted")?;
+
+        let output = Command::new(systemd_run)
+            .args(windows_component_systemd_run_args(
+                component_engine,
+                prepared,
+                &component,
+            ))
+            .output()
+            .map_err(|error| {
+                WindowsPersonalityError::ComponentEngineFailed(format!(
+                    "systemd-run could not start component transaction: {error}"
+                ))
+            })?;
+        if !output.status.success() {
+            return Err(WindowsPersonalityError::ComponentEngineFailed(format!(
+                "component transaction {} exited {:?}",
+                component.manifest.component_id,
+                output.status.code()
+            )));
+        }
+        let outcome = parse_component_engine_outcome(&output.stdout)?;
+        let completed_at = identity::now_rfc3339()?;
+        let completed = component_evidence_for(
+            &component,
+            prepared,
+            host,
+            generation,
+            outcome,
+            Some(completed_at),
+        );
+        store_component_evidence(state_dir, &completed, 2, "completed")?;
+    }
+    Ok(())
+}
+
+fn component_evidence_for(
+    component: &PreparedWindowsComponent,
+    prepared: &PreparedWindowsLaunch,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    outcome: WindowsComponentOutcome,
+    completed_at: Option<String>,
+) -> WindowsComponentEvidence {
+    WindowsComponentEvidence {
+        schema: WINDOWS_COMPONENT_EVIDENCE_SCHEMA.to_owned(),
+        transaction_id: component.transaction_id,
+        host_id: host.host_id,
+        generation_id: generation.generation_id.clone(),
+        application_id: prepared.profile.application_id,
+        profile_revision: prepared.profile.profile_revision,
+        profile_digest: prepared.profile.profile_digest.clone(),
+        component_id: component.manifest.component_id.clone(),
+        component_revision: component.manifest.revision,
+        component_digest: component.manifest.digest.clone(),
+        provider_id: prepared.provider.manifest.provider_id.clone(),
+        provider_revision: prepared.provider.manifest.provider_revision,
+        donor_fingerprint: windows_wine::WINDOWS_WINE_DONOR_FINGERPRINT.to_owned(),
+        installer_artifact_identity: component.manifest.artifact_identity.clone(),
+        operation: WindowsComponentOperation::Install,
+        outcome,
+        installer_exit_code: None,
+        requested_at: component.requested_at.clone(),
+        completed_at,
+        verification: Vec::new(),
+        enforcement_properties: prepared
+            .plan
+            .properties
+            .iter()
+            .map(|property| LaunchEnforcementProperty {
+                name: property.name.clone(),
+                value: property.value.clone(),
+            })
+            .chain([
+                LaunchEnforcementProperty {
+                    name: "RuntimeDirectory".to_owned(),
+                    value: component.runtime_directory_name.clone(),
+                },
+                LaunchEnforcementProperty {
+                    name: "RuntimeDirectoryMode".to_owned(),
+                    value: "0700".to_owned(),
+                },
+                LaunchEnforcementProperty {
+                    name: "StateDirectory".to_owned(),
+                    value: windows_state::application_state_directory_name(
+                        prepared.profile.application_id,
+                    ),
+                },
+                LaunchEnforcementProperty {
+                    name: "StateDirectoryMode".to_owned(),
+                    value: "0700".to_owned(),
+                },
+            ])
+            .collect(),
+        resulting_marker_digest: None,
+    }
+}
+
+fn store_component_evidence(
+    state_dir: &Path,
+    evidence: &WindowsComponentEvidence,
+    sequence: u8,
+    phase: &str,
+) -> Result<(), WindowsPersonalityError> {
+    let root = state_dir
+        .join("evidence/windows-components")
+        .join(evidence.transaction_id.to_string());
+    fs::create_dir_all(&root)?;
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+    let path = root.join(format!("{sequence:02}-{phase}.json"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    let encoded = serde_json::to_vec_pretty(evidence).map_err(registry::RegistryError::from)?;
+    file.write_all(&encoded)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    File::open(&root)?.sync_all()?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WindowsLaunchRuntime<'a> {
+    pub provider_dir: &'a Path,
+    pub component_dir: &'a Path,
+    pub component_engine: &'a Path,
+    pub systemd_run: &'a Path,
+}
+
+pub fn launch_windows_with_components(
+    state_dir: &Path,
+    runtime: &WindowsLaunchRuntime<'_>,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    application_id: Uuid,
+    candidate: &Path,
+) -> Result<WindowsLaunchEvidence, WindowsPersonalityError> {
+    let prepared = prepare_windows_launch(
+        state_dir,
+        runtime.provider_dir,
+        application_id,
+        candidate,
+        &host.host_arch,
+    )?;
+    run_windows_dependencies(
+        state_dir,
+        runtime.component_dir,
+        runtime.component_engine,
+        runtime.systemd_run,
+        host,
+        generation,
+        &prepared,
+    )?;
+    launch_prepared_windows(state_dir, runtime.systemd_run, host, generation, prepared)
+}
+
 pub fn launch_windows(
     state_dir: &Path,
     provider_dir: &Path,
@@ -506,6 +827,21 @@ pub fn launch_windows(
         candidate,
         &host.host_arch,
     )?;
+    if !prepared.profile.dependencies.is_empty() {
+        return Err(WindowsPersonalityError::ComponentEngineUnavailable(
+            "dependency-bearing profile requires launch_windows_with_components".to_owned(),
+        ));
+    }
+    launch_prepared_windows(state_dir, systemd_run, host, generation, prepared)
+}
+
+fn launch_prepared_windows(
+    state_dir: &Path,
+    systemd_run: &Path,
+    host: &HostIdentity,
+    generation: &GenerationRecord,
+    prepared: PreparedWindowsLaunch,
+) -> Result<WindowsLaunchEvidence, WindowsPersonalityError> {
     let admitted = windows_evidence_for(
         &prepared,
         host,

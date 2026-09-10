@@ -44,6 +44,15 @@ enum TransactionResult {
     AlreadySatisfied,
 }
 
+impl TransactionResult {
+    fn protocol_line(self) -> &'static str {
+        match self {
+            Self::Installed => "INSTALLED",
+            Self::AlreadySatisfied => "ALREADY_SATISFIED",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 enum ComponentEngineError {
     #[error("invalid Prime Windows component-engine ABI: {0}")]
@@ -113,7 +122,7 @@ fn run() -> Result<(), ComponentEngineError> {
     let installed_at = primed::identity::now_rfc3339().map_err(|_| {
         ComponentEngineError::Recipe("system clock could not produce RFC3339 timestamp")
     })?;
-    let _result = execute_component_transaction_at(
+    let result = execute_component_transaction_at(
         &state_root,
         &prefix,
         request.application_id,
@@ -122,6 +131,7 @@ fn run() -> Result<(), ComponentEngineError> {
         &installed_at,
         &mut run_runtime_command,
     )?;
+    println!("{}", result.protocol_line());
     Ok(())
 }
 
@@ -652,6 +662,15 @@ mod tests {
             Some("1")
         );
         assert_eq!(parse_registry_value(stdout, "Missing"), None);
+    }
+
+    #[test]
+    fn transaction_result_protocol_is_exact() {
+        assert_eq!(TransactionResult::Installed.protocol_line(), "INSTALLED");
+        assert_eq!(
+            TransactionResult::AlreadySatisfied.protocol_line(),
+            "ALREADY_SATISFIED"
+        );
     }
 
     #[test]

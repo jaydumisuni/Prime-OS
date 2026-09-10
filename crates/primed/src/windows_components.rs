@@ -367,7 +367,7 @@ fn digest_json<T: Serialize>(value: &T) -> Result<String, WindowsComponentRegist
     Ok(encoded)
 }
 
-fn component_revision_path(component_dir: &Path, component_id: &str, revision: u64) -> PathBuf {
+pub fn component_revision_path(component_dir: &Path, component_id: &str, revision: u64) -> PathBuf {
     component_dir
         .join(component_id)
         .join("revisions")
