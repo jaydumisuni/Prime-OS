@@ -173,3 +173,16 @@ fn shipped_wine_mono_component_resolves_from_trusted_registry() {
         .expect("resolve shipped Wine Mono component");
     assert_eq!(plan.ordered, vec![manifest]);
 }
+
+#[test]
+fn resolver_rejects_missing_component_revision() {
+    let dir = tempdir().unwrap();
+    let missing = format!(
+        "windows-component:runtime.missing@1#sha256:{}",
+        "a".repeat(64)
+    );
+    assert!(matches!(
+        resolve_component_plan(dir.path(), &[missing], "x86_64"),
+        Err(WindowsComponentRegistryError::ComponentUnavailable { .. })
+    ));
+}

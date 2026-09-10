@@ -1,0 +1,139 @@
+{
+  "schema": "prime.windows-w2-benchmark.v1",
+  "recorded_date": "2026-09-10",
+  "scope": "P4A/W2 installers/common runtimes",
+  "base_sha": "4fe487ffaa843e04745dafb262b0f90bab2a4733",
+  "freeze_binding": "The exact frozen SHA is recorded by the external Formula-style verifier; this record is contained in that commit.",
+  "slice_commits": {
+    "contracts": "4efc03c",
+    "resolver": "f616673",
+    "shared_state_lock": "7d8dc10",
+    "verification": "78f4dc3",
+    "component_engine": "2548f94",
+    "launch_gating": "82ed68a",
+    "installer_lifecycle": "5cd4467",
+    "concurrency_isolation": "91fb782",
+    "common_runtime": "8fe0472"
+  },
+  "gates": {
+    "1_dependency_contract": {
+      "status": "PASS",
+      "notes": [
+        "strict canonical component references",
+        "immutable revision/digest identity"
+      ]
+    },
+    "2_dependency_resolver": {
+      "status": "PASS",
+      "notes": [
+        "deterministic topological order",
+        "digest mismatch/cycle/missing/unsupported architecture fail closed"
+      ]
+    },
+    "3_per_application_state_isolation": {
+      "status": "PASS",
+      "notes": [
+        "shared W1/W2 compatibility lock",
+        "application-scoped persistent state"
+      ]
+    },
+    "4_real_state_verification": {
+      "status": "PASS",
+      "notes": [
+        "file existence/SHA and registry probes",
+        "marker never overrides failed observed state"
+      ]
+    },
+    "5_component_engine": {
+      "status": "PASS",
+      "notes": [
+        "direct MSI/EXE execution without shell",
+        "exact installer SHA",
+        "accepted exit codes",
+        "post-install verification before marker"
+      ]
+    },
+    "6_automatic_preparation": {
+      "status": "PASS",
+      "notes": [
+        "dependency-bearing profile prepares components before W1 launch",
+        "exact INSTALLED/ALREADY_SATISFIED result captured",
+        "zero-dependency W1 path unchanged"
+      ]
+    },
+    "7_real_exe_msi_lifecycle": {
+      "status": "PASS",
+      "exe_sha256": "5591777f3543d0d3f6e9c70e38f5c7030b076a5f923a3f15cd5ebbb3e7b5291c",
+      "msi_sha256": "c8d1e2c3e272a8e917d307bd30edaa6d07358cc386fb3f3c8d7c9052c53118df",
+      "slow_exe_sha256": "a06746ebab03af5676fe9d351e99d34c2e31666c8eba4f40660cf59a19b3d183",
+      "proofs": [
+        "cold EXE INSTALLED then ALREADY_SATISFIED",
+        "cold MSI INSTALLED then ALREADY_SATISFIED",
+        "exit-0/bad-post-state rejected with no marker",
+        "corrupted installed file repaired",
+        "marker loss resealed without reinstall",
+        "interrupted engine before marker converged on next transaction"
+      ]
+    },
+    "8_concurrency_isolation": {
+      "status": "PASS",
+      "proofs": [
+        "same application: one mutation, one ALREADY_SATISFIED",
+        "different applications: mutation windows overlap",
+        "cross-prefix whole-tree hashes unchanged during peer recovery"
+      ]
+    },
+    "9_real_common_runtime": {
+      "status": "PASS",
+      "component": "runtime.wine-mono@1",
+      "component_digest": "sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689",
+      "donor": "wine-mono-10.4.1-2.fc44",
+      "mscorlib_sha256": "57dad5c007d52244b7681eacbbf83f9cf03824e83b86884e84f3461bf40cccdf",
+      "registry_install_root": "C:\\windows\\Microsoft.NET\\Framework64\\",
+      "engine_outcome": "ALREADY_SATISFIED",
+      "boundary": "managed application execution remains W3"
+    },
+    "10_freeze_certification": {
+      "prefreeze_checks": {
+        "workspace_tests": {
+          "status": "PASS",
+          "count": 145,
+          "failures": 0
+        },
+        "clippy": "PASS",
+        "format": "PASS",
+        "diff_integrity": "PASS",
+        "negative_controls": {
+          "status": "PASS",
+          "count": 8
+        },
+        "w2_security_checker": {
+          "status": "PASS",
+          "count": 10
+        },
+        "w2_provider_checker": {
+          "status": "PASS",
+          "count": 10
+        },
+        "release_component_engine": "PASS"
+      },
+      "required_external_binding": [
+        "Sergeant review of complete W2 changed-file scope",
+        "frozen-SHA deterministic verifier",
+        "remote SHA verification"
+      ]
+    }
+  },
+  "deferred": [
+    "full sealed-image/Prime boot integration proof only"
+  ],
+  "not_claimed": [
+    "W3 managed .NET application execution",
+    "W4 DirectX/GPU acceleration",
+    "W5 COM",
+    "W6 Windows services",
+    "W7 USB/device integration",
+    "W8 VM fallback",
+    "W9 TTG workload certification"
+  ]
+}

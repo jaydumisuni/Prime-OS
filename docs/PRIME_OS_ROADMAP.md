@@ -267,7 +267,7 @@ Implement progressively:
 
 - W0 — PE recognition / profiles.
 - W1 — portable/simple Win32.
-- W2 — installers/common runtimes.
+- W2 — installers/common runtimes. Host implementation/proof complete on KRATOS; full sealed-image/Prime boot integration is deferred.
 - W3 — .NET applications.
 - W4 — DirectX/GPU acceleration.
 - W5 — COM.
