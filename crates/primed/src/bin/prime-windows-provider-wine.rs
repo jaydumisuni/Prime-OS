@@ -3,9 +3,9 @@ use primed::exec;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
-use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
@@ -13,6 +13,11 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const DONOR_BINARY: &str = "/usr/bin/wine";
+const DONOR_WINESERVER: &str = "/usr/sbin/wineserver";
+const DONOR_FINGERPRINT: &str =
+    "wine-core-11.0-3.fc44+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44";
+const PRIME_INIT_MARKER: &str = ".prime-w1-initialized";
+const PRIME_INIT_LOCK: &str = ".prime-w1-init.lock";
 const COMPOSITOR_READINESS: &str = "/run/prime-compositor/readiness.json";
 const COMPOSITOR_RUNTIME: &str = "/run/prime-compositor";
 const COMPOSITOR_READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
@@ -50,6 +55,11 @@ enum AdapterError {
     RuntimePath(&'static str),
     #[error("packaged Windows compatibility donor is unavailable: {0}")]
     DonorUnavailable(String),
+    #[error("packaged Windows compatibility donor initialization failed at {stage} with exit code {exit_code:?}")]
+    DonorInitializationFailed {
+        stage: &'static str,
+        exit_code: Option<i32>,
+    },
     #[error(transparent)]
     Exec(#[from] exec::ExecError),
     #[error(transparent)]
@@ -71,6 +81,15 @@ fn run() -> Result<(), AdapterError> {
     let wayland_socket = fs::read(COMPOSITOR_READINESS)
         .ok()
         .and_then(|raw| parse_wayland_socket(&raw));
+    let state_root = application_state_root(&request);
+    let prefix = state_root.join("wine-prefix");
+    {
+        let _initialization_lock = acquire_initialization_lock(&state_root)?;
+        if !prefix_marker_matches(&prefix)? {
+            initialize_prefix(&request, wayland_socket.as_deref())?;
+            write_prefix_marker(&prefix)?;
+        }
+    }
     let spec = donor_command(&request, wayland_socket.as_deref());
 
     let mut command = Command::new(&spec.program);
@@ -177,20 +196,54 @@ fn validate_runtime_directory(path: &Path) -> Result<(), AdapterError> {
 
 fn prepare_runtime_state(request: &ProviderRequest) -> Result<(), AdapterError> {
     for directory in [
-        request.runtime_dir.join("wine-prefix"),
+        application_state_root(request),
         request.runtime_dir.join("home"),
         request.runtime_dir.join("cache"),
         request.runtime_dir.join("config"),
+        application_state_root(request).join("wine-prefix"),
     ] {
-        fs::create_dir(&directory)?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        ensure_private_directory(&directory)?;
     }
     Ok(())
 }
 
+fn ensure_private_directory(path: &Path) -> Result<(), AdapterError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+                return Err(AdapterError::RuntimePath(
+                    "state path is not a regular non-symlink directory",
+                ));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => match fs::create_dir(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(path)?;
+                if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+                    return Err(AdapterError::RuntimePath(
+                        "state path raced to a non-directory or symlink",
+                    ));
+                }
+            }
+            Err(error) => return Err(error.into()),
+        },
+        Err(error) => return Err(error.into()),
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
 fn validate_donor() -> Result<(), AdapterError> {
-    let resolved = fs::canonicalize(DONOR_BINARY).map_err(|error| {
-        AdapterError::DonorUnavailable(format!("{DONOR_BINARY} cannot be resolved: {error}"))
+    for binary in [DONOR_BINARY, DONOR_WINESERVER] {
+        validate_donor_binary(binary)?;
+    }
+    Ok(())
+}
+
+fn validate_donor_binary(binary: &str) -> Result<(), AdapterError> {
+    let resolved = fs::canonicalize(binary).map_err(|error| {
+        AdapterError::DonorUnavailable(format!("{binary} cannot be resolved: {error}"))
     })?;
     let metadata = fs::metadata(&resolved).map_err(|error| {
         AdapterError::DonorUnavailable(format!(
@@ -207,7 +260,21 @@ fn validate_donor() -> Result<(), AdapterError> {
     Ok(())
 }
 
-fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> DonorCommand {
+fn application_state_root(request: &ProviderRequest) -> PathBuf {
+    PathBuf::from(format!(
+        "/var/lib/prime-win-app-{}",
+        request.application_id.to_string().replace('-', "")
+    ))
+}
+
+fn application_prefix(request: &ProviderRequest) -> PathBuf {
+    application_state_root(request).join("wine-prefix")
+}
+
+fn donor_environment(
+    request: &ProviderRequest,
+    wayland_socket: Option<&str>,
+) -> BTreeMap<String, String> {
     let mut environment = BTreeMap::from([
         (
             "HOME".to_owned(),
@@ -218,11 +285,7 @@ fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> Don
         ("WINEDEBUG".to_owned(), "-all".to_owned()),
         (
             "WINEPREFIX".to_owned(),
-            request
-                .runtime_dir
-                .join("wine-prefix")
-                .display()
-                .to_string(),
+            application_prefix(request).display().to_string(),
         ),
         (
             "XDG_CACHE_HOME".to_owned(),
@@ -237,10 +300,100 @@ fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> Don
         environment.insert("XDG_RUNTIME_DIR".to_owned(), COMPOSITOR_RUNTIME.to_owned());
         environment.insert("WAYLAND_DISPLAY".to_owned(), socket.to_owned());
     }
+    environment
+}
+
+fn prefix_initialization_commands(
+    request: &ProviderRequest,
+    wayland_socket: Option<&str>,
+) -> Vec<DonorCommand> {
+    let environment = donor_environment(request, wayland_socket);
+    vec![
+        DonorCommand {
+            program: PathBuf::from(DONOR_BINARY),
+            args: vec!["wineboot".to_owned(), "--init".to_owned()],
+            env: environment.clone(),
+        },
+        DonorCommand {
+            program: PathBuf::from(DONOR_WINESERVER),
+            args: vec!["-w".to_owned()],
+            env: environment,
+        },
+    ]
+}
+
+fn acquire_initialization_lock(state_root: &Path) -> Result<fs::File, AdapterError> {
+    let path = state_root.join(PRIME_INIT_LOCK);
+    if let Ok(metadata) = fs::symlink_metadata(&path) {
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(AdapterError::RuntimePath(
+                "initialization lock path is not a regular non-symlink file",
+            ));
+        }
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&path)?;
+    file.lock()?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+fn initialize_prefix(
+    request: &ProviderRequest,
+    wayland_socket: Option<&str>,
+) -> Result<(), AdapterError> {
+    let commands = prefix_initialization_commands(request, wayland_socket);
+    for (stage, spec) in ["wineboot", "wineserver-wait"].into_iter().zip(commands) {
+        let mut command = Command::new(&spec.program);
+        command.args(&spec.args).env_clear();
+        for (name, value) in &spec.env {
+            command.env(name, value);
+        }
+        let status = command.status()?;
+        if !status.success() {
+            return Err(AdapterError::DonorInitializationFailed {
+                stage,
+                exit_code: status.code(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn prefix_marker_matches(prefix: &Path) -> Result<bool, AdapterError> {
+    let marker = prefix.join(PRIME_INIT_MARKER);
+    match fs::read_to_string(marker) {
+        Ok(value) => Ok(value == format!("{DONOR_FINGERPRINT}\n")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_prefix_marker(prefix: &Path) -> Result<(), AdapterError> {
+    let marker = prefix.join(PRIME_INIT_MARKER);
+    let temp = prefix.join(format!("{PRIME_INIT_MARKER}.{}.tmp", Uuid::now_v7()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    file.write_all(format!("{DONOR_FINGERPRINT}\n").as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&temp, &marker)?;
+    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> DonorCommand {
     DonorCommand {
         program: PathBuf::from(DONOR_BINARY),
         args: vec![request.artifact.display().to_string()],
-        env: environment,
+        env: donor_environment(request, wayland_socket),
     }
 }
 
@@ -389,6 +542,81 @@ mod tests {
     }
 
     #[test]
+    fn private_state_directory_can_be_reused_but_not_replaced_by_symlink() {
+        let dir = tempdir().expect("tempdir");
+        let state = dir.path().join("state");
+        fs::create_dir(&state).expect("state");
+        ensure_private_directory(&state).expect("existing private directory is reusable");
+        assert_eq!(
+            fs::metadata(&state).expect("metadata").permissions().mode() & 0o777,
+            0o700
+        );
+
+        let target = dir.path().join("target");
+        fs::create_dir(&target).expect("target");
+        let link = dir.path().join("link");
+        symlink(&target, &link).expect("symlink");
+        assert!(matches!(
+            ensure_private_directory(&link),
+            Err(AdapterError::RuntimePath(_))
+        ));
+    }
+
+    #[test]
+    fn initialization_lock_is_exclusive_and_released_by_file_lifetime() {
+        let dir = tempdir().expect("tempdir");
+        let first = acquire_initialization_lock(dir.path()).expect("first lock");
+        let second = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.path().join(PRIME_INIT_LOCK))
+            .expect("second handle");
+        assert!(second.try_lock().is_err());
+        drop(first);
+        second
+            .try_lock()
+            .expect("kernel releases lock when owner closes");
+        second.unlock().expect("unlock");
+    }
+
+    #[test]
+    fn cold_prefix_initialization_is_explicit_and_waits_for_wineserver() {
+        let request = ProviderRequest {
+            artifact: PathBuf::from("/var/lib/prime/artifacts/sha256/deadbeef"),
+            application_id: Uuid::nil(),
+            launch_id: Uuid::nil(),
+            runtime_dir: PathBuf::from("/run/prime-win-001122"),
+        };
+        let commands = prefix_initialization_commands(&request, Some("wayland-0"));
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].program, PathBuf::from("/usr/bin/wine"));
+        assert_eq!(
+            commands[0].args,
+            vec!["wineboot".to_owned(), "--init".to_owned()]
+        );
+        assert_eq!(commands[1].program, PathBuf::from("/usr/sbin/wineserver"));
+        assert_eq!(commands[1].args, vec!["-w".to_owned()]);
+        assert_eq!(
+            commands[0].env.get("WAYLAND_DISPLAY").map(String::as_str),
+            Some("wayland-0")
+        );
+    }
+
+    #[test]
+    fn prime_initialization_marker_requires_exact_donor_fingerprint() {
+        let dir = tempdir().expect("tempdir");
+        assert!(!prefix_marker_matches(dir.path()).expect("missing marker"));
+        fs::write(dir.path().join(PRIME_INIT_MARKER), b"wrong\n").expect("stale marker");
+        assert!(!prefix_marker_matches(dir.path()).expect("stale marker"));
+        fs::write(
+            dir.path().join(PRIME_INIT_MARKER),
+            format!("{DONOR_FINGERPRINT}\n"),
+        )
+        .expect("current marker");
+        assert!(prefix_marker_matches(dir.path()).expect("current marker"));
+    }
+
+    #[test]
     fn donor_command_is_fixed_direct_argv_with_isolated_state() {
         let runtime = PathBuf::from("/run/prime-win-001122");
         let request = ProviderRequest {
@@ -402,7 +630,7 @@ mod tests {
         assert_eq!(command.args, vec![request.artifact.display().to_string()]);
         assert_eq!(
             command.env.get("WINEPREFIX"),
-            Some(&runtime.join("wine-prefix").display().to_string())
+            Some(&"/var/lib/prime-win-app-00000000000000000000000000000000/wine-prefix".to_owned())
         );
         assert_eq!(
             command.env.get("HOME"),

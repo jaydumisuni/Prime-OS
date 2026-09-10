@@ -1,0 +1,66 @@
+{
+  "schema": "prime.windows-w1-benchmark.v1",
+  "recorded_date": "2026-09-10",
+  "scope": "P4A/W1 portable-simple Win32",
+  "candidate_state": "pre-freeze",
+  "controlled_probe": {
+    "artifact": "prime-w1-probe.exe",
+    "format": "PE32+ x86-64 console",
+    "sha256": "c3f7bc6c4dcaf93c098bcdfb0c042f8cf6a54bcf2447ffdb57f6dd30f3ae756c",
+    "expected_stdout_marker": "PRIME_W1_PE_EXECUTED"
+  },
+  "donor_closure": [
+    "wine-core-11.0-3.fc44",
+    "wine-common-11.0-3.fc44",
+    "wine-mono-10.4.1-2.fc44"
+  ],
+  "gates": {
+    "1_detection_classification": "PASS",
+    "2_personality_selection": "PASS",
+    "3_visible_gui": "PASS",
+    "4_warm_repeat_latency": "PASS",
+    "5_clean_exit_reopen": "PASS",
+    "6_repeated_launch_stress": {
+      "status": "PASS",
+      "launches": 12,
+      "live_leaks": 0,
+      "zombie_accumulation": 0,
+      "warm_seconds_range": [
+        4.536981,
+        4.600554
+      ],
+      "stdout_marker_matches": 12
+    },
+    "7_cold_first_run": {
+      "status": "PASS",
+      "seconds": 15.989238323,
+      "exit_code": 0,
+      "stdout_marker_seen": true
+    },
+    "8_interrupted_state_recovery": {
+      "status": "PASS",
+      "seconds": 16.089724943,
+      "exit_code": 0,
+      "stdout_marker_seen": true
+    },
+    "9_pe32_x86": {
+      "status": "PASS",
+      "artifact": "PuTTY 0.85 32-bit",
+      "sha256": "4c70267ca03a00ea761ec358498b990a7221decb36eace9b7dbe6a751be0fb3b",
+      "file_identity": "PE32 executable for MS Windows 5.01 (GUI), Intel i386, 8 sections",
+      "process_comm": "putty-w32.exe"
+    },
+    "10_real_third_party_gui": {
+      "status": "PASS",
+      "artifact": "PuTTY 0.85 32-bit",
+      "screenshot": "image/evidence/windows-w1-putty-w32.png",
+      "screenshot_sha256": "931c407257aac5ef928d93c829bf2eb4830c3f624d1fda989df131fe406a875e",
+      "visual_observation": "PuTTY Configuration window rendered with Session/Terminal/Window/Connection categories and Open/Cancel controls"
+    }
+  },
+  "notes": [
+    "Weston 15 headless was proof-only; Prime product compositor remains prime-compositor.",
+    "The 12-launch stress proof used Podman --init to model systemd-style child reaping.",
+    "Final status becomes frozen only after regression, image build, Sergeant review, and frozen-SHA verification."
+  ]
+}

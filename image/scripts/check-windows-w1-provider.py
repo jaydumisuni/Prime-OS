@@ -13,13 +13,14 @@ source = (ROOT / "crates/primed/src/bin/prime-windows-provider-wine.rs").read_te
 checks = {
     "neutral binary target declared": 'name = "prime-windows-provider-w1"' in cargo and 'path = "src/bin/prime-windows-provider-wine.rs"' in cargo,
     "adapter donor path fixed": 'const DONOR_BINARY: &str = "/usr/bin/wine";' in source,
+    "adapter donor fingerprint covers complete runtime": all(pkg in source for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
     "manifest exists": manifest_path.is_file(),
     "donor decision exists": donor_doc.is_file(),
-    "image installs pinned Fedora donor": "wine-core-11.0-3.fc44" in containerfile,
+    "image installs complete pinned Fedora donor": all(pkg in containerfile for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
     "image avoids Cisco OpenH264 build dependency": "--disablerepo=fedora-cisco-openh264" in containerfile,
     "image disables weak donor dependencies": "dnf -y --setopt=install_weak_deps=False --disablerepo=fedora-cisco-openh264 install" in containerfile,
     "image suppresses donor weak dependencies": "dnf -y --setopt=install_weak_deps=False --disablerepo=fedora-cisco-openh264 install" in containerfile,
-    "image verifies pinned Fedora donor": "rpm -q" in containerfile and "wine-core-11.0-3.fc44" in containerfile,
+    "image verifies complete pinned Fedora donor": "rpm -q" in containerfile and all(pkg in containerfile for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
     "image verifies donor executables": "test -x /usr/bin/wine" in containerfile and "test -x /usr/bin/wine64" in containerfile,
     "image copies Prime adapter": "COPY target/release/prime-windows-provider-w1 /usr/libexec/prime/prime-windows-provider-w1" in containerfile,
     "image copies trusted provider manifest": "COPY image/windows-providers/wine-v1.json /usr/lib/prime/windows-providers/w1-default.json" in containerfile,
@@ -44,7 +45,7 @@ if manifest_path.is_file():
 if donor_doc.is_file():
     doc = donor_doc.read_text().lower()
     checks.update({
-        "donor record pins version": "wine-core-11.0-3.fc44" in doc,
+        "donor record pins complete runtime": all(pkg in doc for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
         "donor record keeps Prime authority": "implementation donor" in doc and "not" in doc and "prime" in doc,
         "donor record names W1 boundary": "pe32" in doc and "pe32+" in doc and "x86" in doc and "x86_64" in doc,
     })

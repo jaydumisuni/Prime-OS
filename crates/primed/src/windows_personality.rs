@@ -468,6 +468,14 @@ pub fn windows_systemd_run_args(prepared: &PreparedWindowsLaunch) -> Vec<String>
         prepared.runtime_directory_name
     ));
     args.push("--property=RuntimeDirectoryMode=0700".to_owned());
+    let application_state_directory_name = format!(
+        "prime-win-app-{}",
+        prepared.profile.application_id.to_string().replace('-', "")
+    );
+    args.push(format!(
+        "--property=StateDirectory={application_state_directory_name}"
+    ));
+    args.push("--property=StateDirectoryMode=0700".to_owned());
     args.push("--property=SupplementaryGroups=prime-display".to_owned());
     args.push("--setenv=XDG_RUNTIME_DIR=/run/prime-compositor".to_owned());
     args.push(prepared.provider.adapter_path.display().to_string());
@@ -577,6 +585,17 @@ fn windows_evidence_for(
                 },
                 LaunchEnforcementProperty {
                     name: "RuntimeDirectoryMode".to_owned(),
+                    value: "0700".to_owned(),
+                },
+                LaunchEnforcementProperty {
+                    name: "StateDirectory".to_owned(),
+                    value: format!(
+                        "prime-win-app-{}",
+                        prepared.profile.application_id.to_string().replace('-', "")
+                    ),
+                },
+                LaunchEnforcementProperty {
+                    name: "StateDirectoryMode".to_owned(),
                     value: "0700".to_owned(),
                 },
                 LaunchEnforcementProperty {

@@ -555,6 +555,16 @@ fn windows_systemd_argv_invokes_provider_directly_with_prime_abi() {
     assert!(args
         .iter()
         .any(|arg| arg == "--property=RuntimeDirectoryMode=0700"));
+    let app_state = format!(
+        "prime-win-app-{}",
+        prepared.profile.application_id.to_string().replace('-', "")
+    );
+    assert!(args
+        .iter()
+        .any(|arg| arg == &format!("--property=StateDirectory={app_state}")));
+    assert!(args
+        .iter()
+        .any(|arg| arg == "--property=StateDirectoryMode=0700"));
     assert!(args
         .iter()
         .any(|arg| arg == "--property=PrivateNetwork=yes"));

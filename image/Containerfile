@@ -116,7 +116,9 @@ RUN set -eux; \
         mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
-        wine-core-11.0-3.fc44; \
+        wine-core-11.0-3.fc44 \
+        wine-common-11.0-3.fc44 \
+        wine-mono-10.4.1-2.fc44; \
     rpm -q \
         libdrm-2.4.134-1.fc44 \
         libglvnd-egl-1.7.0-9.fc44 \
@@ -129,7 +131,9 @@ RUN set -eux; \
         mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
-        wine-core-11.0-3.fc44; \
+        wine-core-11.0-3.fc44 \
+        wine-common-11.0-3.fc44 \
+        wine-mono-10.4.1-2.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
     dnf clean all; \
     rm -rf \
