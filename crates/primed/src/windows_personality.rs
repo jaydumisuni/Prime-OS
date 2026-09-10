@@ -18,6 +18,8 @@ use std::process::Command;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub const TRUSTED_WINE_MONO_COMPONENT_REFERENCE: &str = "windows-component:runtime.wine-mono@1#sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689";
+
 #[derive(Debug, Error)]
 pub enum WindowsPersonalityError {
     #[error("WINDOWS_PERSONALITY_UNAVAILABLE: {0}")]
@@ -45,6 +47,10 @@ pub enum WindowsPersonalityError {
     ComponentEngineFailed(String),
     #[error("WINDOWS_COMPONENT_ENGINE_PROTOCOL_INVALID: {0}")]
     ComponentEngineProtocol(String),
+    #[error("WINDOWS_MANAGED_RUNTIME_DEPENDENCY_MISSING: managed PE requires the exact trusted Wine Mono component pin")]
+    ManagedRuntimeDependencyMissing,
+    #[error(transparent)]
+    ManagedPe(#[from] exec::ManagedPeError),
     #[error(transparent)]
     Registry(#[from] registry::RegistryError),
     #[error(transparent)]
@@ -305,6 +311,7 @@ pub struct PreparedWindowsLaunch {
     pub runtime_directory_name: String,
     pub requested_at: String,
     pub plan: policy::SystemdEnforcementPlan,
+    pub managed: Option<exec::ManagedPeInspection>,
 }
 
 pub fn prepare_windows_launch(
@@ -361,6 +368,15 @@ pub fn prepare_windows_launch(
             .map_err(|error| WindowsPersonalityError::ArtifactStage(error.to_string()))?;
     let staged_inspection = exec::inspect(&staged_artifact_path, host_arch)?;
     verify_inspection_matches_profile(&staged_inspection, &profile)?;
+    let managed = exec::inspect_managed_pe(&staged_artifact_path)?;
+    if managed.is_some()
+        && !profile
+            .dependencies
+            .iter()
+            .any(|value| value == TRUSTED_WINE_MONO_COMPONENT_REFERENCE)
+    {
+        return Err(WindowsPersonalityError::ManagedRuntimeDependencyMissing);
+    }
 
     let launch_id = Uuid::now_v7();
     let compact_app_id = profile.application_id.to_string().replace('-', "");
@@ -383,6 +399,7 @@ pub fn prepare_windows_launch(
         runtime_directory_name,
         requested_at: identity::now_rfc3339()?,
         plan,
+        managed,
     })
 }
 

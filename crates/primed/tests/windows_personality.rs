@@ -184,6 +184,37 @@ fn pe64() -> Vec<u8> {
     pe(0x8664, 0x20b)
 }
 
+fn managed_pe64() -> Vec<u8> {
+    let mut bytes = vec![0_u8; 0x600];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+    let pe = 0x80usize;
+    bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
+    bytes[pe + 4..pe + 6].copy_from_slice(&0x8664_u16.to_le_bytes());
+    bytes[pe + 6..pe + 8].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[pe + 20..pe + 22].copy_from_slice(&0x00f0_u16.to_le_bytes());
+    let opt = pe + 24;
+    bytes[opt..opt + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+    bytes[opt + 108..opt + 112].copy_from_slice(&16_u32.to_le_bytes());
+    let cli_dir = opt + 112 + 14 * 8;
+    bytes[cli_dir..cli_dir + 4].copy_from_slice(&0x2000_u32.to_le_bytes());
+    bytes[cli_dir + 4..cli_dir + 8].copy_from_slice(&0x48_u32.to_le_bytes());
+    let section = opt + 0xf0;
+    bytes[section..section + 5].copy_from_slice(b".text");
+    bytes[section + 8..section + 12].copy_from_slice(&0x400_u32.to_le_bytes());
+    bytes[section + 12..section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+    bytes[section + 16..section + 20].copy_from_slice(&0x400_u32.to_le_bytes());
+    bytes[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    let cli = 0x200usize;
+    bytes[cli..cli + 4].copy_from_slice(&0x48_u32.to_le_bytes());
+    bytes[cli + 8..cli + 12].copy_from_slice(&0x2100_u32.to_le_bytes());
+    bytes[cli + 12..cli + 16].copy_from_slice(&0x40_u32.to_le_bytes());
+    bytes[cli + 16..cli + 20].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[cli + 20..cli + 24].copy_from_slice(&0x0600_0001_u32.to_le_bytes());
+    bytes[0x300..0x304].copy_from_slice(b"BSJB");
+    bytes
+}
+
 fn pe32() -> Vec<u8> {
     pe(0x014c, 0x10b)
 }
@@ -911,4 +942,106 @@ fn shipped_wine_mono_dependency_resolves_from_real_application_profile() {
         .expect("resolve shipped Wine Mono dependency from profile");
     assert_eq!(dependencies.components.len(), 1);
     assert_eq!(dependencies.components[0].manifest, mono);
+}
+
+#[test]
+fn managed_pe_requires_exact_trusted_wine_mono_dependency() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let candidate = state.path().join("managed.exe");
+    let bytes = managed_pe64();
+    fs::write(&candidate, &bytes).expect("write managed PE");
+    let policy = fixture_policy(state.path());
+    let application_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+
+    assert!(matches!(
+        prepare_windows_launch(
+            state.path(),
+            providers.path(),
+            application_id,
+            &candidate,
+            "x86_64",
+        ),
+        Err(WindowsPersonalityError::ManagedRuntimeDependencyMissing)
+    ));
+
+    add_profile_dependencies(
+        state.path(),
+        application_id,
+        vec![format!(
+            "windows-component:runtime.wine-mono@1#sha256:{}",
+            "b".repeat(64)
+        )],
+    );
+    assert!(matches!(
+        prepare_windows_launch(
+            state.path(),
+            providers.path(),
+            application_id,
+            &candidate,
+            "x86_64",
+        ),
+        Err(WindowsPersonalityError::ManagedRuntimeDependencyMissing)
+    ));
+}
+
+#[test]
+fn exact_wine_mono_pin_admits_managed_pe_and_native_w1_remains_unmanaged() {
+    let state = tempfile::tempdir().expect("state");
+    let providers = tempfile::tempdir().expect("providers");
+    fixture_provider(providers.path(), &["x86_64"]);
+    let policy = fixture_policy(state.path());
+
+    let managed = state.path().join("managed.exe");
+    let managed_bytes = managed_pe64();
+    fs::write(&managed, &managed_bytes).expect("managed PE");
+    let managed_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&managed_bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    add_profile_dependencies(
+        state.path(),
+        managed_id,
+        vec![primed::windows_personality::TRUSTED_WINE_MONO_COMPONENT_REFERENCE.to_owned()],
+    );
+    let prepared = prepare_windows_launch(
+        state.path(),
+        providers.path(),
+        managed_id,
+        &managed,
+        "x86_64",
+    )
+    .expect("managed launch with exact runtime pin");
+    assert!(prepared.managed.is_some());
+
+    let native = state.path().join("native.exe");
+    let native_bytes = pe64();
+    fs::write(&native, &native_bytes).expect("native PE");
+    let native_id = fixture_profile(
+        state.path(),
+        &policy,
+        labelled_sha256(&native_bytes),
+        ArtifactFormat::Pe32Plus,
+        RuntimeFamily::Windows,
+        ExecutionBackend::Personality,
+        Some("x86_64"),
+    );
+    let native_prepared =
+        prepare_windows_launch(state.path(), providers.path(), native_id, &native, "x86_64")
+            .expect("native W1 remains launchable");
+    assert!(native_prepared.managed.is_none());
 }

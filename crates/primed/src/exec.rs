@@ -171,13 +171,12 @@ pub fn inspect_managed_pe(path: &Path) -> Result<Option<ManagedPeInspection>, Ma
         return Err(ManagedPeError::Malformed("PE signature is invalid"));
     }
     let section_count = u16::from_le_bytes([coff[6], coff[7]]) as usize;
-    if section_count == 0 || section_count > 96 {
-        return Err(ManagedPeError::Malformed(
-            "PE section count is out of bounds",
-        ));
-    }
     let optional_size = u16::from_le_bytes([coff[20], coff[21]]) as usize;
-    if optional_size < 2 || optional_size > 4096 {
+    if optional_size < 2 {
+        verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    if optional_size > 4096 {
         return Err(ManagedPeError::Malformed(
             "PE optional header size is out of bounds",
         ));
@@ -199,9 +198,8 @@ pub fn inspect_managed_pe(path: &Path) -> Result<Option<ManagedPeInspection>, Ma
     };
     let cli_dir = directory_base + 14 * 8;
     if cli_dir + 8 > optional.len() {
-        return Err(ManagedPeError::Malformed(
-            "PE optional header omits CLR data directory",
-        ));
+        verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
     }
     let cli_rva = u32::from_le_bytes(optional[cli_dir..cli_dir + 4].try_into().unwrap());
     let cli_size = u32::from_le_bytes(optional[cli_dir + 4..cli_dir + 8].try_into().unwrap());
@@ -212,6 +210,11 @@ pub fn inspect_managed_pe(path: &Path) -> Result<Option<ManagedPeInspection>, Ma
     if cli_rva == 0 || cli_size < 0x48 {
         return Err(ManagedPeError::Malformed(
             "CLR data directory is incomplete",
+        ));
+    }
+    if section_count == 0 || section_count > 96 {
+        return Err(ManagedPeError::Malformed(
+            "PE section count is out of bounds",
         ));
     }
 
