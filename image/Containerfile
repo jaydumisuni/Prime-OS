@@ -105,7 +105,7 @@ RUN set -eux; \
     test -n "${PRIME_BASE_DIGEST}"; \
     grep -q '^ID=fedora$' /usr/lib/os-release; \
     grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
-    dnf -y install \
+    dnf -y --setopt=install_weak_deps=False install \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
@@ -115,7 +115,8 @@ RUN set -eux; \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
-        systemd-ukify-259.8-1.fc44; \
+        systemd-ukify-259.8-1.fc44 \
+        wine-core-11.0-3.fc44; \
     rpm -q \
         libdrm-2.4.134-1.fc44 \
         libglvnd-egl-1.7.0-9.fc44 \
@@ -127,7 +128,8 @@ RUN set -eux; \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
-        systemd-ukify-259.8-1.fc44; \
+        systemd-ukify-259.8-1.fc44 \
+        wine-core-11.0-3.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
     dnf clean all; \
     rm -rf \
@@ -144,7 +146,9 @@ RUN set -eux; \
     test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; \
     test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub; \
     test -x /usr/sbin/bootc; \
-    test -x /usr/sbin/systemd-run
+    test -x /usr/sbin/systemd-run; \
+    test -x /usr/bin/wine; \
+    test -x /usr/bin/wine64
 
 COPY image/prime-os-release /usr/lib/os-release
 
@@ -164,9 +168,16 @@ RUN set -eux; \
     chmod 0444 /usr/lib/prime/substrate-release.json; \
     python3 -c 'import json; d=json.load(open("/usr/lib/prime/substrate-release.json", "r", encoding="utf-8")); assert d["schema"]=="prime.substrate-release.v1"; assert d["id"]=="fedora"; assert d["version_id"]=="44"'
 
-RUN install -d -m 0755 /usr/libexec/prime /usr/lib/bootc/install /usr/lib/sysusers.d /usr/lib/tmpfiles.d
+RUN install -d -m 0755 /usr/libexec/prime /usr/lib/prime/windows-providers /usr/lib/bootc/install /usr/lib/sysusers.d /usr/lib/tmpfiles.d
 COPY target/release/primed /usr/libexec/prime/primed
 COPY target/release/prime-recovery /usr/libexec/prime/prime-recovery
+COPY target/release/prime-windows-provider-w1 /usr/libexec/prime/prime-windows-provider-w1
+COPY image/windows-providers/wine-v1.json /usr/lib/prime/windows-providers/w1-default.json
+RUN set -eux; \
+    chmod 0555 /usr/libexec/prime/prime-windows-provider-w1; \
+    chmod 0444 /usr/lib/prime/windows-providers/w1-default.json; \
+    test -x /usr/libexec/prime/prime-windows-provider-w1; \
+    python3 -c 'import json; p=json.load(open("/usr/lib/prime/windows-providers/w1-default.json", "r", encoding="utf-8")); assert p["schema"]=="prime.windows-provider-manifest.v1"; assert p["provider_id"]=="prime.windows.w1.default"; assert p["provider_revision"]==1; assert p["adapter_path"]=="/usr/libexec/prime/prime-windows-provider-w1"; assert p["formats"]==["PE32","PE32+"]; assert p["workload_arches"]==["x86","x86_64"]'
 COPY --from=compositor-builder /source/target/release/prime-compositor /usr/libexec/prime/prime-compositor
 COPY --from=compositor-builder /source/target/release/prime-shell /usr/libexec/prime/prime-shell
 COPY image/scripts/prime-shell-session /usr/libexec/prime/prime-shell-session

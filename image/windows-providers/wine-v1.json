@@ -1,0 +1,23 @@
+{
+  "schema": "prime.windows-provider-manifest.v1",
+  "provider_id": "prime.windows.w1.default",
+  "provider_revision": 1,
+  "adapter_path": "/usr/libexec/prime/prime-windows-provider-w1",
+  "formats": [
+    "PE32",
+    "PE32+"
+  ],
+  "workload_arches": [
+    "x86",
+    "x86_64"
+  ],
+  "limitations": [
+    "W1_PORTABLE_SIMPLE_WIN32_ONLY",
+    "NO_INSTALLER_LIFECYCLE",
+    "NO_DOTNET_CLAIM",
+    "NO_DIRECTX_ACCELERATION_CLAIM",
+    "NO_WINDOWS_SERVICES",
+    "NO_USB_DEVICE_INTEGRATION",
+    "NO_VM_FALLBACK"
+  ]
+}
