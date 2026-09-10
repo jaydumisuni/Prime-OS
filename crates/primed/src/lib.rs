@@ -11,6 +11,7 @@ pub mod server;
 pub mod shell_api;
 pub mod storage;
 pub mod system_status;
+pub mod windows_components;
 pub mod windows_personality;
 
 use prime_contracts::{
