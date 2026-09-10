@@ -1,5 +1,5 @@
 use prime_contracts::{ArtifactFormat, RuntimeFamily};
-use primed::{exec, windows_state, windows_wine};
+use primed::{exec, windows_managed, windows_state, windows_wine};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -56,6 +56,10 @@ enum AdapterError {
     #[error(transparent)]
     Exec(#[from] exec::ExecError),
     #[error(transparent)]
+    ManagedPe(#[from] exec::ManagedPeError),
+    #[error(transparent)]
+    ManagedBridge(#[from] windows_managed::ManagedBridgeError),
+    #[error(transparent)]
     Io(#[from] io::Error),
 }
 
@@ -82,6 +86,11 @@ fn run() -> Result<(), AdapterError> {
             initialize_prefix(&request, wayland_socket.as_deref())?;
             write_prefix_marker(&prefix)?;
         }
+        prepare_managed_runtime(
+            &request.artifact,
+            &prefix,
+            &windows_managed::managed_bridge_specs(),
+        )?;
     }
     let spec = donor_command(&request, wayland_socket.as_deref());
 
@@ -301,6 +310,17 @@ fn prefix_marker_matches(prefix: &Path) -> Result<bool, AdapterError> {
 
 fn write_prefix_marker(prefix: &Path) -> Result<(), AdapterError> {
     Ok(windows_wine::write_prefix_marker(prefix)?)
+}
+
+fn prepare_managed_runtime(
+    artifact: &Path,
+    prefix: &Path,
+    specs: &[windows_managed::ManagedBridgeSpec],
+) -> Result<Option<windows_managed::ManagedBridgeOutcome>, AdapterError> {
+    if exec::inspect_managed_pe(artifact)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(windows_managed::ensure_managed_bridge(prefix, specs)?))
 }
 
 fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> DonorCommand {
@@ -580,6 +600,73 @@ mod tests {
         .is_none());
         assert!(
             parse_wayland_socket(br#"{"schema":"wrong","wayland_socket":"wayland-0"}"#).is_none()
+        );
+    }
+
+    fn managed_pe64() -> Vec<u8> {
+        let mut bytes = vec![0_u8; 0x600];
+        bytes[0..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        let pe = 0x80usize;
+        bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
+        bytes[pe + 4..pe + 6].copy_from_slice(&0x8664_u16.to_le_bytes());
+        bytes[pe + 6..pe + 8].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[pe + 20..pe + 22].copy_from_slice(&0xf0_u16.to_le_bytes());
+        let opt = pe + 24;
+        bytes[opt..opt + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        bytes[opt + 108..opt + 112].copy_from_slice(&16_u32.to_le_bytes());
+        let cli_dir = opt + 112 + 14 * 8;
+        bytes[cli_dir..cli_dir + 4].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[cli_dir + 4..cli_dir + 8].copy_from_slice(&0x48_u32.to_le_bytes());
+        let section = opt + 0xf0;
+        bytes[section..section + 5].copy_from_slice(b".text");
+        bytes[section + 8..section + 12].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 12..section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[section + 16..section + 20].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+        bytes[0x200..0x204].copy_from_slice(&0x48_u32.to_le_bytes());
+        bytes[0x208..0x20c].copy_from_slice(&0x2100_u32.to_le_bytes());
+        bytes[0x20c..0x210].copy_from_slice(&0x40_u32.to_le_bytes());
+        bytes[0x210..0x214].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[0x214..0x218].copy_from_slice(&0x0600_0001_u32.to_le_bytes());
+        bytes[0x300..0x304].copy_from_slice(b"BSJB");
+        bytes
+    }
+
+    #[test]
+    fn managed_bridge_preparation_runs_only_for_managed_artifact() {
+        let dir = tempdir().expect("tempdir");
+        let prefix = dir.path().join("prefix");
+        fs::create_dir_all(prefix.join("drive_c/windows/system32")).unwrap();
+        let source = dir.path().join("iconv.dll");
+        fs::write(&source, b"abc").unwrap();
+        let specs = vec![primed::windows_managed::ManagedBridgeSpec {
+            source,
+            target_relative: PathBuf::from("drive_c/windows/system32/iconv.dll"),
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_owned(),
+        }];
+
+        let managed = dir.path().join("managed.exe");
+        fs::write(&managed, managed_pe64()).unwrap();
+        assert_eq!(
+            prepare_managed_runtime(&managed, &prefix, &specs).unwrap(),
+            Some(primed::windows_managed::ManagedBridgeOutcome::Repaired)
+        );
+        assert_eq!(
+            fs::read(prefix.join("drive_c/windows/system32/iconv.dll")).unwrap(),
+            b"abc"
+        );
+
+        let native = dir.path().join("native.exe");
+        fs::write(&native, minimal_pe64()).unwrap();
+        let missing = vec![primed::windows_managed::ManagedBridgeSpec {
+            source: dir.path().join("missing.dll"),
+            target_relative: PathBuf::from("drive_c/windows/system32/missing.dll"),
+            sha256: "0".repeat(64),
+        }];
+        assert_eq!(
+            prepare_managed_runtime(&native, &prefix, &missing).unwrap(),
+            None
         );
     }
 
