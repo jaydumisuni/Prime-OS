@@ -26,3 +26,7 @@ tempfile = "3"
 [[bin]]
 name = "prime-windows-provider-w1"
 path = "src/bin/prime-windows-provider-wine.rs"
+
+[[bin]]
+name = "prime-windows-component-engine"
+path = "src/bin/prime-windows-component-engine.rs"

@@ -3,8 +3,8 @@ use prime_contracts::{
     WINDOWS_COMPONENT_SCHEMA,
 };
 use primed::windows_component_engine::{
-    all_probes_pass, component_marker_matches, verify_component_state, write_component_marker,
-    WindowsComponentEngineError,
+    all_probes_pass, component_marker_matches, verify_component_state,
+    verify_component_state_with_registry, write_component_marker, WindowsComponentEngineError,
 };
 use primed::windows_components::seal_component;
 use std::fs;
@@ -99,6 +99,28 @@ fn registry_probe_fails_closed_until_donor_query_is_bound() {
         verify_component_state(&prefix, &m),
         Err(WindowsComponentEngineError::ProbeUnsupported(_))
     ));
+}
+
+#[test]
+fn registry_probe_uses_bound_query_and_compares_exact_value() {
+    let dir = tempdir().unwrap();
+    let prefix = dir.path().join("prefix");
+    fs::create_dir(&prefix).unwrap();
+    let m = manifest(vec![WindowsVerificationProbe::RegistryValueEquals {
+        hive: "HKLM".to_owned(),
+        key: r"Software\PrimeW2".to_owned(),
+        name: "Installed".to_owned(),
+        value: "1".to_owned(),
+    }]);
+    let mut query = |hive: &str, key: &str, name: &str| {
+        assert_eq!(
+            (hive, key, name),
+            ("HKLM", r"Software\PrimeW2", "Installed")
+        );
+        Ok(Some("1".to_owned()))
+    };
+    let results = verify_component_state_with_registry(&prefix, &m, &mut query).unwrap();
+    assert!(all_probes_pass(&results));
 }
 
 #[test]

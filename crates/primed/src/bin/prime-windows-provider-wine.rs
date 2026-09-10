@@ -1,24 +1,18 @@
 use prime_contracts::{ArtifactFormat, RuntimeFamily};
-use primed::{exec, windows_state};
+use primed::{exec, windows_state, windows_wine};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs;
+use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use thiserror::Error;
 use uuid::Uuid;
 
-const DONOR_BINARY: &str = "/usr/bin/wine";
-const DONOR_WINESERVER: &str = "/usr/sbin/wineserver";
-const DONOR_FINGERPRINT: &str =
-    "wine-core-11.0-3.fc44+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44";
-const PRIME_INIT_MARKER: &str = ".prime-w1-initialized";
 const COMPOSITOR_READINESS: &str = "/run/prime-compositor/readiness.json";
-const COMPOSITOR_RUNTIME: &str = "/run/prime-compositor";
 const COMPOSITOR_READINESS_SCHEMA: &str = "prime.compositor-readiness.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,7 +212,10 @@ fn map_state_error(error: windows_state::WindowsStateError) -> AdapterError {
 }
 
 fn validate_donor() -> Result<(), AdapterError> {
-    for binary in [DONOR_BINARY, DONOR_WINESERVER] {
+    for binary in [
+        windows_wine::WINDOWS_WINE_BINARY,
+        windows_wine::WINDOWS_WINESERVER_BINARY,
+    ] {
         validate_donor_binary(binary)?;
     }
     Ok(())
@@ -247,59 +244,29 @@ fn application_state_root(request: &ProviderRequest) -> PathBuf {
     windows_state::application_state_root(request.application_id)
 }
 
-fn application_prefix(request: &ProviderRequest) -> PathBuf {
-    windows_state::application_prefix(request.application_id)
-}
-
 fn donor_environment(
     request: &ProviderRequest,
     wayland_socket: Option<&str>,
 ) -> BTreeMap<String, String> {
-    let mut environment = BTreeMap::from([
-        (
-            "HOME".to_owned(),
-            request.runtime_dir.join("home").display().to_string(),
-        ),
-        ("LANG".to_owned(), "C.UTF-8".to_owned()),
-        ("PATH".to_owned(), "/usr/bin:/usr/sbin".to_owned()),
-        ("WINEDEBUG".to_owned(), "-all".to_owned()),
-        (
-            "WINEPREFIX".to_owned(),
-            application_prefix(request).display().to_string(),
-        ),
-        (
-            "XDG_CACHE_HOME".to_owned(),
-            request.runtime_dir.join("cache").display().to_string(),
-        ),
-        (
-            "XDG_CONFIG_HOME".to_owned(),
-            request.runtime_dir.join("config").display().to_string(),
-        ),
-    ]);
-    if let Some(socket) = wayland_socket {
-        environment.insert("XDG_RUNTIME_DIR".to_owned(), COMPOSITOR_RUNTIME.to_owned());
-        environment.insert("WAYLAND_DISPLAY".to_owned(), socket.to_owned());
-    }
-    environment
+    windows_wine::donor_environment(request.application_id, &request.runtime_dir, wayland_socket)
 }
 
 fn prefix_initialization_commands(
     request: &ProviderRequest,
     wayland_socket: Option<&str>,
 ) -> Vec<DonorCommand> {
-    let environment = donor_environment(request, wayland_socket);
-    vec![
-        DonorCommand {
-            program: PathBuf::from(DONOR_BINARY),
-            args: vec!["wineboot".to_owned(), "--init".to_owned()],
-            env: environment.clone(),
-        },
-        DonorCommand {
-            program: PathBuf::from(DONOR_WINESERVER),
-            args: vec!["-w".to_owned()],
-            env: environment,
-        },
-    ]
+    windows_wine::prefix_initialization_commands(
+        request.application_id,
+        &request.runtime_dir,
+        wayland_socket,
+    )
+    .into_iter()
+    .map(|spec| DonorCommand {
+        program: spec.program,
+        args: spec.args,
+        env: spec.env,
+    })
+    .collect()
 }
 
 fn acquire_initialization_lock(state_root: &Path) -> Result<fs::File, AdapterError> {
@@ -329,32 +296,16 @@ fn initialize_prefix(
 }
 
 fn prefix_marker_matches(prefix: &Path) -> Result<bool, AdapterError> {
-    let marker = prefix.join(PRIME_INIT_MARKER);
-    match fs::read_to_string(marker) {
-        Ok(value) => Ok(value == format!("{DONOR_FINGERPRINT}\n")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+    Ok(windows_wine::prefix_marker_matches(prefix)?)
 }
 
 fn write_prefix_marker(prefix: &Path) -> Result<(), AdapterError> {
-    let marker = prefix.join(PRIME_INIT_MARKER);
-    let temp = prefix.join(format!("{PRIME_INIT_MARKER}.{}.tmp", Uuid::now_v7()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)?;
-    file.write_all(format!("{DONOR_FINGERPRINT}\n").as_bytes())?;
-    file.sync_all()?;
-    fs::rename(&temp, &marker)?;
-    fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))?;
-    Ok(())
+    Ok(windows_wine::write_prefix_marker(prefix)?)
 }
 
 fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> DonorCommand {
     DonorCommand {
-        program: PathBuf::from(DONOR_BINARY),
+        program: PathBuf::from(windows_wine::WINDOWS_WINE_BINARY),
         args: vec![request.artifact.display().to_string()],
         env: donor_environment(request, wayland_socket),
     }
@@ -384,7 +335,7 @@ fn parse_wayland_socket(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::fs::{self, OpenOptions};
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -573,11 +524,15 @@ mod tests {
     fn prime_initialization_marker_requires_exact_donor_fingerprint() {
         let dir = tempdir().expect("tempdir");
         assert!(!prefix_marker_matches(dir.path()).expect("missing marker"));
-        fs::write(dir.path().join(PRIME_INIT_MARKER), b"wrong\n").expect("stale marker");
+        fs::write(
+            dir.path().join(windows_wine::PRIME_WINDOWS_INIT_MARKER),
+            b"wrong\n",
+        )
+        .expect("stale marker");
         assert!(!prefix_marker_matches(dir.path()).expect("stale marker"));
         fs::write(
-            dir.path().join(PRIME_INIT_MARKER),
-            format!("{DONOR_FINGERPRINT}\n"),
+            dir.path().join(windows_wine::PRIME_WINDOWS_INIT_MARKER),
+            format!("{}\n", windows_wine::WINDOWS_WINE_DONOR_FINGERPRINT),
         )
         .expect("current marker");
         assert!(prefix_marker_matches(dir.path()).expect("current marker"));

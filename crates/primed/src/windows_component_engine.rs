@@ -59,6 +59,28 @@ pub fn verify_component_state(
     prefix: &Path,
     manifest: &WindowsComponentManifest,
 ) -> Result<Vec<WindowsProbeResult>, WindowsComponentEngineError> {
+    verify_component_state_inner(prefix, manifest, None)
+}
+
+pub fn verify_component_state_with_registry<F>(
+    prefix: &Path,
+    manifest: &WindowsComponentManifest,
+    registry_query: &mut F,
+) -> Result<Vec<WindowsProbeResult>, WindowsComponentEngineError>
+where
+    F: FnMut(&str, &str, &str) -> Result<Option<String>, WindowsComponentEngineError>,
+{
+    verify_component_state_inner(prefix, manifest, Some(registry_query))
+}
+
+type RegistryQuery<'a> =
+    dyn FnMut(&str, &str, &str) -> Result<Option<String>, WindowsComponentEngineError> + 'a;
+
+fn verify_component_state_inner(
+    prefix: &Path,
+    manifest: &WindowsComponentManifest,
+    mut registry_query: Option<&mut RegistryQuery<'_>>,
+) -> Result<Vec<WindowsProbeResult>, WindowsComponentEngineError> {
     validate_prefix(prefix)?;
     let mut results = Vec::with_capacity(manifest.verification.len());
     for probe in &manifest.verification {
@@ -110,10 +132,24 @@ pub fn verify_component_state(
                     observed,
                 }
             }
-            WindowsVerificationProbe::RegistryValueEquals { .. } => {
-                return Err(WindowsComponentEngineError::ProbeUnsupported(
-                    "REGISTRY_VALUE_EQUALS requires the W2 donor query binding",
-                ));
+            WindowsVerificationProbe::RegistryValueEquals {
+                hive,
+                key,
+                name,
+                value,
+            } => {
+                let Some(query) = registry_query.as_mut() else {
+                    return Err(WindowsComponentEngineError::ProbeUnsupported(
+                        "REGISTRY_VALUE_EQUALS requires the W2 donor query binding",
+                    ));
+                };
+                let observed = (**query)(hive, key, name)?;
+                WindowsProbeResult {
+                    kind: "REGISTRY_VALUE_EQUALS".to_owned(),
+                    target: format!("{hive}\\{key}::{name}"),
+                    passed: observed.as_deref() == Some(value.as_str()),
+                    observed,
+                }
             }
         };
         results.push(result);

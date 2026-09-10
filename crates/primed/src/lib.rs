@@ -15,6 +15,7 @@ pub mod windows_component_engine;
 pub mod windows_components;
 pub mod windows_personality;
 pub mod windows_state;
+pub mod windows_wine;
 
 use prime_contracts::{
     CapabilityAccepts, CapabilityAvailability, CapabilityDescriptor, CapabilityHealth,
