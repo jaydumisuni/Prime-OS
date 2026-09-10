@@ -9,11 +9,12 @@ containerfile = (ROOT / "image/Containerfile").read_text()
 cargo = (ROOT / "crates/primed/Cargo.toml").read_text()
 proof = (ROOT / "tools/prove-p1-local.sh").read_text()
 source = (ROOT / "crates/primed/src/bin/prime-windows-provider-wine.rs").read_text()
+wine_source = (ROOT / "crates/primed/src/windows_wine.rs").read_text()
 
 checks = {
     "neutral binary target declared": 'name = "prime-windows-provider-w1"' in cargo and 'path = "src/bin/prime-windows-provider-wine.rs"' in cargo,
-    "adapter donor path fixed": 'const DONOR_BINARY: &str = "/usr/bin/wine";' in source,
-    "adapter donor fingerprint covers complete runtime": all(pkg in source for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
+    "adapter donor path fixed": 'pub const WINDOWS_WINE_BINARY: &str = "/usr/bin/wine";' in wine_source,
+    "adapter donor fingerprint covers complete runtime": all(pkg in wine_source for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),
     "manifest exists": manifest_path.is_file(),
     "donor decision exists": donor_doc.is_file(),
     "image installs complete pinned Fedora donor": all(pkg in containerfile for pkg in ["wine-core-11.0-3.fc44", "wine-common-11.0-3.fc44", "wine-mono-10.4.1-2.fc44"]),

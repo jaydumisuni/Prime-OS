@@ -64,6 +64,33 @@ RUN set -eux; \
     sha256sum target/release/prime-compositor > /prime-compositor.sha256; \
     sha256sum target/release/prime-shell > /prime-shell.sha256
 
+# Extract only the verified Wine Mono bridge DLLs needed by W3. The MinGW
+# package closure is build-only and must never inflate the final Prime rootfs.
+FROM ${PRIME_BASE_IMAGE} AS windows-managed-runtime-builder
+ARG TARGETARCH
+RUN --mount=type=tmpfs,target=/tmp \
+    set -eux; \
+    test "${TARGETARCH}" = "amd64"; \
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
+    dnf -y --setopt=install_weak_deps=False --disablerepo=fedora-cisco-openh264 install \
+        mingw64-win-iconv-0.0.10-4.fc44 \
+        mingw32-libgcc-16.1.1-1.fc44; \
+    rpm -q \
+        mingw64-win-iconv-0.0.10-4.fc44 \
+        mingw32-libgcc-16.1.1-1.fc44 \
+        mingw32-winpthreads-13.0.0-3.fc44; \
+    test "$(sha256sum /usr/x86_64-w64-mingw32/sys-root/mingw/bin/iconv.dll | cut -d ' ' -f1)" = '74e23093e962adceccf77d2b05af4f4c7d6deee4a524140a296609f849700fc2'; \
+    test "$(sha256sum /usr/i686-w64-mingw32/sys-root/mingw/bin/libgcc_s_dw2-1.dll | cut -d ' ' -f1)" = '09caac62f690912492418d5ca86c3340f5a76e5de07e5d6b7fe057e032b779d1'; \
+    test "$(sha256sum /usr/i686-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll | cut -d ' ' -f1)" = '1a8f18e693e49581c2d11d02812cadbaffa1bf6184353fa69ef35ac2950b9d9e'; \
+    install -d -m 0755 /prime-w3-runtime/x64 /prime-w3-runtime/x86; \
+    install -m 0444 /usr/x86_64-w64-mingw32/sys-root/mingw/bin/iconv.dll /prime-w3-runtime/x64/iconv.dll; \
+    install -m 0444 /usr/i686-w64-mingw32/sys-root/mingw/bin/libgcc_s_dw2-1.dll /prime-w3-runtime/x86/libgcc_s_dw2-1.dll; \
+    install -m 0444 /usr/i686-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll /prime-w3-runtime/x86/libwinpthread-1.dll; \
+    test "$(sha256sum /prime-w3-runtime/x64/iconv.dll | cut -d ' ' -f1)" = '74e23093e962adceccf77d2b05af4f4c7d6deee4a524140a296609f849700fc2'; \
+    test "$(sha256sum /prime-w3-runtime/x86/libgcc_s_dw2-1.dll | cut -d ' ' -f1)" = '09caac62f690912492418d5ca86c3340f5a76e5de07e5d6b7fe057e032b779d1'; \
+    test "$(sha256sum /prime-w3-runtime/x86/libwinpthread-1.dll | cut -d ' ' -f1)" = '1a8f18e693e49581c2d11d02812cadbaffa1bf6184353fa69ef35ac2950b9d9e'
+
 FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
@@ -81,6 +108,7 @@ RUN set -eux; \
 # OCI-storage digest, then rebuilds only the UKI stage with that digest.
 FROM scratch AS rootfs
 COPY --from=rootfs-builder / /
+COPY --from=windows-managed-runtime-builder /prime-w3-runtime /usr/lib/prime/windows-managed-runtime
 
 ARG TARGETARCH
 ARG PRIME_BASE_DIGEST
@@ -152,7 +180,10 @@ RUN set -eux; \
     test -x /usr/sbin/bootc; \
     test -x /usr/sbin/systemd-run; \
     test -x /usr/bin/wine; \
-    test -x /usr/bin/wine64
+    test -x /usr/bin/wine64; \
+    test "$(sha256sum /usr/lib/prime/windows-managed-runtime/x64/iconv.dll | cut -d ' ' -f1)" = '74e23093e962adceccf77d2b05af4f4c7d6deee4a524140a296609f849700fc2'; \
+    test "$(sha256sum /usr/lib/prime/windows-managed-runtime/x86/libgcc_s_dw2-1.dll | cut -d ' ' -f1)" = '09caac62f690912492418d5ca86c3340f5a76e5de07e5d6b7fe057e032b779d1'; \
+    test "$(sha256sum /usr/lib/prime/windows-managed-runtime/x86/libwinpthread-1.dll | cut -d ' ' -f1)" = '1a8f18e693e49581c2d11d02812cadbaffa1bf6184353fa69ef35ac2950b9d9e'
 
 COPY image/prime-os-release /usr/lib/os-release
 
