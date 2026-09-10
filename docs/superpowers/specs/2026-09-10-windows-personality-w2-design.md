@@ -256,7 +256,7 @@ W2 is locally complete only when the exact frozen revision proves all of the fol
 8. interrupted/stale marker state recovers deterministically;
 9. concurrent same-app installation attempts serialize under one lock;
 10. two different application prefixes can prepare independently;
-11. a real common-runtime recipe is installed or verified and then consumed by a dependent PE fixture;
+11. a real common-runtime component is installed or verified in a dependency-bearing application prefix, with its required files/registry state observed; actual managed-application consumption remains W3;
 12. normal W1 portable app with zero dependencies still follows the existing path unchanged;
 13. provider absent / component missing / wrong architecture / denied policy negative controls pass;
 14. full workspace regression + clippy + format + diff integrity;
