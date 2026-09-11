@@ -21,7 +21,7 @@
   "proof_fixtures": {
     "x64_console_sha256": "4842993c7c6698d8fc66c9c62aca984533e7564f5902950eb55eea1121a6c7c0",
     "x86_console_sha256": "2639135ff08bc8ae691dad7b0b545e711f9b406fc21686abbab78b7b14780ca2",
-    "winforms_x64_sha256": "d4118ba656b7f33495c2ae69a91c38574249f28be4d83c9277a377d74981b54b",
+    "winforms_x64_sha256": "87b0519a136b96796502f5b128b186b6a4d3f454a939fed54fad56286a14c89c",
     "expected_console_marker": "PRIME_W3_MANAGED_EXECUTED",
     "generated_binaries_committed": false
   },
@@ -74,13 +74,13 @@
     },
     "7_managed_gui": {
       "status": "PASS",
-      "artifact_sha256": "d4118ba656b7f33495c2ae69a91c38574249f28be4d83c9277a377d74981b54b",
+      "artifact_sha256": "87b0519a136b96796502f5b128b186b6a4d3f454a939fed54fad56286a14c89c",
       "cold_exit_code": 0,
       "warm_exit_code": 0,
       "visual_proof": {
-        "oracle_run_id": "prime-w3-gui-20260911-0002",
-        "artifact": "windows-w3-winforms-warm.png",
-        "sha256": "faff0e59bb232fabb8c192349d950c1f9e8bd0d1ab91a4c6f9ffc9b16f5261f5"
+        "oracle_run_id": "prime-w3-gui-20260911-frozen-source",
+        "artifact": "windows-w3-winforms-frozen-source.png",
+        "sha256": "91198ff383f56abcdb74ae1d11f2659fad0edb3ef979d0984f1776979ce11e84"
       },
       "notes": [
         "actual Prime W3 Managed GUI WinForms window visually inspected",
@@ -102,18 +102,21 @@
     "9_adversarial_controls": {
       "status": "PASS",
       "notes": [
-        "malformed CLR fails closed",
-        "missing/wrong managed dependency fails closed",
-        "bridge symlink and corruption controls pass",
-        "unsupported architecture and unavailable provider fail closed",
-        "W1/W2 regression remains green"
+        "malformed CLR metadata fails closed",
+        "missing/wrong managed runtime component pin fails closed",
+        "immutable bridge source SHA mismatch fails closed without marker",
+        "bridge symlink source/target fails closed",
+        "target corruption is repaired from verified immutable source",
+        "unsupported architecture has no compatible provider",
+        "missing provider directory is explicitly unavailable",
+        "W1/W2 runtime and security checkers remain green"
       ]
     },
     "10_freeze_certification": {
       "prefreeze_checks": {
         "workspace_tests": {
           "status": "PASS",
-          "count": 153,
+          "count": 154,
           "failures": 0
         },
         "clippy": "PASS",

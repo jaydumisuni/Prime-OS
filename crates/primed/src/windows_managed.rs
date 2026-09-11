@@ -324,6 +324,20 @@ mod tests {
     }
 
     #[test]
+    fn bridge_rejects_source_hash_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("prefix");
+        fs::create_dir_all(prefix.join("drive_c/windows/system32")).unwrap();
+        let source = dir.path().join("source.dll");
+        fs::write(&source, b"tampered").unwrap();
+        assert!(matches!(
+            ensure_managed_bridge(&prefix, &[fixture_spec(source)]),
+            Err(ManagedBridgeError::SourceHashMismatch(_))
+        ));
+        assert!(!prefix.join(PRIME_MANAGED_BRIDGE_MARKER).exists());
+    }
+
+    #[test]
     fn bridge_rejects_symlink_source_or_target() {
         let dir = tempfile::tempdir().unwrap();
         let prefix = dir.path().join("prefix");
