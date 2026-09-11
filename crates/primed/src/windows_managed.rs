@@ -302,7 +302,7 @@ mod tests {
         fs::write(&source, b"abc").unwrap();
         let spec = fixture_spec(source);
         assert_eq!(
-            ensure_managed_bridge(&prefix, &[spec.clone()]).unwrap(),
+            ensure_managed_bridge(&prefix, std::slice::from_ref(&spec)).unwrap(),
             ManagedBridgeOutcome::Repaired
         );
         let target = prefix.join(&spec.target_relative);
@@ -311,7 +311,7 @@ mod tests {
         let before = fs::metadata(&target).unwrap().modified().unwrap();
         fs::remove_file(prefix.join(PRIME_MANAGED_BRIDGE_MARKER)).unwrap();
         assert_eq!(
-            ensure_managed_bridge(&prefix, &[spec.clone()]).unwrap(),
+            ensure_managed_bridge(&prefix, std::slice::from_ref(&spec)).unwrap(),
             ManagedBridgeOutcome::AlreadySatisfied
         );
         assert_eq!(fs::metadata(&target).unwrap().modified().unwrap(), before);

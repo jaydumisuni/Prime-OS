@@ -1,0 +1,160 @@
+{
+  "schema": "prime.windows-w3-benchmark.v1",
+  "recorded_date": "2026-09-11",
+  "scope": "P4A/W3 managed .NET applications",
+  "base_sha": "4296dd694ec3ab91ff27b580d0887fbaf969d944",
+  "freeze_binding": "The exact frozen SHA is recorded by the external Formula-style verifier; this record is contained in that commit.",
+  "slice_commits": {
+    "design": "5b08227",
+    "clr_inspection": "e104d4c",
+    "managed_dependency_admission": "43af633",
+    "bridge_state": "bfd68fc",
+    "provider_integration": "9b16b68",
+    "image_closure": "0605f3e"
+  },
+  "bridge_contract": {
+    "fingerprint": "wine-mono-w3-v1+mingw64-win-iconv-0.0.10-4.fc44+mingw32-libgcc-16.1.1-1.fc44+mingw32-winpthreads-13.0.0-3.fc44",
+    "x64_iconv_sha256": "74e23093e962adceccf77d2b05af4f4c7d6deee4a524140a296609f849700fc2",
+    "x86_libgcc_sha256": "09caac62f690912492418d5ca86c3340f5a76e5de07e5d6b7fe057e032b779d1",
+    "x86_libwinpthread_sha256": "1a8f18e693e49581c2d11d02812cadbaffa1bf6184353fa69ef35ac2950b9d9e"
+  },
+  "proof_fixtures": {
+    "x64_console_sha256": "4842993c7c6698d8fc66c9c62aca984533e7564f5902950eb55eea1121a6c7c0",
+    "x86_console_sha256": "2639135ff08bc8ae691dad7b0b545e711f9b406fc21686abbab78b7b14780ca2",
+    "winforms_x64_sha256": "d4118ba656b7f33495c2ae69a91c38574249f28be4d83c9277a377d74981b54b",
+    "expected_console_marker": "PRIME_W3_MANAGED_EXECUTED",
+    "generated_binaries_committed": false
+  },
+  "gates": {
+    "1_clr_inspection": {
+      "status": "PASS",
+      "notes": [
+        "valid COM descriptor plus BSJB recognized as managed",
+        "native PE remains unmanaged",
+        "malformed CLR metadata fails closed"
+      ]
+    },
+    "2_managed_dependency_admission": {
+      "status": "PASS",
+      "component": "runtime.wine-mono@1",
+      "component_digest": "sha256:47526839b2fc8c981330d77d2c3b6a4b2528b5cff2ddd547f33aef0671782689",
+      "notes": [
+        "missing or wrong pin rejected",
+        "native W1 path remains unmanaged"
+      ]
+    },
+    "3_bridge_source_contract": {
+      "status": "PASS",
+      "notes": [
+        "exact immutable Prime-owned sources",
+        "regular non-symlink source required",
+        "three source SHA-256 identities pinned"
+      ]
+    },
+    "4_bridge_projection_recovery": {
+      "status": "PASS",
+      "notes": [
+        "application-scoped compatibility lock",
+        "atomic projection",
+        "marker is cache hint only",
+        "deliberate corruption repaired to exact source SHA"
+      ]
+    },
+    "5_x64_managed_console": {
+      "status": "PASS",
+      "artifact_sha256": "4842993c7c6698d8fc66c9c62aca984533e7564f5902950eb55eea1121a6c7c0",
+      "exit_code": 0,
+      "stdout_marker": "PRIME_W3_MANAGED_EXECUTED"
+    },
+    "6_x86_managed_console": {
+      "status": "PASS",
+      "artifact_sha256": "2639135ff08bc8ae691dad7b0b545e711f9b406fc21686abbab78b7b14780ca2",
+      "exit_code": 0,
+      "stdout_marker": "PRIME_W3_MANAGED_EXECUTED"
+    },
+    "7_managed_gui": {
+      "status": "PASS",
+      "artifact_sha256": "d4118ba656b7f33495c2ae69a91c38574249f28be4d83c9277a377d74981b54b",
+      "cold_exit_code": 0,
+      "warm_exit_code": 0,
+      "visual_proof": {
+        "oracle_run_id": "prime-w3-gui-20260911-0002",
+        "artifact": "windows-w3-winforms-warm.png",
+        "sha256": "faff0e59bb232fabb8c192349d950c1f9e8bd0d1ab91a4c6f9ffc9b16f5261f5"
+      },
+      "notes": [
+        "actual Prime W3 Managed GUI WinForms window visually inspected",
+        "proof-only headless Weston compositor; Prime product compositor unchanged"
+      ]
+    },
+    "8_lifecycle_stress_isolation": {
+      "status": "PASS",
+      "warm_repeat_count": 12,
+      "same_application_cold_concurrent": 2,
+      "cross_application_concurrent": 2,
+      "corruption_recovery": true,
+      "live_wine_processes_after_drain": 0,
+      "notes": [
+        "Windows CRLF proof marker normalized byte-exactly in harness",
+        "distinct application prefixes retained exact bridge hashes"
+      ]
+    },
+    "9_adversarial_controls": {
+      "status": "PASS",
+      "notes": [
+        "malformed CLR fails closed",
+        "missing/wrong managed dependency fails closed",
+        "bridge symlink and corruption controls pass",
+        "unsupported architecture and unavailable provider fail closed",
+        "W1/W2 regression remains green"
+      ]
+    },
+    "10_freeze_certification": {
+      "prefreeze_checks": {
+        "workspace_tests": {
+          "status": "PASS",
+          "count": 153,
+          "failures": 0
+        },
+        "clippy": "PASS",
+        "format": "PASS",
+        "diff_integrity": "PASS",
+        "w1_provider_checker": "PASS",
+        "w1_security_checker": "PASS",
+        "w2_provider_checker": {
+          "status": "PASS",
+          "count": 10
+        },
+        "w2_security_checker": {
+          "status": "PASS",
+          "count": 10
+        },
+        "w2_negative_controls": {
+          "status": "PASS",
+          "count": 8
+        },
+        "w3_provider_checker": {
+          "status": "PASS",
+          "count": 10
+        }
+      },
+      "required_external_binding": [
+        "current Sergeant review of complete W3 changed-file scope",
+        "exact frozen-SHA runtime rerun",
+        "Formula PASS manifest",
+        "remote SHA verification"
+      ]
+    }
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ],
+  "not_claimed": [
+    "W4 DirectX/GPU acceleration",
+    "W5 COM completeness",
+    "W6 Windows services",
+    "W7 USB/device integration",
+    "W8 VM fallback",
+    "W9 TTG workload certification"
+  ]
+}
