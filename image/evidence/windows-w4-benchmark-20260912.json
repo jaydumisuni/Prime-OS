@@ -2,7 +2,7 @@
   "schema": "prime.windows-w4-benchmark.v1",
   "scope": "P4A/W4 DirectX/GPU acceleration",
   "base_sha": "8af61f4cb604b64172e35c0ca76b4b4693a17623",
-  "current_head": "2feff8cbe9e784a5e9d795b05a5cf783b8bbeeca",
+  "current_head": "36c7da308e2a23ea5f76fd36d66890234e89c23b",
   "state": "IN_PROGRESS",
   "gates": {
     "1_predecessor_authority": {
@@ -24,14 +24,22 @@
       ]
     },
     "3_dxvk_source_contract": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "official DXVK v2.7.1 archive SHA-256 d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87 verified on KRATOS",
+        "single architecture-complete upstream payload authority provides matched x64 and x32 DLLs",
+        "10 image-owned source paths pinned under /usr/lib/prime/windows-gpu-runtime/{x64,x86}",
+        "all 10 DLL SHA-256 values pinned in windows_gpu::dxvk_source_specs",
+        "regular non-symlink source and exact hash verification RED->GREEN",
+        "primed 77/77 PASS; clippy -D warnings PASS"
+      ]
     },
     "4_x64_projection_recovery": {
       "status": "PENDING"
     },
     "5_x86_projection_recovery": {
       "status": "PENDING",
-      "blocker": "Fedora 44 wine-dxvk x86_64 payload is identified; equivalent i686 Wine-DXVK payload/source is not yet proven. Do not claim x86 acceleration until donor packaging or another exact compatible source is evidenced."
+      "blocker": "Exact x86 DXVK source bytes are now resolved from the same upstream v2.7.1 archive as x64. Remaining work is implementation/proof of x86 projection, repair and override construction."
     },
     "6_vulkan_capability_controls": {
       "status": "PENDING"
@@ -61,6 +69,6 @@
   ],
   "notes": [
     "Fedora 44 wine-dxvk 2.7.1-6.fc44 x86_64 exposes /usr/lib64/wine-wow64/wine/x86_64-windows/dxvk-d3d11.dll and subpackage peers.",
-    "No Fedora 44 i686 wine-dxvk package was established in current donor research; Fedora 44 i686 wine-core exists."
+    "W4 source authority uses official DXVK v2.7.1 archive for both x64 and x86 to avoid mixed-build architecture payloads; Fedora wine-dxvk remains corroborating integration evidence."
   ]
 }
