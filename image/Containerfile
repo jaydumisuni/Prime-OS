@@ -24,10 +24,10 @@ RUN --mount=type=tmpfs,target=/tmp \
         pkgconf-pkg-config \
         'pkgconfig(libinput)' \
         'pkgconfig(libudev)' \
-        'pkgconfig(gbm)' \
+        mesa-libgbm-devel-26.1.7-1.fc44.x86_64 \
         'pkgconfig(libseat)' \
         'pkgconfig(xkbcommon)' \
-        'pkgconfig(wayland-server)' \
+        wayland-devel-1.25.0-1.fc44.x86_64 \
         'pkgconfig(egl)' \
         'pkgconfig(glesv2)' \
         'pkgconfig(libdrm)'; \
@@ -343,6 +343,7 @@ RUN set -eux; \
     test -L /etc/systemd/system/graphical.target.wants/prime-shell.service; \
     test -L /etc/systemd/system/graphical.target.wants/prime-first-light-witness.service; \
     test ! -e /etc/systemd/system/timers.target.wants/bootc-fetch-apply-updates.timer; \
+    rm -rf /run/lock; \
     bootc container lint --fatal-warnings
 
 FROM rootfs AS split
