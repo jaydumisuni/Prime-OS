@@ -13,6 +13,7 @@ checks = {
     "Mesa Vulkan driver matches frozen Mesa closure": "mesa-vulkan-drivers-26.1.7-1.fc44" in container,
     "Vulkan loader path is asserted": "test -e /usr/lib64/libvulkan.so.1" in container,
     "Vulkan ICD directory is asserted": "test -d /usr/share/vulkan/icd.d" in container,
+    "x86 Wine core is pinned": "wine-core-11.0-3.fc44.i686" in container,
 }
 failed = [name for name, ok in checks.items() if not ok]
 for name, ok in checks.items():

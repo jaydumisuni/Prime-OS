@@ -9,7 +9,7 @@ use uuid::Uuid;
 pub const WINDOWS_WINE_BINARY: &str = "/usr/bin/wine";
 pub const WINDOWS_WINESERVER_BINARY: &str = "/usr/sbin/wineserver";
 pub const WINDOWS_WINE_DONOR_FINGERPRINT: &str =
-    "wine-core-11.0-3.fc44+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44";
+    "wine-core-11.0-3.fc44.x86_64+wine-core-11.0-3.fc44.i686+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44";
 pub const PRIME_WINDOWS_INIT_MARKER: &str = ".prime-w1-initialized";
 pub const PRIME_COMPOSITOR_RUNTIME: &str = "/run/prime-compositor";
 
@@ -124,7 +124,7 @@ mod tests {
     fn donor_fingerprint_binds_complete_fedora_runtime_closure() {
         assert_eq!(
             WINDOWS_WINE_DONOR_FINGERPRINT,
-            "wine-core-11.0-3.fc44+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44"
+            "wine-core-11.0-3.fc44.x86_64+wine-core-11.0-3.fc44.i686+wine-common-11.0-3.fc44+wine-mono-10.4.1-2.fc44"
         );
     }
 

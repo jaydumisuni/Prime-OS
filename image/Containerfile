@@ -178,7 +178,8 @@ RUN set -eux; \
         vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
-        wine-core-11.0-3.fc44 \
+        wine-core-11.0-3.fc44.x86_64 \
+        wine-core-11.0-3.fc44.i686 \
         wine-common-11.0-3.fc44 \
         wine-mono-10.4.1-2.fc44; \
     rpm -q \
@@ -196,7 +197,8 @@ RUN set -eux; \
         vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
-        wine-core-11.0-3.fc44 \
+        wine-core-11.0-3.fc44.x86_64 \
+        wine-core-11.0-3.fc44.i686 \
         wine-common-11.0-3.fc44 \
         wine-mono-10.4.1-2.fc44; \
     if rpm -q bootupd >/dev/null 2>&1; then dnf -y remove bootupd; fi; \
