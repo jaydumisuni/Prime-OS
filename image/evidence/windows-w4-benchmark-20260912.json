@@ -1,0 +1,60 @@
+{
+  "schema": "prime.windows-w4-benchmark.v1",
+  "scope": "P4A/W4 DirectX/GPU acceleration",
+  "base_sha": "8af61f4cb604b64172e35c0ca76b4b4693a17623",
+  "current_head": "5660d135675f694eddb4b7deadf19b7a9a417aec",
+  "state": "IN_PROGRESS",
+  "gates": {
+    "1_predecessor_authority": {
+      "status": "PASS",
+      "evidence": [
+        "W3 exact frozen SHA 8af61f4cb604b64172e35c0ca76b4b4693a17623 is ancestor",
+        "W4 isolated branch feature/windows-personality-w4-directx",
+        "W3 cockpit/frozen evidence preserved"
+      ]
+    },
+    "2_directx_import_recognition": {
+      "status": "PASS",
+      "evidence": [
+        "RED compile failure before inspect_directx_pe implementation",
+        "Direct3D/DXGI import recognition tests PASS",
+        "unmapped import-directory negative control PASS",
+        "primed lib tests 75/75 PASS",
+        "workspace heavy cycle PASS at 5660d135675f"
+      ]
+    },
+    "3_dxvk_source_contract": {
+      "status": "PENDING"
+    },
+    "4_x64_projection_recovery": {
+      "status": "PENDING"
+    },
+    "5_x86_projection_recovery": {
+      "status": "PENDING"
+    },
+    "6_vulkan_capability_controls": {
+      "status": "PENDING"
+    },
+    "7_x64_accelerated_runtime": {
+      "status": "PENDING"
+    },
+    "8_x86_accelerated_runtime": {
+      "status": "PENDING"
+    },
+    "9_lifecycle_adversarial_regression": {
+      "status": "PENDING"
+    },
+    "10_freeze_certification": {
+      "status": "PENDING",
+      "prefreeze_checks": {}
+    }
+  },
+  "current_review": {
+    "head": "5660d135675f694eddb4b7deadf19b7a9a417aec",
+    "sergeant": "APPROVE",
+    "confidence": 0.88
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ]
+}
