@@ -2,7 +2,7 @@
   "schema": "prime.windows-w4-benchmark.v1",
   "scope": "P4A/W4 DirectX/GPU acceleration",
   "base_sha": "8af61f4cb604b64172e35c0ca76b4b4693a17623",
-  "current_head": "36c7da308e2a23ea5f76fd36d66890234e89c23b",
+  "current_head": "6cfb54153637b3a315c70f72942987cc754b2ad9",
   "state": "IN_PROGRESS",
   "gates": {
     "1_predecessor_authority": {
@@ -35,14 +35,30 @@
       ]
     },
     "4_x64_projection_recovery": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "architecture-specific x64 DXVK projection to system32",
+        "corrupt target repair and symlink-target rejection tests PASS",
+        "native-only override construction proven"
+      ]
     },
     "5_x86_projection_recovery": {
-      "status": "PENDING",
-      "blocker": "Exact x86 DXVK source bytes are now resolved from the same upstream v2.7.1 archive as x64. Remaining work is implementation/proof of x86 projection, repair and override construction."
+      "status": "PASS",
+      "evidence": [
+        "architecture-specific x86 DXVK projection to syswow64",
+        "same repair/symlink invariants as x64",
+        "x86 native-only override construction proven"
+      ]
     },
     "6_vulkan_capability_controls": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "Vulkan loader/ICD fail-closed validator PASS",
+        "safe versioned loader symlink confined to trusted parent PASS",
+        "escape symlink and empty/malformed ICD controls rejected",
+        "Fedora image pins vulkan-loader 1.4.341.0-1.fc44, mesa-vulkan-drivers 26.1.7-1.fc44, vulkan-tools 1.4.341.0-1.fc44",
+        "workspace tests, clippy -D warnings, fmt and provider contract PASS"
+      ]
     },
     "7_x64_accelerated_runtime": {
       "status": "PENDING"
