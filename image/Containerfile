@@ -91,6 +91,36 @@ RUN --mount=type=tmpfs,target=/tmp \
     test "$(sha256sum /prime-w3-runtime/x86/libgcc_s_dw2-1.dll | cut -d ' ' -f1)" = '09caac62f690912492418d5ca86c3340f5a76e5de07e5d6b7fe057e032b779d1'; \
     test "$(sha256sum /prime-w3-runtime/x86/libwinpthread-1.dll | cut -d ' ' -f1)" = '1a8f18e693e49581c2d11d02812cadbaffa1bf6184353fa69ef35ac2950b9d9e'
 
+
+# Build the immutable W4 DXVK payload from one architecture-complete upstream
+# release. Both x64 and x86 bytes are bound to the same archive digest.
+FROM ${PRIME_BASE_IMAGE} AS windows-gpu-runtime-builder
+ARG TARGETARCH
+RUN --mount=type=tmpfs,target=/tmp \
+    set -eux; \
+    test "${TARGETARCH}" = "amd64"; \
+    grep -q '^ID=fedora$' /usr/lib/os-release; \
+    grep -q '^VERSION_ID=44$' /usr/lib/os-release; \
+    dnf -y --setopt=install_weak_deps=False --disablerepo=fedora-cisco-openh264 install ca-certificates curl gzip tar; \
+    curl --proto '=https' --tlsv1.2 -fL \
+      -o /tmp/dxvk-2.7.1.tar.gz \
+      https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz; \
+    test "$(sha256sum /tmp/dxvk-2.7.1.tar.gz | cut -d ' ' -f1)" = 'd85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87'; \
+    tar -xzf /tmp/dxvk-2.7.1.tar.gz -C /tmp; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x64/d3d8.dll | cut -d ' ' -f1)" = '253dcda5bd9791b36dbdbc99881f518c6b867a78c19448e664782a4fa306c2a5'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x64/d3d9.dll | cut -d ' ' -f1)" = '2740233a94774fa64a1e07c6eaf94f67027a3c7594ff3b48f7a1c9801777e5a9'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x64/d3d10core.dll | cut -d ' ' -f1)" = '3bf5fec5115649dfb6fed1613a4c3f9487c2f2aaf74c2786d9f9d7d21a2f1482'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x64/d3d11.dll | cut -d ' ' -f1)" = '523da2cd765dd51d99fe1644b24f9ee7ee6247e4c98953bcc449ce84cd303405'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x64/dxgi.dll | cut -d ' ' -f1)" = 'ec02eb37620ff52361cb45376a4611fc4210d96e71d0363f1cc9807f151c01be'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x32/d3d8.dll | cut -d ' ' -f1)" = '901d4f234cad5b9c6c9f0323aba123bfa8c096dcf6f7bfbe24d3ec3c3798d348'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x32/d3d9.dll | cut -d ' ' -f1)" = '00ecd422b3b12e9d3b309785f3f19431405389d80eb4a37018ebc63e2d87d900'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x32/d3d10core.dll | cut -d ' ' -f1)" = '9f305720d5be52a8329cebb34f3c2e26ca3decace0d57b1d618531673d11e9bc'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x32/d3d11.dll | cut -d ' ' -f1)" = '7406e13d2694244499783d2e9fb1be285b6324890a348137fe5b5042c64b5913'; \
+    test "$(sha256sum /tmp/dxvk-2.7.1/x32/dxgi.dll | cut -d ' ' -f1)" = '53defc65dd2e53d05924a960c0891e15692ca8780ed0509a1a7efda71f4d631e'; \
+    install -d -m 0755 /prime-w4-runtime/x64 /prime-w4-runtime/x86; \
+    install -m 0444 /tmp/dxvk-2.7.1/x64/d3d8.dll /tmp/dxvk-2.7.1/x64/d3d9.dll /tmp/dxvk-2.7.1/x64/d3d10core.dll /tmp/dxvk-2.7.1/x64/d3d11.dll /tmp/dxvk-2.7.1/x64/dxgi.dll /prime-w4-runtime/x64/; \
+    install -m 0444 /tmp/dxvk-2.7.1/x32/d3d8.dll /tmp/dxvk-2.7.1/x32/d3d9.dll /tmp/dxvk-2.7.1/x32/d3d10core.dll /tmp/dxvk-2.7.1/x32/d3d11.dll /tmp/dxvk-2.7.1/x32/dxgi.dll /prime-w4-runtime/x86/
+
 FROM ${PRIME_BASE_IMAGE} AS rootfs-builder
 
 ARG TARGETARCH
@@ -109,6 +139,7 @@ RUN set -eux; \
 FROM scratch AS rootfs
 COPY --from=rootfs-builder / /
 COPY --from=windows-managed-runtime-builder /prime-w3-runtime /usr/lib/prime/windows-managed-runtime
+COPY --from=windows-gpu-runtime-builder /prime-w4-runtime /usr/lib/prime/windows-gpu-runtime
 
 ARG TARGETARCH
 ARG PRIME_BASE_DIGEST
