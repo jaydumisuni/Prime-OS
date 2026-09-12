@@ -54,6 +54,98 @@ pub fn read_verified_dxvk_source(spec: &DxvkSourceSpec) -> Result<Vec<u8>, DxvkS
     Ok(bytes)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VulkanCapability {
+    pub icd_count: usize,
+}
+
+#[derive(Debug, Error)]
+pub enum VulkanCapabilityError {
+    #[error("Vulkan loader is unsafe: {0}")]
+    UnsafeLoader(String),
+    #[error("Vulkan ICD directory is unsafe: {0}")]
+    UnsafeIcdDirectory(String),
+    #[error("no usable Vulkan ICD is available")]
+    NoUsableIcd,
+    #[error("Vulkan capability I/O failed: {0}")]
+    Io(#[from] io::Error),
+}
+
+pub fn validate_vulkan_capability(
+    loader: &Path,
+    icd_dir: &Path,
+) -> Result<VulkanCapability, VulkanCapabilityError> {
+    let loader_meta = fs::symlink_metadata(loader).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            VulkanCapabilityError::UnsafeLoader(loader.display().to_string())
+        } else {
+            VulkanCapabilityError::Io(error)
+        }
+    })?;
+    if loader_meta.file_type().is_symlink() {
+        let parent = loader
+            .parent()
+            .ok_or_else(|| VulkanCapabilityError::UnsafeLoader(loader.display().to_string()))?;
+        let trusted_parent = fs::canonicalize(parent)?;
+        let resolved = fs::canonicalize(loader)?;
+        let resolved_meta = fs::metadata(&resolved)?;
+        if !resolved.starts_with(&trusted_parent) || !resolved_meta.file_type().is_file() {
+            return Err(VulkanCapabilityError::UnsafeLoader(
+                loader.display().to_string(),
+            ));
+        }
+    } else if !loader_meta.file_type().is_file() {
+        return Err(VulkanCapabilityError::UnsafeLoader(
+            loader.display().to_string(),
+        ));
+    }
+    let dir_meta = fs::symlink_metadata(icd_dir).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            VulkanCapabilityError::UnsafeIcdDirectory(icd_dir.display().to_string())
+        } else {
+            VulkanCapabilityError::Io(error)
+        }
+    })?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err(VulkanCapabilityError::UnsafeIcdDirectory(
+            icd_dir.display().to_string(),
+        ));
+    }
+    let mut usable = 0usize;
+    for entry in fs::read_dir(icd_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&fs::read(&path)?) else {
+            continue;
+        };
+        let Some(icd) = value.get("ICD") else {
+            continue;
+        };
+        let library = icd
+            .get("library_path")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let api = icd
+            .get("api_version")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if !library.is_empty() && !api.is_empty() {
+            usable += 1;
+        }
+    }
+    if usable == 0 {
+        return Err(VulkanCapabilityError::NoUsableIcd);
+    }
+    Ok(VulkanCapability { icd_count: usable })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DxvkArchitecture {
     X64,
@@ -310,6 +402,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vulkan_capability_requires_regular_loader_and_well_formed_icd() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let loader = dir.path().join("libvulkan.so.1");
+        let icd_dir = dir.path().join("icd.d");
+        fs::create_dir(&icd_dir).unwrap();
+        fs::write(&loader, b"loader").unwrap();
+        fs::write(icd_dir.join("intel_icd.x86_64.json"), r#"{"file_format_version":"1.0.0","ICD":{"library_path":"libvulkan_intel.so","api_version":"1.4.0"}}"#).unwrap();
+        let capability = validate_vulkan_capability(&loader, &icd_dir).unwrap();
+        assert_eq!(capability.icd_count, 1);
+
+        fs::write(icd_dir.join("intel_icd.x86_64.json"), b"{}").unwrap();
+        assert!(matches!(
+            validate_vulkan_capability(&loader, &icd_dir),
+            Err(VulkanCapabilityError::NoUsableIcd)
+        ));
+
+        fs::write(icd_dir.join("intel_icd.x86_64.json"), r#"{"file_format_version":"1.0.0","ICD":{"library_path":"libvulkan_intel.so","api_version":"1.4.0"}}"#).unwrap();
+
+        let loader_dir = dir.path().join("lib64");
+        fs::create_dir(&loader_dir).unwrap();
+        let versioned_loader = loader_dir.join("libvulkan.so.1.4.341");
+        fs::write(&versioned_loader, b"loader").unwrap();
+        let loader_link = loader_dir.join("libvulkan.so.1");
+        symlink("libvulkan.so.1.4.341", &loader_link).unwrap();
+        assert_eq!(
+            validate_vulkan_capability(&loader_link, &icd_dir)
+                .unwrap()
+                .icd_count,
+            1
+        );
+
+        let outside = dir.path().join("outside-loader");
+        fs::write(&outside, b"loader").unwrap();
+        fs::remove_file(&loader_link).unwrap();
+        symlink(&outside, &loader_link).unwrap();
+        assert!(matches!(
+            validate_vulkan_capability(&loader_link, &icd_dir),
+            Err(VulkanCapabilityError::UnsafeLoader(_))
+        ));
+    }
+
+    #[test]
     fn production_projection_maps_each_architecture_to_its_exact_prefix_directory() {
         let x64 = dxvk_projection_specs(DxvkArchitecture::X64);
         let x86 = dxvk_projection_specs(DxvkArchitecture::X86);
@@ -367,8 +503,14 @@ mod tests {
             target_relative: PathBuf::from("drive_c/windows/syswow64/d3d9.dll"),
             sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         };
-        assert_eq!(ensure_dxvk_projection(&prefix, std::slice::from_ref(&spec)).unwrap(), DxvkProjectionOutcome::Repaired);
-        assert_eq!(fs::read(prefix.join(&spec.target_relative)).unwrap(), b"abc");
+        assert_eq!(
+            ensure_dxvk_projection(&prefix, std::slice::from_ref(&spec)).unwrap(),
+            DxvkProjectionOutcome::Repaired
+        );
+        assert_eq!(
+            fs::read(prefix.join(&spec.target_relative)).unwrap(),
+            b"abc"
+        );
         assert_eq!(native_only_overrides(&["d3d9.dll".into()]), "d3d9=n");
     }
 

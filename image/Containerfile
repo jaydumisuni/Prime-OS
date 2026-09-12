@@ -173,6 +173,9 @@ RUN set -eux; \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
+        mesa-vulkan-drivers-26.1.7-1.fc44 \
+        vulkan-loader-1.4.341.0-1.fc44 \
+        vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
         wine-core-11.0-3.fc44 \
@@ -188,6 +191,9 @@ RUN set -eux; \
         mesa-dri-drivers-26.1.7-1.fc44 \
         mesa-libEGL-26.1.7-1.fc44 \
         mesa-libgbm-26.1.7-1.fc44 \
+        mesa-vulkan-drivers-26.1.7-1.fc44 \
+        vulkan-loader-1.4.341.0-1.fc44 \
+        vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
         wine-core-11.0-3.fc44 \
@@ -283,6 +289,9 @@ RUN set -eux; \
     test -e /usr/lib64/libgbm.so.1; \
     test -e /usr/lib64/libdrm.so.2; \
     test -e /usr/lib64/dri/iris_dri.so; \
+    test -e /usr/lib64/libvulkan.so.1; \
+    test -d /usr/share/vulkan/icd.d; \
+    test -x /usr/bin/vulkaninfo; \
     rpm -qf /usr/lib64/libEGL.so.1 | grep -Fx 'libglvnd-egl-1.7.0-9.fc44.x86_64'; \
     rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.7-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.7-1.fc44.x86_64'; \
