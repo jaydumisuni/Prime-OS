@@ -1,0 +1,55 @@
+{
+  "schema": "prime.windows-w5-benchmark.v1",
+  "scope": "P4A/W5 COM",
+  "base_sha": "f99c7f8245e3324ed699ad388a55aa40f71c7dc7",
+  "state": "IN_PROGRESS",
+  "gates": {
+    "1_predecessor_authority": {
+      "status": "PASS",
+      "evidence": [
+        "W5 isolated branch created directly from frozen W4 SHA f99c7f8245e3324ed699ad388a55aa40f71c7dc7"
+      ]
+    },
+    "2_com_donor_closure": {
+      "status": "PASS",
+      "evidence": [
+        "sealed image localhost/prime-w4-rootfs:proof-f99c7f8",
+        "image id 7988ce58338df135c58d5da53af91b4672b90bad5d1374564cba07cd6642b5f4",
+        "digest sha256:bb2fb8ab436e717960d3cc472dc7dda054d4323f74428e67c90e5089503cb2b1",
+        "x64/x86 ole32 oleaut32 combase rpcrt4 rpcss regsvr32 wscript cscript scrrun present"
+      ]
+    },
+    "3_com_automation_smoke": {
+      "status": "PASS",
+      "evidence": [
+        "x64 cscript Scripting.Dictionary returned PRIME_W5_COM_OK exit 0",
+        "SysWOW64 cscript returned PRIME_W5_COM_OK exit 0"
+      ]
+    },
+    "4_x64_inproc_provider_runtime": {
+      "status": "PENDING"
+    },
+    "5_x86_inproc_provider_runtime": {
+      "status": "PENDING"
+    },
+    "6_registration_isolation_recovery": {
+      "status": "PENDING"
+    },
+    "7_x64_local_server_rpcss": {
+      "status": "PENDING"
+    },
+    "8_x86_local_server_rpcss": {
+      "status": "PENDING"
+    },
+    "9_lifecycle_adversarial_regression": {
+      "status": "PENDING"
+    },
+    "10_freeze_certification": {
+      "status": "PENDING",
+      "prefreeze_checks": {}
+    }
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ]
+}
