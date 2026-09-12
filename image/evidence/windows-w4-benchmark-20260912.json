@@ -2,7 +2,7 @@
   "schema": "prime.windows-w4-benchmark.v1",
   "scope": "P4A/W4 DirectX/GPU acceleration",
   "base_sha": "8af61f4cb604b64172e35c0ca76b4b4693a17623",
-  "current_head": "5660d135675f694eddb4b7deadf19b7a9a417aec",
+  "current_head": "2feff8cbe9e784a5e9d795b05a5cf783b8bbeeca",
   "state": "IN_PROGRESS",
   "gates": {
     "1_predecessor_authority": {
@@ -30,7 +30,8 @@
       "status": "PENDING"
     },
     "5_x86_projection_recovery": {
-      "status": "PENDING"
+      "status": "PENDING",
+      "blocker": "Fedora 44 wine-dxvk x86_64 payload is identified; equivalent i686 Wine-DXVK payload/source is not yet proven. Do not claim x86 acceleration until donor packaging or another exact compatible source is evidenced."
     },
     "6_vulkan_capability_controls": {
       "status": "PENDING"
@@ -39,7 +40,8 @@
       "status": "PENDING"
     },
     "8_x86_accelerated_runtime": {
-      "status": "PENDING"
+      "status": "PENDING",
+      "blocker": "Depends on gate 5 exact x86 DXVK donor resolution and real accelerated x86 runtime proof."
     },
     "9_lifecycle_adversarial_regression": {
       "status": "PENDING"
@@ -56,5 +58,9 @@
   },
   "deferred": [
     "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ],
+  "notes": [
+    "Fedora 44 wine-dxvk 2.7.1-6.fc44 x86_64 exposes /usr/lib64/wine-wow64/wine/x86_64-windows/dxvk-d3d11.dll and subpackage peers.",
+    "No Fedora 44 i686 wine-dxvk package was established in current donor research; Fedora 44 i686 wine-core exists."
   ]
 }
