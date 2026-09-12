@@ -278,6 +278,226 @@ pub fn inspect_managed_pe(path: &Path) -> Result<Option<ManagedPeInspection>, Ma
     Ok(Some(result))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectxPeInspection {
+    pub imports: Vec<String>,
+    pub dxvk_eligible: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum DirectxPeError {
+    #[error("DirectX PE inspection I/O failed: {0}")]
+    Io(#[from] io::Error),
+    #[error("DirectX PE artifact path is a symbolic link")]
+    Symlink,
+    #[error("DirectX PE artifact is not a regular file")]
+    NotRegularFile,
+    #[error("DirectX PE artifact changed while it was being inspected")]
+    ChangedDuringInspection,
+    #[error("malformed DirectX PE: {0}")]
+    Malformed(&'static str),
+}
+
+pub fn inspect_directx_pe(path: &Path) -> Result<Option<DirectxPeInspection>, DirectxPeError> {
+    let before_path = fs::symlink_metadata(path)?;
+    if before_path.file_type().is_symlink() {
+        return Err(DirectxPeError::Symlink);
+    }
+    if !before_path.file_type().is_file() {
+        return Err(DirectxPeError::NotRegularFile);
+    }
+    let stamp = FileStamp::from(&before_path);
+    let file = File::open(path)?;
+    if FileStamp::from(&file.metadata()?) != stamp {
+        return Err(DirectxPeError::ChangedDuringInspection);
+    }
+
+    let mut dos = [0_u8; 64];
+    directx_read_exact(&file, stamp.length, 0, &mut dos)?;
+    if &dos[0..2] != b"MZ" {
+        directx_verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    let pe_offset = u32::from_le_bytes(dos[0x3c..0x40].try_into().unwrap()) as u64;
+    let mut coff = [0_u8; 24];
+    directx_read_exact(&file, stamp.length, pe_offset, &mut coff)?;
+    if &coff[0..4] != b"PE\0\0" {
+        return Err(DirectxPeError::Malformed("PE signature is invalid"));
+    }
+    let section_count = u16::from_le_bytes([coff[6], coff[7]]) as usize;
+    let optional_size = u16::from_le_bytes([coff[20], coff[21]]) as usize;
+    if section_count == 0 || section_count > 96 || optional_size > 4096 {
+        return Err(DirectxPeError::Malformed("PE header bounds are invalid"));
+    }
+    let optional_offset = pe_offset.checked_add(24).ok_or(DirectxPeError::Malformed(
+        "PE optional header offset overflow",
+    ))?;
+    let mut optional = vec![0_u8; optional_size];
+    directx_read_exact(&file, stamp.length, optional_offset, &mut optional)?;
+    if optional.len() < 2 {
+        directx_verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    let directory_base = match u16::from_le_bytes([optional[0], optional[1]]) {
+        0x10b => 96usize,
+        0x20b => 112usize,
+        _ => {
+            return Err(DirectxPeError::Malformed(
+                "PE optional header magic is unsupported",
+            ))
+        }
+    };
+    let import_dir = directory_base + 8;
+    if import_dir + 8 > optional.len() {
+        directx_verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    let import_rva = u32::from_le_bytes(optional[import_dir..import_dir + 4].try_into().unwrap());
+    let import_size =
+        u32::from_le_bytes(optional[import_dir + 4..import_dir + 8].try_into().unwrap());
+    if import_rva == 0 && import_size == 0 {
+        directx_verify_unchanged(path, &file, &stamp)?;
+        return Ok(None);
+    }
+    if import_rva == 0 || !(20..=20 * 256).contains(&import_size) {
+        return Err(DirectxPeError::Malformed(
+            "PE import directory bounds are invalid",
+        ));
+    }
+
+    let section_table_offset =
+        optional_offset
+            .checked_add(optional_size as u64)
+            .ok_or(DirectxPeError::Malformed(
+                "PE section table offset overflow",
+            ))?;
+    let mut section_bytes = vec![0_u8; section_count * 40];
+    directx_read_exact(
+        &file,
+        stamp.length,
+        section_table_offset,
+        &mut section_bytes,
+    )?;
+    let sections: Vec<PeSection> = section_bytes
+        .chunks_exact(40)
+        .map(|section| PeSection {
+            virtual_size: u32::from_le_bytes(section[8..12].try_into().unwrap()),
+            virtual_address: u32::from_le_bytes(section[12..16].try_into().unwrap()),
+            raw_size: u32::from_le_bytes(section[16..20].try_into().unwrap()),
+            raw_offset: u32::from_le_bytes(section[20..24].try_into().unwrap()),
+        })
+        .collect();
+    let import_offset = map_pe_rva(import_rva, 20, &sections).ok_or(DirectxPeError::Malformed(
+        "PE import directory RVA is not mapped by a section",
+    ))?;
+
+    let max_descriptors = (import_size / 20).min(256) as usize;
+    let mut directx_imports = Vec::new();
+    for index in 0..max_descriptors {
+        let mut descriptor = [0_u8; 20];
+        directx_read_exact(
+            &file,
+            stamp.length,
+            import_offset + (index as u64 * 20),
+            &mut descriptor,
+        )?;
+        if descriptor.iter().all(|byte| *byte == 0) {
+            break;
+        }
+        let name_rva = u32::from_le_bytes(descriptor[12..16].try_into().unwrap());
+        if name_rva == 0 {
+            return Err(DirectxPeError::Malformed(
+                "PE import descriptor has no DLL name",
+            ));
+        }
+        let name_offset = map_pe_rva(name_rva, 1, &sections).ok_or(DirectxPeError::Malformed(
+            "PE import DLL name RVA is not mapped by a section",
+        ))?;
+        let name = directx_read_c_string(&file, stamp.length, name_offset)?;
+        let normalized = name.to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "d3d8.dll"
+                | "d3d9.dll"
+                | "d3d10.dll"
+                | "d3d10_1.dll"
+                | "d3d10core.dll"
+                | "d3d11.dll"
+                | "dxgi.dll"
+        ) && !directx_imports.contains(&normalized)
+        {
+            directx_imports.push(normalized);
+        }
+    }
+    directx_verify_unchanged(path, &file, &stamp)?;
+    if directx_imports.is_empty() {
+        return Ok(None);
+    }
+    directx_imports.sort();
+    Ok(Some(DirectxPeInspection {
+        imports: directx_imports,
+        dxvk_eligible: true,
+    }))
+}
+
+fn directx_read_exact(
+    file: &File,
+    file_len: u64,
+    offset: u64,
+    buffer: &mut [u8],
+) -> Result<(), DirectxPeError> {
+    let end = offset
+        .checked_add(buffer.len() as u64)
+        .ok_or(DirectxPeError::Malformed("PE read offset overflow"))?;
+    if end > file_len {
+        return Err(DirectxPeError::Malformed(
+            "PE structure extends beyond file",
+        ));
+    }
+    file.read_exact_at(buffer, offset)?;
+    Ok(())
+}
+
+fn directx_read_c_string(
+    file: &File,
+    file_len: u64,
+    offset: u64,
+) -> Result<String, DirectxPeError> {
+    let mut bytes = Vec::new();
+    for index in 0..260_u64 {
+        let mut byte = [0_u8; 1];
+        directx_read_exact(file, file_len, offset + index, &mut byte)?;
+        if byte[0] == 0 {
+            return String::from_utf8(bytes)
+                .map_err(|_| DirectxPeError::Malformed("PE import DLL name is not UTF-8/ASCII"));
+        }
+        if !byte[0].is_ascii() || byte[0].is_ascii_control() {
+            return Err(DirectxPeError::Malformed("PE import DLL name is not ASCII"));
+        }
+        bytes.push(byte[0]);
+    }
+    Err(DirectxPeError::Malformed(
+        "PE import DLL name is unterminated",
+    ))
+}
+
+fn directx_verify_unchanged(
+    path: &Path,
+    file: &File,
+    stamp: &FileStamp,
+) -> Result<(), DirectxPeError> {
+    let after_open = file.metadata()?;
+    let after_path = fs::symlink_metadata(path)?;
+    if after_path.file_type().is_symlink()
+        || !after_path.file_type().is_file()
+        || FileStamp::from(&after_open) != *stamp
+        || FileStamp::from(&after_path) != *stamp
+    {
+        return Err(DirectxPeError::ChangedDuringInspection);
+    }
+    Ok(())
+}
+
 fn read_exact_checked(
     file: &File,
     file_len: u64,
@@ -669,6 +889,68 @@ mod tests {
         bytes[cli + 20..cli + 24].copy_from_slice(&0x0600_0001_u32.to_le_bytes());
         bytes[0x300..0x304].copy_from_slice(b"BSJB");
         bytes
+    }
+
+    fn directx_pe64(import_name: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0_u8; 0x600];
+        bytes[0..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        let pe = 0x80usize;
+        bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
+        bytes[pe + 4..pe + 6].copy_from_slice(&0x8664_u16.to_le_bytes());
+        bytes[pe + 6..pe + 8].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[pe + 20..pe + 22].copy_from_slice(&0x00f0_u16.to_le_bytes());
+        let opt = pe + 24;
+        bytes[opt..opt + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        bytes[opt + 108..opt + 112].copy_from_slice(&16_u32.to_le_bytes());
+        let import_dir = opt + 112 + 8;
+        bytes[import_dir..import_dir + 4].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[import_dir + 4..import_dir + 8].copy_from_slice(&0x40_u32.to_le_bytes());
+        let section = opt + 0xf0;
+        bytes[section..section + 6].copy_from_slice(b".rdata");
+        bytes[section + 8..section + 12].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 12..section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[section + 16..section + 20].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+        let desc = 0x200usize;
+        bytes[desc + 12..desc + 16].copy_from_slice(&0x2080_u32.to_le_bytes());
+        let name = 0x280usize;
+        bytes[name..name + import_name.len()].copy_from_slice(import_name);
+        bytes[name + import_name.len()] = 0;
+        bytes
+    }
+
+    #[test]
+    fn directx_import_inspection_detects_dxvk_eligible_imports_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let d3d11 = dir.path().join("d3d11.exe");
+        fs::write(&d3d11, directx_pe64(b"D3D11.dll")).expect("fixture");
+        let info = inspect_directx_pe(&d3d11)
+            .expect("inspect directx")
+            .expect("directx import");
+        assert_eq!(info.imports, vec!["d3d11.dll"]);
+        assert!(info.dxvk_eligible);
+
+        let user32 = dir.path().join("user32.exe");
+        fs::write(&user32, directx_pe64(b"USER32.dll")).expect("fixture");
+        assert_eq!(inspect_directx_pe(&user32).expect("inspect native"), None);
+    }
+
+    #[test]
+    fn directx_import_inspection_rejects_unmapped_import_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bad = dir.path().join("bad-import.exe");
+        let mut bytes = directx_pe64(b"d3d9.dll");
+        let opt = 0x80 + 24;
+        let import_dir = opt + 112 + 8;
+        bytes[import_dir..import_dir + 4].copy_from_slice(&0x9000_u32.to_le_bytes());
+        fs::write(&bad, bytes).expect("fixture");
+        assert!(matches!(
+            inspect_directx_pe(&bad),
+            Err(DirectxPeError::Malformed(
+                "PE import directory RVA is not mapped by a section"
+            ))
+        ));
     }
 
     #[test]
