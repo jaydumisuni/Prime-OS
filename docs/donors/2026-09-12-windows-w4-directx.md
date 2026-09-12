@@ -6,11 +6,12 @@ Prime W4 uses Fedora-packaged DXVK behind the existing Prime Windows provider bo
 
 ## Frozen donor target
 
-- Fedora 44 `wine-dxvk` 2.7.1-6.fc44.
+- DXVK upstream release `v2.7.1`, exact archive SHA-256 `d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87`, as the single architecture-complete image payload authority (`x64/` + `x32/`).
+- Fedora 44 `wine-dxvk` 2.7.1-6.fc44 remains corroborating distribution evidence for the x86_64 Wine/DXVK integration shape, not the byte authority used by Prime.
 - Fedora 44 Mesa Vulkan driver closure matching the Prime image substrate.
 - Existing Fedora Wine 11.0-3.fc44 provider remains the launch donor.
 
-Fedora packages DXVK specifically for Wine and ships D3D8-11 translation over Vulkan. The package does not make per-prefix activation sufficient by itself, so Prime owns deterministic per-application activation rather than relying on host alternatives state.
+Using the upstream release as Prime's immutable payload authority avoids mixing an x86_64 Fedora payload with a separately-built 32-bit payload. Prime pins every projected DLL by SHA-256 and stores both architectures under `/usr/lib/prime/windows-gpu-runtime/{x64,x86}`. Fedora packaging still confirms the intended Wine integration and package-level Vulkan dependencies. Prime owns deterministic per-application activation rather than relying on host alternatives state.
 
 ## W4 contract
 

@@ -13,6 +13,7 @@ pub mod storage;
 pub mod system_status;
 pub mod windows_component_engine;
 pub mod windows_components;
+pub mod windows_gpu;
 pub mod windows_managed;
 pub mod windows_personality;
 pub mod windows_state;
