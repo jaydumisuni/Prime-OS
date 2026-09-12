@@ -168,13 +168,17 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
-        libwayland-client-1.25.0-1.fc44 \
+        libwayland-client-1.26.0-1.fc44.x86_64 \
+        libwayland-client-1.26.0-1.fc44.i686 \
         libxkbcommon-1.13.1-2.fc44 \
-        mesa-dri-drivers-26.1.7-1.fc44 \
-        mesa-libEGL-26.1.7-1.fc44 \
-        mesa-libgbm-26.1.7-1.fc44 \
-        mesa-vulkan-drivers-26.1.7-1.fc44 \
-        vulkan-loader-1.4.341.0-1.fc44 \
+        mesa-dri-drivers-26.1.8-1.fc44.x86_64 \
+        mesa-dri-drivers-26.1.8-1.fc44.i686 \
+        mesa-libEGL-26.1.8-1.fc44.x86_64 \
+        mesa-libgbm-26.1.8-1.fc44.x86_64 \
+        mesa-vulkan-drivers-26.1.8-1.fc44.x86_64 \
+        mesa-vulkan-drivers-26.1.8-1.fc44.i686 \
+        vulkan-loader-1.4.341.0-1.fc44.x86_64 \
+        vulkan-loader-1.4.341.0-1.fc44.i686 \
         vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
@@ -187,13 +191,17 @@ RUN set -eux; \
         libglvnd-egl-1.7.0-9.fc44 \
         libinput-1.31.3-1.fc44 \
         libseat-0.9.3-1.fc44 \
-        libwayland-client-1.25.0-1.fc44 \
+        libwayland-client-1.26.0-1.fc44.x86_64 \
+        libwayland-client-1.26.0-1.fc44.i686 \
         libxkbcommon-1.13.1-2.fc44 \
-        mesa-dri-drivers-26.1.7-1.fc44 \
-        mesa-libEGL-26.1.7-1.fc44 \
-        mesa-libgbm-26.1.7-1.fc44 \
-        mesa-vulkan-drivers-26.1.7-1.fc44 \
-        vulkan-loader-1.4.341.0-1.fc44 \
+        mesa-dri-drivers-26.1.8-1.fc44.x86_64 \
+        mesa-dri-drivers-26.1.8-1.fc44.i686 \
+        mesa-libEGL-26.1.8-1.fc44.x86_64 \
+        mesa-libgbm-26.1.8-1.fc44.x86_64 \
+        mesa-vulkan-drivers-26.1.8-1.fc44.x86_64 \
+        mesa-vulkan-drivers-26.1.8-1.fc44.i686 \
+        vulkan-loader-1.4.341.0-1.fc44.x86_64 \
+        vulkan-loader-1.4.341.0-1.fc44.i686 \
         vulkan-tools-1.4.341.0-1.fc44 \
         systemd-boot-unsigned-259.8-1.fc44 \
         systemd-ukify-259.8-1.fc44 \
@@ -295,10 +303,10 @@ RUN set -eux; \
     test -d /usr/share/vulkan/icd.d; \
     test -x /usr/bin/vulkaninfo; \
     rpm -qf /usr/lib64/libEGL.so.1 | grep -Fx 'libglvnd-egl-1.7.0-9.fc44.x86_64'; \
-    rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.7-1.fc44.x86_64'; \
-    rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.7-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libEGL_mesa.so.0 | grep -Fx 'mesa-libEGL-26.1.8-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/libgbm.so.1 | grep -Fx 'mesa-libgbm-26.1.8-1.fc44.x86_64'; \
     rpm -qf /usr/lib64/libdrm.so.2 | grep -Fx 'libdrm-2.4.134-1.fc44.x86_64'; \
-    rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.7-1.fc44.x86_64'; \
+    rpm -qf /usr/lib64/dri/iris_dri.so | grep -Fx 'mesa-dri-drivers-26.1.8-1.fc44.x86_64'; \
     /usr/libexec/prime/prime-compositor --help | grep -F 'Usage: prime-compositor [--probe]'; \
     systemctl enable primed.service prime-compositor.service prime-shell.service prime-first-light-witness.service; \
     systemctl set-default graphical.target; \
