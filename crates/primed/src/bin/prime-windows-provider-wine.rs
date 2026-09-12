@@ -1,5 +1,5 @@
 use prime_contracts::{ArtifactFormat, RuntimeFamily};
-use primed::{exec, windows_managed, windows_state, windows_wine};
+use primed::{exec, windows_gpu, windows_managed, windows_state, windows_wine};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -58,6 +58,12 @@ enum AdapterError {
     #[error(transparent)]
     ManagedPe(#[from] exec::ManagedPeError),
     #[error(transparent)]
+    DirectxPe(#[from] exec::DirectxPeError),
+    #[error(transparent)]
+    DxvkProjection(#[from] windows_gpu::DxvkProjectionError),
+    #[error(transparent)]
+    VulkanCapability(#[from] windows_gpu::VulkanCapabilityError),
+    #[error(transparent)]
     ManagedBridge(#[from] windows_managed::ManagedBridgeError),
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -92,7 +98,23 @@ fn run() -> Result<(), AdapterError> {
             &windows_managed::managed_bridge_specs(),
         )?;
     }
-    let spec = donor_command(&request, wayland_socket.as_deref());
+    let gpu_plan = gpu_launch_plan(&request.artifact)?;
+    if let Some(plan) = &gpu_plan {
+        windows_gpu::validate_vulkan_capability(
+            Path::new("/usr/lib64/libvulkan.so.1"),
+            Path::new("/usr/share/vulkan/icd.d"),
+        )?;
+        let _compatibility_lock = acquire_initialization_lock(&state_root)?;
+        windows_gpu::ensure_dxvk_projection(
+            &prefix,
+            &windows_gpu::dxvk_projection_specs(plan.architecture),
+        )?;
+    }
+    let spec = donor_command_with_gpu(
+        &request,
+        wayland_socket.as_deref(),
+        gpu_plan.as_ref().map(|plan| plan.overrides.as_str()),
+    );
 
     let mut command = Command::new(&spec.program);
     command.args(&spec.args).env_clear();
@@ -323,11 +345,48 @@ fn prepare_managed_runtime(
     Ok(Some(windows_managed::ensure_managed_bridge(prefix, specs)?))
 }
 
-fn donor_command(request: &ProviderRequest, wayland_socket: Option<&str>) -> DonorCommand {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GpuLaunchPlan {
+    architecture: windows_gpu::DxvkArchitecture,
+    overrides: String,
+}
+
+fn gpu_launch_plan(artifact: &Path) -> Result<Option<GpuLaunchPlan>, AdapterError> {
+    let Some(directx) = exec::inspect_directx_pe(artifact)? else {
+        return Ok(None);
+    };
+    if !directx.dxvk_eligible {
+        return Ok(None);
+    }
+    let inspection = exec::inspect(artifact, "x86_64")?;
+    let architecture = match inspection.workload_arch.as_deref() {
+        Some("x86_64") => windows_gpu::DxvkArchitecture::X64,
+        Some("x86") => windows_gpu::DxvkArchitecture::X86,
+        _ => return Err(AdapterError::ArtifactNotPe),
+    };
+    let overrides = windows_gpu::native_only_overrides(&directx.imports);
+    if overrides.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(GpuLaunchPlan {
+        architecture,
+        overrides,
+    }))
+}
+
+fn donor_command_with_gpu(
+    request: &ProviderRequest,
+    wayland_socket: Option<&str>,
+    overrides: Option<&str>,
+) -> DonorCommand {
+    let mut env = donor_environment(request, wayland_socket);
+    if let Some(overrides) = overrides.filter(|value| !value.is_empty()) {
+        env.insert("WINEDLLOVERRIDES".to_owned(), overrides.to_owned());
+    }
     DonorCommand {
         program: PathBuf::from(windows_wine::WINDOWS_WINE_BINARY),
         args: vec![request.artifact.display().to_string()],
-        env: donor_environment(request, wayland_socket),
+        env,
     }
 }
 
@@ -559,6 +618,41 @@ mod tests {
     }
 
     #[test]
+    fn gpu_launch_plan_activates_only_for_directx_and_preserves_architecture() {
+        let dir = tempdir().expect("tempdir");
+        let d3d11 = dir.path().join("d3d11.exe");
+        fs::write(&d3d11, directx_pe64(b"D3D11.dll")).expect("fixture");
+        let plan = gpu_launch_plan(&d3d11).expect("inspect").expect("gpu plan");
+        assert_eq!(
+            plan.architecture,
+            primed::windows_gpu::DxvkArchitecture::X64
+        );
+        assert_eq!(plan.overrides, "d3d11,dxgi=n");
+
+        let native = dir.path().join("native.exe");
+        fs::write(&native, directx_pe64(b"USER32.dll")).expect("fixture");
+        assert_eq!(gpu_launch_plan(&native).expect("inspect"), None);
+    }
+
+    #[test]
+    fn donor_command_adds_dxvk_overrides_only_when_requested() {
+        let runtime = PathBuf::from("/run/prime-win-001122");
+        let request = ProviderRequest {
+            artifact: PathBuf::from("/var/lib/prime/artifacts/sha256/deadbeef"),
+            application_id: Uuid::nil(),
+            launch_id: Uuid::nil(),
+            runtime_dir: runtime,
+        };
+        let gpu = donor_command_with_gpu(&request, None, Some("d3d11,dxgi=n"));
+        assert_eq!(
+            gpu.env.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some("d3d11,dxgi=n")
+        );
+        let native = donor_command_with_gpu(&request, None, None);
+        assert!(!native.env.contains_key("WINEDLLOVERRIDES"));
+    }
+
+    #[test]
     fn donor_command_is_fixed_direct_argv_with_isolated_state() {
         let runtime = PathBuf::from("/run/prime-win-001122");
         let request = ProviderRequest {
@@ -567,7 +661,7 @@ mod tests {
             launch_id: Uuid::nil(),
             runtime_dir: runtime.clone(),
         };
-        let command = donor_command(&request, None);
+        let command = donor_command_with_gpu(&request, None, None);
         assert_eq!(command.program, PathBuf::from("/usr/bin/wine"));
         assert_eq!(command.args, vec![request.artifact.display().to_string()]);
         assert_eq!(
@@ -668,6 +762,35 @@ mod tests {
             prepare_managed_runtime(&native, &prefix, &missing).unwrap(),
             None
         );
+    }
+
+    fn directx_pe64(import_name: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0_u8; 0x600];
+        bytes[0..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        let pe = 0x80usize;
+        bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
+        bytes[pe + 4..pe + 6].copy_from_slice(&0x8664_u16.to_le_bytes());
+        bytes[pe + 6..pe + 8].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[pe + 20..pe + 22].copy_from_slice(&0x00f0_u16.to_le_bytes());
+        let opt = pe + 24;
+        bytes[opt..opt + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        bytes[opt + 108..opt + 112].copy_from_slice(&16_u32.to_le_bytes());
+        let import_dir = opt + 112 + 8;
+        bytes[import_dir..import_dir + 4].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[import_dir + 4..import_dir + 8].copy_from_slice(&0x40_u32.to_le_bytes());
+        let section = opt + 0xf0;
+        bytes[section..section + 6].copy_from_slice(b".rdata");
+        bytes[section + 8..section + 12].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 12..section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+        bytes[section + 16..section + 20].copy_from_slice(&0x400_u32.to_le_bytes());
+        bytes[section + 20..section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+        let desc = 0x200usize;
+        bytes[desc + 12..desc + 16].copy_from_slice(&0x2080_u32.to_le_bytes());
+        let name = 0x280usize;
+        bytes[name..name + import_name.len()].copy_from_slice(import_name);
+        bytes[name + import_name.len()] = 0;
+        bytes
     }
 
     fn minimal_pe64() -> Vec<u8> {
