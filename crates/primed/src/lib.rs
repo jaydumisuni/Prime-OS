@@ -17,6 +17,7 @@ pub mod windows_gpu;
 pub mod windows_managed;
 pub mod windows_personality;
 pub mod windows_state;
+pub mod windows_vm;
 pub mod windows_wine;
 
 use prime_contracts::{

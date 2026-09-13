@@ -1,0 +1,81 @@
+{
+  "schema": "prime.windows-w8-benchmark.v1",
+  "scope": "P4A/W8 VM fallback",
+  "base_sha": "8115b4c0a85610920febcb3153ee861bf0a7665a",
+  "state": "IN_PROGRESS",
+  "gates": {
+    "1_predecessor_authority": {
+      "status": "PASS",
+      "evidence": [
+        "W8 branch/worktree created directly from frozen W7 SHA 8115b4c0a85610920febcb3153ee861bf0a7665a",
+        "GitHub refs/heads/feature/windows-personality-w7-usb-device resolves exactly to 8115b4c0a85610920febcb3153ee861bf0a7665a"
+      ]
+    },
+    "2_virtualization_donor_closure": {
+      "status": "PASS",
+      "evidence": [
+        "KRATOS /usr/bin/qemu-system-x86_64 reports QEMU 10.2.1 (Debian 1:10.2.1+ds-1ubuntu3.2)",
+        "QEMU executable sha256 0cd4112a8f0cb891eb7c10e8df38c9dfeec8c7389bb22db6aa425f0d6fe733dc",
+        "/dev/kvm is root:kvm mode 0660 with explicit rw ACL for kratos",
+        "bounded QEMU -accel kvm -machine q35 probe stayed alive until timeout exit 124; KVM did not reject startup"
+      ]
+    },
+    "3_backend_separation": {
+      "status": "PASS",
+      "evidence": [
+        "ExecutionBackend::Vm is required by validate_vm_profile; Personality backend is rejected",
+        "targeted windows_vm regression proves VM fallback is explicit authority rather than Wine retry"
+      ]
+    },
+    "4_guest_authority_validation": {
+      "status": "PASS",
+      "evidence": [
+        "guest definition requires supported schema, stable identity/revision, bounded memory/vCPU, absolute regular non-symlink image and exact SHA-256 digest",
+        "tampered image digest fails closed in targeted regression"
+      ]
+    },
+    "5_safe_qemu_plan": {
+      "status": "PASS",
+      "evidence": [
+        "QEMU plan forces -accel kvm, q35, -nodefaults, -no-user-config, display none and -net none",
+        "plan exposes only an application-scoped virtio serial agent socket and rejects generic/non-W7 USB paths",
+        "targeted windows_vm regression proves only strict /dev/bus/usb/BBB/DDD nodes become usb-host entries"
+      ]
+    },
+    "6_guest_agent_handoff": {
+      "status": "PASS",
+      "evidence": [
+        "versioned prime.windows-vm-agent.v1 hello contract added with protocol revision 1",
+        "guest-agent hello is bound to guest id, guest revision, exact digest and explicit x86/x86_64 workload architecture",
+        "wrong architecture or digest fails closed; targeted windows_vm regression PASS"
+      ]
+    },
+    "7_windows_guest_execution": {
+      "status": "PENDING",
+      "evidence": [
+        "No authorized digest-bound Windows guest qcow2/vhdx/vmdk/ISO was found in KRATOS searched host locations; W8 must not infer this gate from QEMU/KVM startup"
+      ]
+    },
+    "8_concurrent_isolation": {
+      "status": "PENDING",
+      "evidence": [
+        "application/session-scoped runtime/overlay/agent paths now reject traversal/absolute escape identities and are distinct in targeted regression",
+        "runtime concurrent-QEMU proof remains pending behind a bootable authorized guest/harness surface"
+      ]
+    },
+    "9_lifecycle_adversarial_regression": {
+      "status": "PENDING",
+      "evidence": [
+        "static fail-closed authority/path regressions are green",
+        "bounded runtime kill/corrupt-authority/denied-USB zero-residual proof remains pending"
+      ]
+    }
+  },
+  "10_freeze_certification": {
+    "status": "PENDING",
+    "prefreeze_checks": {}
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ]
+}
