@@ -1,0 +1,64 @@
+{
+  "schema": "prime.windows-w6-benchmark.v1",
+  "scope": "P4A/W6 supported Windows services",
+  "base_sha": "706e90a7d93b527fdeba0015c19f4f4a7cbb365c",
+  "state": "IN_PROGRESS",
+  "gates": {
+    "1_predecessor_authority": {
+      "status": "PASS",
+      "evidence": [
+        "W6 isolated worktree created directly from frozen W5 SHA 706e90a7d93b527fdeba0015c19f4f4a7cbb365c"
+      ]
+    },
+    "2_scm_donor_closure": {
+      "status": "PASS",
+      "evidence": [
+        "sealed image localhost/prime-w4-rootfs:proof-f99c7f8",
+        "Wine SCM donor exposes x64 services.exe plus x64/x86 sc.exe in WoW64 layout"
+      ]
+    },
+    "3_x64_service_lifecycle": {
+      "status": "PASS",
+      "evidence": [
+        "real Prime provider /usr/libexec/prime/prime-windows-provider-w1",
+        "native x64 SCM fixture reached SERVICE_RUNNING then STOPPED and deleted service",
+        "marker PRIME_W6_SERVICE_OK exit 0"
+      ]
+    },
+    "4_x86_service_lifecycle": {
+      "status": "PASS",
+      "evidence": [
+        "real Prime provider /usr/libexec/prime/prime-windows-provider-w1",
+        "native PE32/WoW64 SCM fixture reached SERVICE_RUNNING then STOPPED and deleted service",
+        "marker PRIME_W6_SERVICE_OK exit 0"
+      ]
+    },
+    "5_registration_isolation": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "6_killed_service_recovery": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "7_fail_closed_service_errors": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "8_repeated_lifecycle_isolation": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "9_lifecycle_adversarial_regression": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "10_freeze_certification": {
+      "status": "PENDING",
+      "prefreeze_checks": {}
+    }
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ]
+}
