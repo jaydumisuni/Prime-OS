@@ -34,24 +34,44 @@
       ]
     },
     "5_registration_isolation": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "x64 and x86 App A install/query returned PRIME_W6_PRESENT_OK",
+        "independent App B returned PRIME_W6_ABSENT_OK",
+        "provider-routed cleanup returned PRIME_W6_CLEANUP_OK"
+      ]
     },
     "6_killed_service_recovery": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "x64 and x86 service PID terminated while RUNNING",
+        "SCM observed STOPPED then StartService recovered to RUNNING",
+        "marker PRIME_W6_KILL_RECOVERY_OK"
+      ]
     },
     "7_fail_closed_service_errors": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "missing binary StartService failed closed with Win32 error 2",
+        "disabled service StartService failed closed with ERROR_SERVICE_DISABLED 1058",
+        "both x64 and x86 lanes passed"
+      ]
     },
     "8_repeated_lifecycle_isolation": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "x64 and x86 each completed three additional start/stop cycles after recovery",
+        "service deleted cleanly after repeated lifecycle",
+        "application-prefix isolation preserved"
+      ]
     },
     "9_lifecycle_adversarial_regression": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "x64 and x86 adversarial fixture returned PRIME_W6_ADVERSARIAL_OK",
+        "wineserver drain completed after each lane",
+        "post-drain inventory found zero Wine/services/rpcss/proof-service processes"
+      ]
     },
     "10_freeze_certification": {
       "status": "PENDING",
