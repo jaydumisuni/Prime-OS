@@ -1,0 +1,73 @@
+{
+  "schema": "prime.windows-w7-benchmark.v1",
+  "scope": "P4A/W7 USB/device mediation",
+  "base_sha": "042841390f1b0456bf1da125350653766523bd36",
+  "state": "IN_PROGRESS",
+  "gates": {
+    "1_predecessor_authority": {
+      "status": "PASS",
+      "evidence": [
+        "W7 worktree/branch created directly from frozen W6 SHA 042841390f1b0456bf1da125350653766523bd36",
+        "GitHub refs/heads/feature/windows-personality-w6-services resolves exactly to 042841390f1b0456bf1da125350653766523bd36"
+      ]
+    },
+    "2_usb_donor_closure": {
+      "status": "PASS",
+      "evidence": [
+        "sealed image localhost/prime-w4-rootfs:proof-f99c7f8 retains Wine 11 winebus/wineusb plus libusb/libudev donor closure",
+        "live KRATOS udev identifies ZTE 19d2:0581 at /dev/bus/usb/001/018"
+      ]
+    },
+    "3_policy_mediation": {
+      "status": "PASS",
+      "evidence": [
+        "Prime policy compiler validates only exact /dev/bus/usb/BBB/DDD paths",
+        "USB allowlist renders DevicePolicy=closed plus exact DeviceAllow=<node> rw",
+        "generic/non-USB/malformed/duplicate device allowlists fail closed",
+        "primed policy tests 9/9 PASS"
+      ]
+    },
+    "4_x64_usb_enumeration": {
+      "status": "PASS",
+      "evidence": [
+        "fully static x64 SetupAPI fixture built with pinned MinGW toolchain",
+        "real Prime provider /usr/libexec/prime/prime-windows-provider-w1 returned PRIME_W7_USB_ENUM_OK for USB\\VID_19D2&PID_0581"
+      ]
+    },
+    "5_x86_usb_enumeration": {
+      "status": "PASS",
+      "evidence": [
+        "fully static PE32/WoW64 SetupAPI fixture built with pinned MinGW toolchain",
+        "real Prime provider returned PRIME_W7_USB_ENUM_OK for USB\\VID_19D2&PID_0581"
+      ]
+    },
+    "6_disallowed_device_denial": {
+      "status": "PENDING",
+      "evidence": [
+        "source policy is fail-closed; host system-manager cgroup enforcement proof not yet captured",
+        "Oracle blocks sudo RPC and unprivileged system-manager transient-unit attempt timed out; user-manager DevicePolicy is not authoritative for device-cgroup denial"
+      ]
+    },
+    "7_visibility_recovery": {
+      "status": "PENDING",
+      "evidence": [
+        "no-device container probe exposed a Wine/provider lifecycle hang and was killed rather than promoted"
+      ]
+    },
+    "8_concurrent_isolation": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "9_lifecycle_adversarial_regression": {
+      "status": "PENDING",
+      "evidence": []
+    },
+    "10_freeze_certification": {
+      "status": "PENDING",
+      "prefreeze_checks": {}
+    }
+  },
+  "deferred": [
+    "FULL_SEALED_IMAGE_PRIME_BOOT_INTEGRATION"
+  ]
+}

@@ -1,5 +1,6 @@
 use crate::registry::{verify_policy, RegistryError};
 use prime_contracts::{GpuMode, NetworkMode, PolicyClass, WorkloadPolicy};
+use std::collections::HashSet;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,9 +55,10 @@ pub fn compile_systemd(
             "filesystem exposure/Landlock rules",
         ));
     }
-    if !policy.devices.usb.is_empty() || !policy.devices.other.is_empty() {
-        return Err(PolicyCompileError::Unsupported("device allowlists"));
+    if !policy.devices.other.is_empty() {
+        return Err(PolicyCompileError::Unsupported("non-USB device allowlists"));
     }
+    validate_usb_allowlist(&policy.devices.usb)?;
     if !policy.secrets.grants.is_empty() {
         return Err(PolicyCompileError::Unsupported("secret grants"));
     }
@@ -117,7 +119,15 @@ pub fn compile_systemd(
     }
 
     match policy.gpu.mode {
-        GpuMode::Deny => property(&mut properties, "PrivateDevices", "yes"),
+        GpuMode::Deny if policy.devices.usb.is_empty() => {
+            property(&mut properties, "PrivateDevices", "yes")
+        }
+        GpuMode::Deny => {
+            property(&mut properties, "DevicePolicy", "closed");
+            for device in &policy.devices.usb {
+                property(&mut properties, "DeviceAllow", format!("{device} rw"));
+            }
+        }
         GpuMode::Shared | GpuMode::Inherit => {}
         GpuMode::Exclusive => unreachable!("exclusive GPU was rejected above"),
     }
@@ -160,6 +170,40 @@ pub fn compile_systemd(
         background_allowed: policy.background.allowed,
         evidence_required: policy.evidence.required,
     })
+}
+
+fn validate_usb_allowlist(devices: &[String]) -> Result<(), PolicyCompileError> {
+    let mut seen = HashSet::with_capacity(devices.len());
+    for device in devices {
+        let Some(rest) = device.strip_prefix("/dev/bus/usb/") else {
+            return Err(PolicyCompileError::Invalid(
+                "USB device path must be /dev/bus/usb/BBB/DDD",
+            ));
+        };
+        let Some((bus, address)) = rest.split_once('/') else {
+            return Err(PolicyCompileError::Invalid(
+                "USB device path must be /dev/bus/usb/BBB/DDD",
+            ));
+        };
+        if bus.len() != 3
+            || address.len() != 3
+            || !bus.bytes().all(|byte| byte.is_ascii_digit())
+            || !address.bytes().all(|byte| byte.is_ascii_digit())
+            || bus == "000"
+            || address == "000"
+            || address.contains('/')
+        {
+            return Err(PolicyCompileError::Invalid(
+                "USB device path must be /dev/bus/usb/BBB/DDD",
+            ));
+        }
+        if !seen.insert(device.as_str()) {
+            return Err(PolicyCompileError::Invalid(
+                "USB device allowlist contains duplicates",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub type NativeEnforcementPlan = SystemdEnforcementPlan;
@@ -310,6 +354,82 @@ mod tests {
     fn non_core_shared_gpu_fails_closed_until_device_mediation_exists() {
         let mut value = policy();
         value.gpu.mode = GpuMode::Shared;
+        value = seal_policy(value).expect("reseal");
+        assert!(matches!(
+            compile_native(&value),
+            Err(PolicyCompileError::Unsupported(_))
+        ));
+    }
+    #[test]
+    fn usb_allowlist_compiles_to_closed_device_policy() {
+        let mut value = policy();
+        value.devices.usb = vec!["/dev/bus/usb/001/018".to_owned()];
+        value = seal_policy(value).expect("reseal");
+        let plan = compile_native(&value).expect("USB allowlist should compile");
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "DevicePolicy" && item.value == "closed"));
+        assert!(plan
+            .properties
+            .iter()
+            .any(|item| item.name == "DeviceAllow" && item.value == "/dev/bus/usb/001/018 rw"));
+        assert!(!plan
+            .properties
+            .iter()
+            .any(|item| item.name == "PrivateDevices" && item.value == "yes"));
+    }
+
+    #[test]
+    fn usb_allowlist_rejects_non_usb_device_paths() {
+        let mut value = policy();
+        value.devices.usb = vec!["/dev/sda".to_owned()];
+        value = seal_policy(value).expect("reseal");
+        assert!(matches!(
+            compile_native(&value),
+            Err(PolicyCompileError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn usb_allowlist_rejects_non_adjacent_duplicates() {
+        let mut value = policy();
+        value.devices.usb = vec![
+            "/dev/bus/usb/001/018".to_owned(),
+            "/dev/bus/usb/002/003".to_owned(),
+            "/dev/bus/usb/001/018".to_owned(),
+        ];
+        value = seal_policy(value).expect("reseal");
+        assert!(matches!(
+            compile_native(&value),
+            Err(PolicyCompileError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn usb_allowlist_rejects_malformed_paths() {
+        for path in [
+            "/dev/bus/usb/1/018",
+            "/dev/bus/usb/001/18",
+            "/dev/bus/usb/000/018",
+            "/dev/bus/usb/001/000",
+            "/dev/bus/usb/001/018/extra",
+            "/dev/bus/usb/abc/018",
+        ] {
+            let mut value = policy();
+            value.devices.usb = vec![path.to_owned()];
+            value = seal_policy(value).expect("reseal");
+            assert!(
+                matches!(compile_native(&value), Err(PolicyCompileError::Invalid(_))),
+                "accepted malformed path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_device_allowlist_remains_fail_closed() {
+        let mut value = policy();
+        value.devices.other = vec!["/dev/ttyUSB0".to_owned()];
         value = seal_policy(value).expect("reseal");
         assert!(matches!(
             compile_native(&value),
