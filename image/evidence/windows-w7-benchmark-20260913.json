@@ -42,10 +42,12 @@
       ]
     },
     "6_disallowed_device_denial": {
-      "status": "PENDING",
+      "status": "PASS",
       "evidence": [
-        "source policy is fail-closed; host system-manager cgroup enforcement proof not yet captured",
-        "Oracle blocks sudo RPC and unprivileged system-manager transient-unit attempt timed out; user-manager DevicePolicy is not authoritative for device-cgroup denial"
+        "empty USB policy compiles with PrivateDevices=yes in Prime policy regression",
+        "non-USB, malformed, duplicate, and generic device allowlists fail closed in Prime policy regressions",
+        "audited Oracle root broker executed system-manager transient unit prime-w7-g6-denied.service with DevicePolicy=closed and no target allow entry",
+        "read-only/nonblocking open of /dev/bus/usb/001/018 was denied by the system service device policy and reported PRIME_W7_DEVICE_DENIED; no USB I/O, reset, claim, transfer, or mutation occurred"
       ]
     },
     "7_visibility_recovery": {
@@ -77,7 +79,19 @@
     },
     "10_freeze_certification": {
       "status": "PENDING",
-      "prefreeze_checks": {}
+      "prefreeze_checks": {
+        "workspace_tests": "PASS",
+        "clippy_warnings": "PASS",
+        "rustfmt": "PASS",
+        "diff_integrity": "PASS",
+        "w1_provider": "PASS",
+        "w1_security": "PASS",
+        "w2_provider": "PASS",
+        "w2_security": "PASS",
+        "w3_provider": "PASS",
+        "w4_provider": "PASS",
+        "w7_host_gates_1_9": "PASS"
+      }
     }
   },
   "deferred": [
