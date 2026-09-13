@@ -49,18 +49,31 @@
       ]
     },
     "7_visibility_recovery": {
-      "status": "PENDING",
+      "status": "PASS",
       "evidence": [
-        "no-device container probe exposed a Wine/provider lifecycle hang and was killed rather than promoted"
+        "x64 real Prime provider with host udev visible and no admitted target node exited explicitly with PRIME_W7_USB_ABSENT VID_19D2 PID_0581 and code 3",
+        "x64 rerun with only /dev/bus/usb/001/018 admitted returned PRIME_W7_USB_ENUM_OK for USB\\VID_19D2&PID_0581",
+        "x86/WoW64 real Prime provider reproduced the same ABSENT code 3 then ENUM_OK transition for the exact ZTE node",
+        "no broad /dev/bus/usb fallback or device mutation was used"
       ]
     },
     "8_concurrent_isolation": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "Prime windows_state application_state_paths_are_stable_and_application_scoped regression PASS",
+        "two Prime provider scopes were launched concurrently with distinct application IDs and independent /var/lib/prime-win-app-* Wine prefixes",
+        "admitted scope A exited 0 with PRIME_W7_USB_ENUM_OK while concurrent denied scope B exited 3 with PRIME_W7_USB_ABSENT for the same VID/PID",
+        "device visibility differed only by exact /dev/bus/usb/001/018 admission; no global USB exposure was introduced"
+      ]
     },
     "9_lifecycle_adversarial_regression": {
-      "status": "PENDING",
-      "evidence": []
+      "status": "PASS",
+      "evidence": [
+        "x64 denied/admitted and x86 denied/admitted provider lifecycles all completed within bounded 30-second probes",
+        "post-drain pgrep found zero Wine/wineserver/winedevice/Prime provider processes",
+        "post-drain podman ps reported zero running proof containers",
+        "cargo test -p primed --locked PASS after removing unrelated stale 4 GB /tmp Rust build tree: 87/87 library tests plus all provider/component/integration suites PASS"
+      ]
     },
     "10_freeze_certification": {
       "status": "PENDING",
