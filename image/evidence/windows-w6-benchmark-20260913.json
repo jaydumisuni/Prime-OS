@@ -75,7 +75,19 @@
     },
     "10_freeze_certification": {
       "status": "PENDING",
-      "prefreeze_checks": {}
+      "prefreeze_checks": {
+        "workspace_tests": "PASS",
+        "clippy_warnings": "PASS",
+        "rustfmt": "PASS",
+        "diff_integrity": "PASS",
+        "w1_provider": "PASS",
+        "w1_security": "PASS",
+        "w2_provider": "PASS",
+        "w2_security": "PASS",
+        "w3_provider": "PASS",
+        "w4_provider": "PASS",
+        "w6_host_gates_1_9": "PASS"
+      }
     }
   },
   "deferred": [
