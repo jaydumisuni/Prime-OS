@@ -27,26 +27,75 @@
       ]
     },
     "4_x64_inproc_provider_runtime": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "real Prime provider /usr/libexec/prime/prime-windows-provider-w1 in sealed image localhost/prime-w4-rootfs:proof-f99c7f8",
+        "x64 hash-bound fixture sha256 9b095eb2d5a775eead5a27aa7b49c6f43e5b6da777ac811bb1bb2654c4bc1c49",
+        "fresh application-scoped prefix returned PRIME_W5_INPROC_OK COUNT=0 exit 0"
+      ]
     },
     "5_x86_inproc_provider_runtime": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "real Prime provider /usr/libexec/prime/prime-windows-provider-w1 in sealed image localhost/prime-w4-rootfs:proof-f99c7f8",
+        "WoW64 PE32 fixture sha256 4d7828a231be8a5413dc8078e1d65d4e84c8ee62e54b8601086bebe674b01228",
+        "initial RED was fixture-only dynamic libgcc_s_dw2-1.dll dependency status c0000135; static-libgcc rebuild removed that external fixture dependency",
+        "fresh application-scoped prefix returned PRIME_W5_INPROC_OK COUNT=0 exit 0"
+      ]
     },
     "6_registration_isolation_recovery": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "custom x64 in-process COM class via application-local Wine prefix",
+        "App A registration under prefix-local HKLM\\Software\\Classes resolves through HKCR and activation returns PRIME_W5_CUSTOM_COM_OK VALUE=4242",
+        "independent App B remains REGDB_E_CLASSNOTREG 0x80040154",
+        "corruption injection by deleting App A class registration yields 0x80040154",
+        "provider-routed re-registration restores activation to VALUE=4242",
+        "custom DLL built fully static to eliminate proof-fixture libwinpthread dependency"
+      ]
     },
     "7_x64_local_server_rpcss": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "provider-routed x64 LocalServer32 registration in fresh application prefix",
+        "Wine RPCSS launched custom out-of-process IDispatch server",
+        "CLSCTX_LOCAL_SERVER round-trip returned PRIME_W5_LOCAL_OK VALUE=777 exit 0"
+      ]
     },
     "8_x86_local_server_rpcss": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "provider-routed PE32/WoW64 LocalServer32 registration in independent fresh application prefix",
+        "Wine RPCSS launched x86 custom out-of-process IDispatch server",
+        "CLSCTX_LOCAL_SERVER round-trip returned PRIME_W5_LOCAL_OK VALUE=777 exit 0"
+      ]
     },
     "9_lifecycle_adversarial_regression": {
-      "status": "PENDING"
+      "status": "PASS",
+      "evidence": [
+        "persistent sealed-image proof used podman --init so PID 1 reaped child processes rather than manufacturing zombie leaks",
+        "cold and warm provider-routed x64 LocalServer32 activation returned PRIME_W5_LOCAL_OK VALUE=777",
+        "independent App B remained REGDB_E_CLASSNOTREG 0x80040154 while App A registration remained valid",
+        "active local-server-x64.exe was killed with SIGKILL and the next provider-routed activation recovered to VALUE=777",
+        "LocalServer32 registry section was removed after wineserver drain; activation failed 0x80040154, provider-routed re-registration restored VALUE=777",
+        "wineserver -w followed by process inventory showed only podman-init, sleep and ps: zero live or zombie Wine/COM processes"
+      ]
     },
     "10_freeze_certification": {
       "status": "PENDING",
-      "prefreeze_checks": {}
+      "prefreeze_checks": {
+        "workspace_tests": "PASS",
+        "clippy_warnings": "PASS",
+        "rustfmt": "PASS",
+        "diff_integrity": "PASS",
+        "w1_provider": "PASS",
+        "w1_security": "PASS",
+        "w2_provider": "PASS",
+        "w2_security": "PASS",
+        "w3_provider": "PASS",
+        "w4_provider": "PASS",
+        "w5_host_gates_1_9": "PASS"
+      }
     }
   },
   "deferred": [
