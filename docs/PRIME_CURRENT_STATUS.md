@@ -1,6 +1,6 @@
 # Prime OS — Current Implementation Status
 
-Updated: 2026-09-21
+Updated: 2026-09-22
 
 This file is the canonical fast recovery record for **what has actually moved in implementation**. It does not replace the Master Plan, accepted supplements, frozen contracts, proof artifacts, or branch-local benchmark evidence. It must distinguish branch implementation from merge/release truth.
 
@@ -9,12 +9,20 @@ This file is the canonical fast recovery record for **what has actually moved in
 - Canonical repository: `jaydumisuni/Prime-OS`.
 - Default branch authority remains the architecture/planning baseline.
 - Prime implementation has moved substantially on isolated branch lanes that are not yet merged into `main`.
-- The principal P1 and P4A branch heads are published so ecosystem recovery can resolve exact source revisions.
+- The integrated P1 candidate joins final-UI, canonical proof, and current recovery/planning histories at exact proven revision `086ee97f4bef57f78b725af9b220e98faf9f87a1`.
 - A branch being published does not mean that phase is shipped, merged, or promoted to `KNOWN_GOOD`.
 
 ## P1 — First Light
 
 P1 is **implemented deeply enough to have canonical VM boot proof, KRATOS physical graphics proof, owner visual acceptance, and later UI refinement**, but P1 phase completion is not declared.
+
+### Integrated P1 candidate
+
+- `integration/p1-first-light-candidate-20260921` joins `work/p1-final-ui`, `proof/p1-first-light-final`, and current recovery/planning authority without rewriting their histories.
+- Exact integrated proof source: `086ee97f4bef57f78b725af9b220e98faf9f87a1`.
+- Canonical `tools/prove-p1-local.sh`: **PASS** on KRATOS through the audited privileged broker.
+- Proof binds sealed Composefs, normal/recovery UKIs, QCOW2 identity, OVMF boot, persisted Prime Host/generation state, and mechanical `SHELL_READY`.
+- Integrated-SHA `KNOWN_GOOD`, physical KRATOS boot acceptance, owner visual acceptance, and recovery-boot acceptance remain unearned.
 
 ### Boot / proof lineage
 
@@ -50,21 +58,25 @@ Windows Personality development is a **parallel branch-isolated lane** descendin
 
 | Wave | Scope | Head | Evidence state |
 |---|---|---:|---|
-| W1 | portable/simple Win32 | `4fe487f` | benchmark gates PASS; frozen branch checkpoint |
-| W2 | installers/common runtimes | `4296dd6` | gates including freeze certification PASS |
-| W3 | managed .NET applications | `8af61f4` | gates including freeze certification PASS |
-| W4 | DirectX/GPU acceleration | `f99c7f8` | **IN_PROGRESS**; gates 1–6 PASS, accelerated runtime / adversarial / freeze gates pending |
-| W5 | COM | `706e90a` | **IN_PROGRESS**; gates 1–9 PASS, freeze certification pending |
-| W6 | supported Windows services | `0428413` | **IN_PROGRESS**; gates 1–9 PASS, freeze certification pending |
-| W7 | USB/device mediation | `8115b4c` | **IN_PROGRESS**; gates 1–9 PASS, freeze certification pending |
-| W8 | VM fallback | `c2cc9de` | **IN_PROGRESS**; gates 1–6 PASS, gates 7–10 pending |
+| W1 | portable/simple Win32 | `4fe487f` | frozen |
+| W2 | installers/common runtimes | `4296dd6` | frozen |
+| W3 | managed .NET applications | `8af61f4` | frozen |
+| W4 | DirectX/GPU acceleration | `f99c7f8` | **FROZEN / SHIPPED HOST CERTIFICATION**; later exact-SHA certification closed the preserved benchmark pending gates |
+| W5 | COM | `706e90a` | **FROZEN**; frozen predecessor authority consumed by W6 |
+| W6 | supported Windows services | `0428413` | **FROZEN / SHIPPED HOST CERTIFICATION**; exact-SHA replay, Formula predicates, Sergeant approval and remote binding completed externally |
+| W7 | USB/device mediation | `8115b4c` | **FROZEN**; frozen predecessor authority consumed by W8 |
+| W8 | VM fallback | `c2cc9de` | **HEALTHY_WAITING / authorized_guest**; control rebind complete, awaiting authorized digest-bound Windows guest proof |
 | W9 | real TTG workload certification | — | not started |
+
+### Certification precedence note
+
+The W4–W7 benchmark JSON files are preserved snapshots and were not rewritten after later exact-SHA certification. Downstream authority resolves the state: W5 consumes frozen W4 `f99c7f8`, W6 consumes frozen W5 `706e90a`, W7 consumes frozen W6 `0428413`, and W8 consumes frozen W7 `8115b4c`. Do not regress W4–W7 to freeze-pending from older benchmark placeholders.
 
 ### W8 blocker
 
 KRATOS already proves the host-side VM donor closure required by W8: QEMU x86_64 is available, KVM is usable, VM selection is explicit through `ExecutionBackend::Vm`, guest authority is digest-bound and fails closed, QEMU plans are bounded/isolated/network-disabled by default, and the guest-agent handoff contract is implemented and regression-tested.
 
-The first irreducible W8 blocker is **authorized Windows guest execution**. No authorized digest-bound Windows guest image was present in the searched KRATOS locations when the W8 evidence was frozen. Runtime concurrent isolation, adversarial lifecycle proof, and final freeze therefore remain pending. W9 cannot legitimately start from a shipped W8 until that gap is closed.
+The first irreducible W8 blocker is **authorized Windows guest execution**. The later Cookpit control rebind places Prime Windows in `HEALTHY_WAITING` on `authorized_guest`, so no safe source/control work remains before that external proof. A fresh KRATOS search found no QCOW2/VHDX/VMDK/ISO candidate. Guest-dependent runtime/isolation/adversarial gates remain unearned, and W9 must not start until W8 closes.
 
 ## Prime Manager / Prime Terminal
 

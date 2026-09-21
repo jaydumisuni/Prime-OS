@@ -18,7 +18,7 @@
   "roadmap": "docs/PRIME_OS_ROADMAP.md",
   "handoff": "docs/AI_HANDOFF.md",
   "current_program_phase": "P1_First_Light_proof_plus_parallel_P4A_Windows_Personality_frontier",
-  "next_implementation_mission": "close_explicit_P1_truth_gaps_and_W8_authorized_windows_guest_execution_without_false_promotion",
+  "next_implementation_mission": "close_P1_exact_integrated_physical_acceptance_and_W8_authorized_windows_guest_without_false_promotion",
   "first_proof_host": {
     "role": "initial_physical_prime_host",
     "model": "HP 290 G4 Microtower",
@@ -165,48 +165,55 @@
       "accepted_visual_head": "a4ae2c2",
       "final_ui_branch": "work/p1-final-ui",
       "final_ui_head": "263d1b7",
-      "state": "substantial_proof_earned_phase_completion_not_declared",
+      "state": "integrated_local_uefi_proven_physical_acceptance_pending",
       "known_good": "not_earned",
       "design_branch": "design/p1-first-light-visual",
       "design_remote_head": "77df519",
       "local_design_worktree_base": "ee783a8",
       "ui_intermediate_proof_branch": "proof/p1-ui-finalization-20260904",
       "ui_intermediate_proof_head": "b8cae37",
-      "ui_intermediate_proof_relation": "diverged_from_1c2685d_not_ancestor_of_final_ui"
+      "ui_intermediate_proof_relation": "diverged_from_1c2685d_not_ancestor_of_final_ui",
+      "integrated_candidate_branch": "integration/p1-first-light-candidate-20260921",
+      "integrated_candidate_head": "086ee97f4bef57f78b725af9b220e98faf9f87a1",
+      "integrated_local_uefi_proof": "pass",
+      "integrated_proof_report": "docs/evidence/p1-integration-086ee97-local-proof.json",
+      "integrated_known_good": "not_earned",
+      "integrated_physical_acceptance": "pending"
     },
     "P4A_Windows": {
       "W1": {
         "head": "4fe487f",
-        "state": "benchmark_frozen"
+        "state": "frozen"
       },
       "W2": {
         "head": "4296dd6",
-        "state": "freeze_certification_pass"
+        "state": "frozen"
       },
       "W3": {
         "head": "8af61f4",
-        "state": "freeze_certification_pass"
+        "state": "frozen"
       },
       "W4": {
         "head": "f99c7f8",
-        "state": "in_progress_gates_1_6_pass_7_10_pending"
+        "state": "frozen_external_exact_sha_certification"
       },
       "W5": {
         "head": "706e90a",
-        "state": "in_progress_gates_1_9_pass_freeze_pending"
+        "state": "frozen_downstream_predecessor_bound"
       },
       "W6": {
         "head": "0428413",
-        "state": "in_progress_gates_1_9_pass_freeze_pending"
+        "state": "frozen_external_exact_sha_certification"
       },
       "W7": {
         "head": "8115b4c",
-        "state": "in_progress_gates_1_9_pass_freeze_pending"
+        "state": "frozen_downstream_predecessor_bound"
       },
       "W8": {
         "head": "c2cc9de",
-        "state": "in_progress_gates_1_6_pass_7_10_pending",
-        "blocker": "authorized_digest_bound_windows_guest_execution"
+        "state": "healthy_waiting_authorized_guest",
+        "blocker": "authorized_digest_bound_windows_guest_execution",
+        "control_rebind": "complete"
       },
       "W9": {
         "state": "not_started"
