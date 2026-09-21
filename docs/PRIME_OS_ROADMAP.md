@@ -2,7 +2,7 @@
 
 **Authority:** derived from `docs/PRIME_OS_MASTER_PLAN.md` and accepted supplements  
 **Planning baseline:** accepted for handoff  
-**Implementation:** P1 First Light is active in draft PR #1 on `build/p1-first-light`; future roadmap work must not silently expand the frozen P1 scope.
+**Implementation:** P1 First Light and P4A Windows Personality now have active isolated implementation/proof branches. See `docs/PRIME_CURRENT_STATUS.md` for exact heads and earned gates. Branch progress does not silently change the frozen phase definitions or imply merge/release truth.
 
 This file is the fast operational roadmap. The Master Plan remains canonical when this summary is ambiguous. Narrow accepted supplements, including `docs/PRIME_STORAGE_INTELLIGENCE.md` and `docs/PRIME_APPLE_FILESYSTEMS.md`, govern their specific subsystems where they add detail without contradicting the Master Plan.
 
@@ -389,8 +389,13 @@ No silent redesign.
 
 # Current implementation mission
 
-The active implementation workstream is draft PR #1, `build/p1-first-light`:
+Implementation has advanced beyond the original draft-PR pickup text. The exact recovery truth now lives in `docs/PRIME_CURRENT_STATUS.md`.
 
-> **Continue P1 — First Light from the frozen Prime authority and P1 contracts.**
+Current bounded priorities are:
 
-The Store/component additions above are future P2/P3 scope and must not expand or destabilize the current P1 First Light implementation. Do not begin Windows, Android, Ptah integration, Store implementation, the full Storage Intelligence analyzer, APFS write support, or distributed execution before the required earlier phases are proven.
+1. preserve P1's already-earned canonical/physical/visual evidence while closing only its explicit remaining truth gaps; do not manufacture `KNOWN_GOOD` or missing physical evidence;
+2. keep the parallel P4A branch lane isolated from P1 release claims;
+3. close W8's authorized digest-bound Windows guest execution gate before treating VM fallback as frozen or starting W9 from a shipped W8;
+4. do not infer that P2/P3/P4A implementation branches have been merged into `main` merely because code/evidence exists.
+
+The Store/component additions above remain future authority unless their own phase is independently activated and proven. Android, Ptah integration, the full Storage Intelligence analyzer, APFS write support, and distributed execution remain governed by their phase gates.

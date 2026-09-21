@@ -8,10 +8,11 @@ This file is the recovery entry point for any future chat, AI agent, engineer, o
 2. `docs/PRIME_OS_MASTER_PLAN.md` — canonical product and architecture authority.
 3. `docs/PRIME_STORAGE_INTELLIGENCE.md` — accepted storage-intelligence supplement and filesystem strategy.
 4. `docs/PRIME_APPLE_FILESYSTEMS.md` — accepted Apple-storage supplement covering APFS, HFS+/HFS, encryption, snapshots/clones, Time Machine awareness, and disk-image handling.
-5. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
-6. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
-7. `docs/donors/APFS.md` — APFS/Apple storage donor/reference decision.
-8. `planning/state.json` — machine-readable current state.
+5. `docs/PRIME_CURRENT_STATUS.md` — exact implementation branch/proof frontier.
+6. `docs/PRIME_OS_ROADMAP.md` — operational phase sequence.
+7. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
+8. `docs/donors/APFS.md` — APFS/Apple storage donor/reference decision.
+9. `planning/state.json` — machine-readable current state.
 
 If any summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
 
@@ -21,12 +22,14 @@ If any summary conflicts with the Master Plan, the Master Plan wins unless a lat
 
 - Product name: **Prime OS**.
 - Prime is an integration-first development and execution operating system built on the Linux kernel foundation but not intended to be merely a themed distribution.
-- Prime's implementation repository was intentionally kept free of product implementation while the product/architecture plan was being reviewed.
-- The consolidated planning baseline is stored in this repository.
+- Prime's implementation repository was initially kept free of product implementation while the product/architecture plan was being reviewed.
+- The consolidated planning baseline remains stored in this repository.
+- Implementation has since advanced on isolated branch lanes; `docs/PRIME_CURRENT_STATUS.md` records the exact current branch/proof frontier.
 - Prime Storage Intelligence has an accepted planning supplement derived from WinDirStat and Linux/VFS filesystem research.
 - Apple storage has an accepted planning supplement: APFS is a first-class foreign filesystem target, HFS+/HFS and Apple disk-image formats are explicit compatibility classes, and APFS is read-only-first until a dedicated write-safety proof earns more.
-- Product implementation has **not** been performed in this planning workstream.
-- The implementation workstream must recover the repository authority before coding.
+- P1 First Light now has canonical/physical/visual proof work on dedicated branches, without a declared `KNOWN_GOOD` promotion.
+- P4A Windows Personality has branch-isolated work through W8; W1–W3 have frozen benchmark checkpoints, W4–W8 retain explicit pending gates described in `docs/PRIME_CURRENT_STATUS.md`.
+- These implementation branches are not equivalent to merge/release truth; recover the exact branch and evidence before continuing.
 
 ## Permanent boundaries
 
@@ -115,11 +118,13 @@ Cleanup uses `PROTECTED / RECLAIMABLE / REVIEW / UNKNOWN` safety classes.
 
 ---
 
-## First implementation mission
+## Current implementation frontier
 
-The first bounded implementation mission is:
+P1 First Light is no longer an unstarted mission. It has substantial canonical, physical, and visual proof, while retaining explicit completion gaps. P4A Windows Personality has also advanced in a separate branch-isolated lane through W8.
 
-> **P1 — First Light: produce the first unmistakably Prime bootable system according to the frozen authority.**
+Recover `docs/PRIME_CURRENT_STATUS.md` for the exact next bounded work before modifying either lane.
+
+The P1 target remains:
 
 P1 includes Prime identity/generation/Host identity, Prime Core, hardware graph, storage separation, base HP hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, and the minimum Prime Storage Intelligence foundation for capacity/reserve/generation accounting and update-space preflight.
 
