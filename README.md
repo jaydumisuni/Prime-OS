@@ -6,8 +6,8 @@ Prime uses the Linux kernel foundation but is not intended to be a themed Fedora
 
 ## Current project state
 
-**Planning baseline:** documented and owner-approved for handoff.  
-**Implementation:** active on isolated P1 and P4A branch lanes; not all implementation is merged into `main`.
+**Planning baseline:** preserved and owner-approved for handoff.
+**Implementation:** integrated P1 source/proof lineage is promoted to `main`; P4A Windows remains on independently frozen/frontier branch lanes.
 **Current recovery status:** see [`docs/PRIME_CURRENT_STATUS.md`](docs/PRIME_CURRENT_STATUS.md) for exact branch heads, earned proof, pending gates, and lane separation.
 
 Do not infer completion from branch existence, and do not begin work from conversation memory. Recover the durable authority and current-status record first.

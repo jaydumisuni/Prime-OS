@@ -7,8 +7,8 @@ This file is the canonical fast recovery record for **what has actually moved in
 ## Repository truth
 
 - Canonical repository: `jaydumisuni/Prime-OS`.
-- Default branch authority remains the architecture/planning baseline.
-- Prime implementation has moved substantially on isolated branch lanes that are not yet merged into `main`.
+- `main` now carries the integrated P1 source/proof/recovery lineage; the architecture/planning baseline is preserved in that history.
+- P4A Windows remains branch-isolated and is not implied to be merged into the P1 line.
 - The integrated P1 candidate joins final-UI, canonical proof, and current recovery/planning histories at exact proven revision `086ee97f4bef57f78b725af9b220e98faf9f87a1`.
 - A branch being published does not mean that phase is shipped, merged, or promoted to `KNOWN_GOOD`.
 
