@@ -7,10 +7,10 @@ Prime uses the Linux kernel foundation but is not intended to be a themed Fedora
 ## Current project state
 
 **Planning baseline:** documented and owner-approved for handoff.  
-**Implementation:** not performed in the planning workstream.  
-**Next implementation mission:** **P1 — First Light** in a fresh implementation workstream after recovering the repository authority.
+**Implementation:** active on isolated P1 and P4A branch lanes; not all implementation is merged into `main`.
+**Current recovery status:** see [`docs/PRIME_CURRENT_STATUS.md`](docs/PRIME_CURRENT_STATUS.md) for exact branch heads, earned proof, pending gates, and lane separation.
 
-Do not begin implementation from assumptions or from conversation memory. Read the durable authority first.
+Do not infer completion from branch existence, and do not begin work from conversation memory. Recover the durable authority and current-status record first.
 
 ## Recovery order
 
@@ -18,9 +18,10 @@ Do not begin implementation from assumptions or from conversation memory. Read t
 2. [`docs/PRIME_STORAGE_INTELLIGENCE.md`](docs/PRIME_STORAGE_INTELLIGENCE.md) — accepted storage-intelligence supplement: WinDirStat donor boundary, generic Linux/VFS scanner, ext4/Btrfs/XFS/NTFS strategy, change engine, cleanup safety, and phase placement.
 3. [`docs/PRIME_APPLE_FILESYSTEMS.md`](docs/PRIME_APPLE_FILESYSTEMS.md) — Apple storage supplement: APFS, HFS+/HFS, FileVault/encryption boundary, snapshots/clones/space sharing, Time Machine awareness, and Apple disk-image strategy.
 4. [`docs/PRIME_HOST_SECURITY_INTERFACE.md`](docs/PRIME_HOST_SECURITY_INTERFACE.md) — host-security seam: Prime owns machine security mechanisms/mechanical events/enforcement; Grid-Knight owns threat interpretation, protection policy, cleanup/remediation and retest evidence.
-5. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
-6. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
-7. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
+5. [`docs/PRIME_CURRENT_STATUS.md`](docs/PRIME_CURRENT_STATUS.md) — exact current implementation branch/proof frontier.
+6. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
+7. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
+8. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
 
 Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md) and [`APFS.md`](docs/donors/APFS.md).
 
@@ -80,11 +81,11 @@ P8   Distributed Prime Deployment
 
 Windows and Android personalities may proceed in parallel only after their prerequisites are proven and when doing so does not create conflicting implementation ownership.
 
-## First implementation mission
+## Current implementation frontier
 
-A fresh implementation workstream should begin with:
+P1 First Light implementation and proof are already active, and a parallel isolated P4A Windows Personality lane has advanced through W8. Recover `docs/PRIME_CURRENT_STATUS.md` before choosing the next bounded mission.
 
-> **Build P1 — First Light according to the Prime authority.**
+The architectural P1 target remains:
 
 First Light includes the bootable Prime identity, Prime Host identity, Prime Core, hardware graph, storage separation, base HP 290 G4 hardware support, Prime Exec foundation, Application Profile registry, Capability Interface v1, Workload Policy v1, Prime Shell, Prime Orb baseline, recovery entry, update-aware generation layout, the minimal Prime Storage Intelligence foundation required for capacity/reserve/update preflight, and the minimal secure host-event/enforcement foundation Prime itself requires.
 
