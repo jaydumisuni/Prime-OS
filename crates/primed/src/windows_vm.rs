@@ -12,6 +12,8 @@ use thiserror::Error;
 
 pub const WINDOWS_VM_GUEST_SCHEMA: &str = "prime.windows-vm-guest.v1";
 pub const WINDOWS_VM_AGENT_SCHEMA: &str = "prime.windows-vm-agent.v1";
+pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proof.v1";
+pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GuestAgentHello {
@@ -78,6 +80,7 @@ pub enum VmRuntimeAdversarialCase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VmRuntimeProofPlan {
+    pub proof_id: String,
     pub guest_id: String,
     pub guest_revision: u64,
     pub guest_sha256: String,
@@ -89,6 +92,7 @@ pub struct VmRuntimeProofPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VmRuntimeProofObservation {
+    pub proof_id: String,
     pub case: VmRuntimeAdversarialCase,
     pub guest_id: String,
     pub guest_revision: u64,
@@ -97,6 +101,8 @@ pub struct VmRuntimeProofObservation {
     pub session_id: String,
     pub passed: bool,
     pub zero_residual_state: bool,
+    pub evidence_sha256: String,
+    pub observation_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,27 +199,79 @@ pub fn prepare_runtime_proof_plan(
     session_id: &str,
 ) -> Result<VmRuntimeProofPlan, WindowsVmError> {
     let paths = vm_session_paths(root, application_id, session_id)?;
+    let required_cases = vec![
+        VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
+        VmRuntimeAdversarialCase::ForcedProcessTermination,
+        VmRuntimeAdversarialCase::CorruptGuestAuthority,
+        VmRuntimeAdversarialCase::DeniedUsbNode,
+    ];
+    let proof_id = runtime_proof_id(
+        &guest.guest_id,
+        guest.revision,
+        &guest.base_sha256,
+        application_id,
+        session_id,
+        &required_cases,
+    );
     Ok(VmRuntimeProofPlan {
+        proof_id,
         guest_id: guest.guest_id.clone(),
         guest_revision: guest.revision,
         guest_sha256: guest.base_sha256.clone(),
         application_id: application_id.to_owned(),
         session_id: session_id.to_owned(),
         paths,
-        required_cases: vec![
-            VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
-            VmRuntimeAdversarialCase::ForcedProcessTermination,
-            VmRuntimeAdversarialCase::CorruptGuestAuthority,
-            VmRuntimeAdversarialCase::DeniedUsbNode,
-        ],
+        required_cases,
     })
+}
+
+pub fn create_runtime_proof_observation(
+    plan: &VmRuntimeProofPlan,
+    case: VmRuntimeAdversarialCase,
+    passed: bool,
+    zero_residual_state: bool,
+    evidence_sha256: &str,
+) -> Result<VmRuntimeProofObservation, WindowsVmError> {
+    if !canonical_sha256_hex(evidence_sha256) {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof evidence digest is not canonical SHA-256",
+        ));
+    }
+    if !plan.required_cases.contains(&case) {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof case is not required by plan",
+        ));
+    }
+    let mut observation = VmRuntimeProofObservation {
+        proof_id: plan.proof_id.clone(),
+        case,
+        guest_id: plan.guest_id.clone(),
+        guest_revision: plan.guest_revision,
+        guest_sha256: plan.guest_sha256.clone(),
+        application_id: plan.application_id.clone(),
+        session_id: plan.session_id.clone(),
+        passed,
+        zero_residual_state,
+        evidence_sha256: evidence_sha256.to_owned(),
+        observation_id: String::new(),
+    };
+    observation.observation_id = runtime_observation_id(&observation);
+    Ok(observation)
 }
 
 pub fn evaluate_runtime_proof(
     plan: &VmRuntimeProofPlan,
     observations: &[VmRuntimeProofObservation],
 ) -> VmRuntimeProofState {
-    if observations.len() != plan.required_cases.len() {
+    let expected_proof_id = runtime_proof_id(
+        &plan.guest_id,
+        plan.guest_revision,
+        &plan.guest_sha256,
+        &plan.application_id,
+        &plan.session_id,
+        &plan.required_cases,
+    );
+    if plan.proof_id != expected_proof_id || observations.len() != plan.required_cases.len() {
         return VmRuntimeProofState::Pending;
     }
 
@@ -226,11 +284,13 @@ pub fn evaluate_runtime_proof(
             return VmRuntimeProofState::Pending;
         }
         let observation = matches[0];
-        if observation.guest_id != plan.guest_id
+        let expected_observation_id = runtime_observation_id(observation);
+        if observation.proof_id != plan.proof_id
+            || observation.observation_id != expected_observation_id
+            || !canonical_sha256_hex(&observation.evidence_sha256)
+            || observation.guest_id != plan.guest_id
             || observation.guest_revision != plan.guest_revision
-            || !observation
-                .guest_sha256
-                .eq_ignore_ascii_case(&plan.guest_sha256)
+            || observation.guest_sha256 != plan.guest_sha256
             || observation.application_id != plan.application_id
             || observation.session_id != plan.session_id
             || !observation.passed
@@ -241,6 +301,55 @@ pub fn evaluate_runtime_proof(
     }
 
     VmRuntimeProofState::Pass
+}
+
+fn runtime_proof_id(
+    guest_id: &str,
+    guest_revision: u64,
+    guest_sha256: &str,
+    application_id: &str,
+    session_id: &str,
+    required_cases: &[VmRuntimeAdversarialCase],
+) -> String {
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+        "guest_id": guest_id,
+        "guest_revision": guest_revision,
+        "guest_sha256": guest_sha256,
+        "application_id": application_id,
+        "session_id": session_id,
+        "required_cases": required_cases,
+    });
+    sha256_json(&body)
+}
+
+fn runtime_observation_id(observation: &VmRuntimeProofObservation) -> String {
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA,
+        "proof_id": observation.proof_id,
+        "case": observation.case,
+        "guest_id": observation.guest_id,
+        "guest_revision": observation.guest_revision,
+        "guest_sha256": observation.guest_sha256,
+        "application_id": observation.application_id,
+        "session_id": observation.session_id,
+        "passed": observation.passed,
+        "zero_residual_state": observation.zero_residual_state,
+        "evidence_sha256": observation.evidence_sha256,
+    });
+    sha256_json(&body)
+}
+
+fn sha256_json(value: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(value).expect("runtime proof identity JSON is serializable");
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn canonical_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVmError> {

@@ -60,14 +60,16 @@
       "status": "PENDING",
       "evidence": [
         "application/session-scoped runtime/overlay/agent paths now reject traversal/absolute escape identities and are distinct in targeted regression",
-        "runtime concurrent-QEMU proof remains pending behind a bootable authorized guest/harness surface"
+        "runtime concurrent-QEMU proof remains pending behind a bootable authorized guest/harness surface",
+        "guest-independent proof plans now carry deterministic exact-guest/application/session proof identities; runtime observations must bind to that plan before Gate 8 can pass"
       ]
     },
     "9_lifecycle_adversarial_regression": {
       "status": "PENDING",
       "evidence": [
         "static fail-closed authority/path regressions are green",
-        "bounded runtime kill/corrupt-authority/denied-USB zero-residual proof remains pending"
+        "bounded runtime kill/corrupt-authority/denied-USB zero-residual proof remains pending",
+        "each adversarial observation is bound to proof id, exact guest digest, application/session scope, case, result, zero-residual state and an evidence SHA-256; replay/mutation remains PENDING"
       ]
     }
   },
