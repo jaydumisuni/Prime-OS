@@ -257,6 +257,8 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
             guest_id: plan.guest_id.clone(),
             guest_revision: plan.guest_revision,
             guest_sha256: plan.guest_sha256.clone(),
+            application_id: plan.application_id.clone(),
+            session_id: plan.session_id.clone(),
             passed: true,
             zero_residual_state: true,
         })
@@ -293,6 +295,8 @@ fn runtime_proof_cannot_pass_on_wrong_guest_duplicate_case_or_residual_state() {
             guest_id: plan.guest_id.clone(),
             guest_revision: plan.guest_revision,
             guest_sha256: plan.guest_sha256.clone(),
+            application_id: plan.application_id.clone(),
+            session_id: plan.session_id.clone(),
             passed: true,
             zero_residual_state: true,
         })
@@ -305,6 +309,13 @@ fn runtime_proof_cannot_pass_on_wrong_guest_duplicate_case_or_residual_state() {
     );
 
     observations[0].guest_sha256 = plan.guest_sha256.clone();
+    observations[0].session_id = "session-b".to_owned();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+
+    observations[0].session_id = plan.session_id.clone();
     observations[1].zero_residual_state = false;
     assert_eq!(
         evaluate_runtime_proof(&plan, &observations),

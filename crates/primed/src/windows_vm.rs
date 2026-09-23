@@ -93,6 +93,8 @@ pub struct VmRuntimeProofObservation {
     pub guest_id: String,
     pub guest_revision: u64,
     pub guest_sha256: String,
+    pub application_id: String,
+    pub session_id: String,
     pub passed: bool,
     pub zero_residual_state: bool,
 }
@@ -229,6 +231,8 @@ pub fn evaluate_runtime_proof(
             || !observation
                 .guest_sha256
                 .eq_ignore_ascii_case(&plan.guest_sha256)
+            || observation.application_id != plan.application_id
+            || observation.session_id != plan.session_id
             || !observation.passed
             || !observation.zero_residual_state
         {
