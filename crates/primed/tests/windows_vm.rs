@@ -212,3 +212,109 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(vm_session_paths(root.path(), "../escape", "session-a").is_err());
     assert!(vm_session_paths(root.path(), "app-001", "/absolute").is_err());
 }
+
+#[test]
+fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
+    use primed::windows_vm::{
+        evaluate_runtime_proof, prepare_runtime_proof_plan, VmRuntimeAdversarialCase,
+        VmRuntimeProofObservation, VmRuntimeProofState,
+    };
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    assert_eq!(plan.required_cases.len(), 4);
+    assert!(plan
+        .required_cases
+        .contains(&VmRuntimeAdversarialCase::ConcurrentSessionIsolation));
+    assert!(plan
+        .required_cases
+        .contains(&VmRuntimeAdversarialCase::ForcedProcessTermination));
+    assert!(plan
+        .required_cases
+        .contains(&VmRuntimeAdversarialCase::CorruptGuestAuthority));
+    assert!(plan
+        .required_cases
+        .contains(&VmRuntimeAdversarialCase::DeniedUsbNode));
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &[]),
+        VmRuntimeProofState::Pending
+    );
+
+    let observations: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .map(|case| VmRuntimeProofObservation {
+            case,
+            guest_id: plan.guest_id.clone(),
+            guest_revision: plan.guest_revision,
+            guest_sha256: plan.guest_sha256.clone(),
+            passed: true,
+            zero_residual_state: true,
+        })
+        .collect();
+
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pass
+    );
+}
+
+#[test]
+fn runtime_proof_cannot_pass_on_wrong_guest_duplicate_case_or_residual_state() {
+    use primed::windows_vm::{
+        evaluate_runtime_proof, prepare_runtime_proof_plan, VmRuntimeProofObservation,
+        VmRuntimeProofState,
+    };
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    let mut observations: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .map(|case| VmRuntimeProofObservation {
+            case,
+            guest_id: plan.guest_id.clone(),
+            guest_revision: plan.guest_revision,
+            guest_sha256: plan.guest_sha256.clone(),
+            passed: true,
+            zero_residual_state: true,
+        })
+        .collect();
+
+    observations[0].guest_sha256 = "b".repeat(64);
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+
+    observations[0].guest_sha256 = plan.guest_sha256.clone();
+    observations[1].zero_residual_state = false;
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+
+    observations[1].zero_residual_state = true;
+    observations[3].case = observations[2].case.clone();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+}

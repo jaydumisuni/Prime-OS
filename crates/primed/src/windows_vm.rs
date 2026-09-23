@@ -67,6 +67,42 @@ pub struct QemuPlan {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VmRuntimeAdversarialCase {
+    ConcurrentSessionIsolation,
+    ForcedProcessTermination,
+    CorruptGuestAuthority,
+    DeniedUsbNode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmRuntimeProofPlan {
+    pub guest_id: String,
+    pub guest_revision: u64,
+    pub guest_sha256: String,
+    pub application_id: String,
+    pub session_id: String,
+    pub paths: VmSessionPaths,
+    pub required_cases: Vec<VmRuntimeAdversarialCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VmRuntimeProofObservation {
+    pub case: VmRuntimeAdversarialCase,
+    pub guest_id: String,
+    pub guest_revision: u64,
+    pub guest_sha256: String,
+    pub passed: bool,
+    pub zero_residual_state: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmRuntimeProofState {
+    Pending,
+    Pass,
+}
+
 #[derive(Debug, Error)]
 pub enum WindowsVmError {
     #[error("invalid Windows VM guest definition: {0}")]
@@ -146,6 +182,61 @@ pub fn vm_session_paths(
         agent_socket: runtime_dir.join("agent.sock"),
         runtime_dir,
     })
+}
+
+pub fn prepare_runtime_proof_plan(
+    guest: &ValidatedVmGuest,
+    root: &Path,
+    application_id: &str,
+    session_id: &str,
+) -> Result<VmRuntimeProofPlan, WindowsVmError> {
+    let paths = vm_session_paths(root, application_id, session_id)?;
+    Ok(VmRuntimeProofPlan {
+        guest_id: guest.guest_id.clone(),
+        guest_revision: guest.revision,
+        guest_sha256: guest.base_sha256.clone(),
+        application_id: application_id.to_owned(),
+        session_id: session_id.to_owned(),
+        paths,
+        required_cases: vec![
+            VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
+            VmRuntimeAdversarialCase::ForcedProcessTermination,
+            VmRuntimeAdversarialCase::CorruptGuestAuthority,
+            VmRuntimeAdversarialCase::DeniedUsbNode,
+        ],
+    })
+}
+
+pub fn evaluate_runtime_proof(
+    plan: &VmRuntimeProofPlan,
+    observations: &[VmRuntimeProofObservation],
+) -> VmRuntimeProofState {
+    if observations.len() != plan.required_cases.len() {
+        return VmRuntimeProofState::Pending;
+    }
+
+    for required in &plan.required_cases {
+        let matches: Vec<_> = observations
+            .iter()
+            .filter(|observation| observation.case == *required)
+            .collect();
+        if matches.len() != 1 {
+            return VmRuntimeProofState::Pending;
+        }
+        let observation = matches[0];
+        if observation.guest_id != plan.guest_id
+            || observation.guest_revision != plan.guest_revision
+            || !observation
+                .guest_sha256
+                .eq_ignore_ascii_case(&plan.guest_sha256)
+            || !observation.passed
+            || !observation.zero_residual_state
+        {
+            return VmRuntimeProofState::Pending;
+        }
+    }
+
+    VmRuntimeProofState::Pass
 }
 
 pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVmError> {
