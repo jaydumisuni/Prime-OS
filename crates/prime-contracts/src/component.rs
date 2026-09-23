@@ -54,6 +54,8 @@ pub struct PrimeComponentManifest {
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
+    pub base_system_requirements: Vec<String>,
+    #[serde(default)]
     pub limitations: Vec<String>,
 }
 
@@ -71,6 +73,7 @@ pub enum ComponentManifestError {
     Dependency,
     DuplicateDependency,
     RegistrationIdentity,
+    BaseSystemRequirement,
 }
 
 impl fmt::Display for ComponentManifestError {
@@ -90,6 +93,7 @@ impl fmt::Display for ComponentManifestError {
             Self::RegistrationIdentity => {
                 "component registration identity is invalid or duplicated"
             }
+            Self::BaseSystemRequirement => "base-system requirement is empty or duplicated",
         };
         f.write_str(message)
     }
@@ -152,6 +156,16 @@ pub fn validate_component_manifest(
         &manifest.capabilities,
     ] {
         validate_unique_identities(registrations, ComponentManifestError::RegistrationIdentity)?;
+    }
+
+    let mut base_requirements = BTreeSet::new();
+    for requirement in &manifest.base_system_requirements {
+        if requirement.trim().is_empty()
+            || requirement != requirement.trim()
+            || !base_requirements.insert(requirement.as_str())
+        {
+            return Err(ComponentManifestError::BaseSystemRequirement);
+        }
     }
 
     Ok(())
@@ -224,6 +238,7 @@ mod tests {
             application_profiles: vec![],
             services: vec!["originsd".to_owned()],
             capabilities: vec!["origins.factory".to_owned()],
+            base_system_requirements: vec![],
             limitations: vec![],
         }
     }
