@@ -421,3 +421,38 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
     let d = prepare_runtime_proof_plan(&other, &root, "app-001", "session-a").unwrap();
     assert_ne!(a.proof_id, d.proof_id);
 }
+
+#[test]
+fn runtime_observation_hashes_actual_nonempty_evidence_bytes() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, prepare_runtime_proof_plan,
+    };
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+    let evidence = b"forced-termination:zero-qemu-processes";
+
+    let observation = create_runtime_proof_observation_from_evidence(
+        &plan,
+        plan.required_cases[1].clone(),
+        true,
+        true,
+        evidence,
+    )
+    .unwrap();
+    assert_eq!(observation.evidence_sha256, digest(evidence));
+    assert!(create_runtime_proof_observation_from_evidence(
+        &plan,
+        plan.required_cases[1].clone(),
+        true,
+        true,
+        b"",
+    )
+    .is_err());
+}

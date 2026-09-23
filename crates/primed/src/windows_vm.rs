@@ -225,6 +225,22 @@ pub fn prepare_runtime_proof_plan(
     })
 }
 
+pub fn create_runtime_proof_observation_from_evidence(
+    plan: &VmRuntimeProofPlan,
+    case: VmRuntimeAdversarialCase,
+    passed: bool,
+    zero_residual_state: bool,
+    evidence: &[u8],
+) -> Result<VmRuntimeProofObservation, WindowsVmError> {
+    if evidence.is_empty() {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof evidence is empty",
+        ));
+    }
+    let evidence_sha256 = format!("{:x}", Sha256::digest(evidence));
+    create_runtime_proof_observation(plan, case, passed, zero_residual_state, &evidence_sha256)
+}
+
 pub fn create_runtime_proof_observation(
     plan: &VmRuntimeProofPlan,
     case: VmRuntimeAdversarialCase,
