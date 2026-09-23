@@ -41,6 +41,14 @@ pub enum ComponentTransactionKind {
         previous_revision: u64,
         previous_package_digest: String,
     },
+    Remove {
+        previous_revision: u64,
+        previous_package_digest: String,
+    },
+    Rollback {
+        previous_revision: u64,
+        previous_package_digest: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +127,47 @@ pub fn plan_component_transaction(
         target_revision: package.revision,
         target_package_digest: package.package_digest.clone(),
         kind,
+    })
+}
+
+pub fn plan_component_removal(
+    component_id: &str,
+    installed: &[InstalledComponent],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let current = installed
+        .iter()
+        .find(|component| component.component_id == component_id)
+        .ok_or_else(|| ComponentAdmissionError::DependencyMissing(component_id.to_owned()))?;
+
+    Ok(ComponentTransactionPlan {
+        component_id: current.component_id.clone(),
+        target_revision: 0,
+        target_package_digest: String::new(),
+        kind: ComponentTransactionKind::Remove {
+            previous_revision: current.revision,
+            previous_package_digest: current.package_digest.clone(),
+        },
+    })
+}
+
+pub fn plan_component_rollback(
+    current: &InstalledComponent,
+    retained: &InstalledComponent,
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    if current.component_id != retained.component_id || retained.revision >= current.revision {
+        return Err(ComponentAdmissionError::RevisionNotAdvanced(
+            current.component_id.clone(),
+        ));
+    }
+
+    Ok(ComponentTransactionPlan {
+        component_id: current.component_id.clone(),
+        target_revision: retained.revision,
+        target_package_digest: retained.package_digest.clone(),
+        kind: ComponentTransactionKind::Rollback {
+            previous_revision: current.revision,
+            previous_package_digest: current.package_digest.clone(),
+        },
     })
 }
 
@@ -265,6 +314,8 @@ mod tests {
     };
     use tempfile::tempdir;
 
+    const DIGEST_A: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DIGEST_B: &str =
         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -531,6 +582,71 @@ mod tests {
                 Err(ComponentAdmissionError::RevisionNotAdvanced(_))
             ));
         }
+    }
+
+    #[test]
+    fn removal_and_rollback_plans_preserve_previous_identity() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+
+        let removal =
+            plan_component_removal(&current.component_id, std::slice::from_ref(&current)).unwrap();
+        assert_eq!(removal.target_revision, 0);
+        assert_eq!(
+            removal.kind,
+            ComponentTransactionKind::Remove {
+                previous_revision: 3,
+                previous_package_digest: DIGEST_B.to_owned(),
+            }
+        );
+
+        let rollback = plan_component_rollback(&current, &retained).unwrap();
+        assert_eq!(rollback.target_revision, 2);
+        assert_eq!(rollback.target_package_digest, DIGEST_A);
+        assert_eq!(
+            rollback.kind,
+            ComponentTransactionKind::Rollback {
+                previous_revision: 3,
+                previous_package_digest: DIGEST_B.to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn rollback_rejects_cross_component_or_non_previous_target() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        for retained in [
+            InstalledComponent {
+                component_id: "other.runtime".to_owned(),
+                revision: 2,
+                package_digest: DIGEST_A.to_owned(),
+            },
+            InstalledComponent {
+                component_id: current.component_id.clone(),
+                revision: 3,
+                package_digest: DIGEST_A.to_owned(),
+            },
+            InstalledComponent {
+                component_id: current.component_id.clone(),
+                revision: 4,
+                package_digest: DIGEST_A.to_owned(),
+            },
+        ] {
+            assert!(plan_component_rollback(&current, &retained).is_err());
+        }
+        assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
     }
 
     #[test]
