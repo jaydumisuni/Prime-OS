@@ -275,6 +275,13 @@ pub fn evaluate_runtime_proof(
         return VmRuntimeProofState::Pending;
     }
 
+    let mut evidence_digests = std::collections::HashSet::new();
+    for observation in observations {
+        if !evidence_digests.insert(observation.evidence_sha256.as_str()) {
+            return VmRuntimeProofState::Pending;
+        }
+    }
+
     for required in &plan.required_cases {
         let matches: Vec<_> = observations
             .iter()

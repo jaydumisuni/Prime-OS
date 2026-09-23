@@ -333,6 +333,20 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
         evaluate_runtime_proof(&plan, &observations),
         VmRuntimeProofState::Pending
     );
+
+    let mut observations = make();
+    observations[1] = create_runtime_proof_observation(
+        &plan,
+        observations[1].case.clone(),
+        true,
+        true,
+        &observations[0].evidence_sha256,
+    )
+    .unwrap();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
 }
 
 #[test]
