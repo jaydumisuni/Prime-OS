@@ -1,4 +1,5 @@
 pub mod application;
+pub mod component;
 pub mod exec;
 pub mod generation;
 pub mod policy;
@@ -6,6 +7,7 @@ pub mod storage;
 pub mod system;
 
 pub use application::*;
+pub use component::*;
 pub use exec::*;
 pub use generation::*;
 pub use policy::*;
