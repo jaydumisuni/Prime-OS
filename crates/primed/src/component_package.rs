@@ -35,6 +35,23 @@ pub struct VerifiedComponentPackage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentTransactionKind {
+    Install,
+    Update {
+        previous_revision: u64,
+        previous_package_digest: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentTransactionPlan {
+    pub component_id: String,
+    pub target_revision: u64,
+    pub target_package_digest: String,
+    pub kind: ComponentTransactionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentAdmissionOutcome {
     Ready(VerifiedComponentPackage),
     GenerationHandoff {
@@ -72,6 +89,37 @@ pub enum ComponentAdmissionError {
     },
     #[error("component dependency {0} package digest does not match exact pin")]
     DependencyDigest(String),
+    #[error("component transaction for {0} does not advance the installed revision")]
+    RevisionNotAdvanced(String),
+}
+
+pub fn plan_component_transaction(
+    package: &VerifiedComponentPackage,
+    installed: &[InstalledComponent],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let current = installed
+        .iter()
+        .find(|component| component.component_id == package.component_id);
+
+    let kind = match current {
+        None => ComponentTransactionKind::Install,
+        Some(current) if package.revision > current.revision => ComponentTransactionKind::Update {
+            previous_revision: current.revision,
+            previous_package_digest: current.package_digest.clone(),
+        },
+        Some(_) => {
+            return Err(ComponentAdmissionError::RevisionNotAdvanced(
+                package.component_id.clone(),
+            ))
+        }
+    };
+
+    Ok(ComponentTransactionPlan {
+        component_id: package.component_id.clone(),
+        target_revision: package.revision,
+        target_package_digest: package.package_digest.clone(),
+        kind,
+    })
 }
 
 pub fn verify_offline_component_package<S, G>(
@@ -426,6 +474,63 @@ mod tests {
                 requirements: vec!["kernel.module.example".to_owned()],
             }
         );
+    }
+
+    #[test]
+    fn transaction_plan_distinguishes_install_from_rollback_capable_update() {
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let ComponentAdmissionOutcome::Ready(package) = verify_offline_component_package(
+            &path,
+            &manifest,
+            &context(&[]),
+            |_| true,
+            |_, _| true,
+        )
+        .unwrap() else {
+            panic!("expected admitted package");
+        };
+
+        let install = plan_component_transaction(&package, &[]).unwrap();
+        assert_eq!(install.kind, ComponentTransactionKind::Install);
+
+        let current = [InstalledComponent {
+            component_id: package.component_id.clone(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        }];
+        let update = plan_component_transaction(&package, &current).unwrap();
+        assert_eq!(
+            update.kind,
+            ComponentTransactionKind::Update {
+                previous_revision: 1,
+                previous_package_digest: DIGEST_B.to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn transaction_plan_rejects_same_revision_and_downgrade() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            version: "2.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        for revision in [2, 3] {
+            let current = [InstalledComponent {
+                component_id: package.component_id.clone(),
+                revision,
+                package_digest: DIGEST_B.to_owned(),
+            }];
+            assert!(matches!(
+                plan_component_transaction(&package, &current),
+                Err(ComponentAdmissionError::RevisionNotAdvanced(_))
+            ));
+        }
     }
 
     #[test]
