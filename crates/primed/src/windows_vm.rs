@@ -213,6 +213,11 @@ pub fn prepare_runtime_proof_plan(
     application_id: &str,
     session_id: &str,
 ) -> Result<VmRuntimeProofPlan, WindowsVmError> {
+    if !canonical_sha256_hex(&guest.base_sha256) {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof guest digest is not canonical SHA-256",
+        ));
+    }
     let paths = vm_session_paths(root, application_id, session_id)?;
     let required_cases = vec![
         VmRuntimeAdversarialCase::ConcurrentSessionIsolation,

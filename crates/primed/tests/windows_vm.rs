@@ -507,3 +507,22 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
         create_runtime_proof_observation_from_envelope(&plan, &wrong_case, true, true).is_err()
     );
 }
+
+#[test]
+fn runtime_proof_plan_rejects_noncanonical_forged_guest_digest() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let mut guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+
+    guest.base_sha256 = "A".repeat(64);
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+
+    guest.base_sha256 = "g".repeat(64);
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+}
