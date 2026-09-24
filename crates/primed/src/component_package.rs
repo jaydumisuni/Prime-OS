@@ -1,6 +1,6 @@
 use prime_contracts::{
-    validate_component_manifest, ComponentManifestError, PrimeComponentManifest,
-    CAPABILITY_INTERFACE_VERSION,
+    validate_component_manifest, ComponentManifestError, PersistentDataPolicy,
+    PrimeComponentManifest, CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -60,6 +60,13 @@ pub struct ComponentTransactionPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentDataDisposition {
+    Retain,
+    Migrated,
+    DiscardEphemeral,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentAdmissionOutcome {
     Ready(VerifiedComponentPackage),
     GenerationHandoff {
@@ -99,6 +106,8 @@ pub enum ComponentAdmissionError {
     DependencyDigest(String),
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
+    #[error("component {0} requires explicit persistent-data migration before removal")]
+    PersistentDataMigrationRequired(String),
 }
 
 pub fn plan_component_transaction(
@@ -148,6 +157,29 @@ pub fn plan_component_removal(
             previous_package_digest: current.package_digest.clone(),
         },
     })
+}
+
+pub fn plan_component_data_removal(
+    manifest: &PrimeComponentManifest,
+    current: &InstalledComponent,
+    explicit_migration_completed: bool,
+) -> Result<ComponentDataDisposition, ComponentAdmissionError> {
+    if manifest.component_id != current.component_id || manifest.revision != current.revision {
+        return Err(ComponentAdmissionError::RevisionNotAdvanced(
+            current.component_id.clone(),
+        ));
+    }
+
+    match manifest.persistent_data_policy {
+        PersistentDataPolicy::RetainOnRemove => Ok(ComponentDataDisposition::Retain),
+        PersistentDataPolicy::ExplicitMigration if explicit_migration_completed => {
+            Ok(ComponentDataDisposition::Migrated)
+        }
+        PersistentDataPolicy::ExplicitMigration => Err(
+            ComponentAdmissionError::PersistentDataMigrationRequired(current.component_id.clone()),
+        ),
+        PersistentDataPolicy::Ephemeral => Ok(ComponentDataDisposition::DiscardEphemeral),
+    }
 }
 
 pub fn plan_component_rollback(
@@ -647,6 +679,45 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn removal_data_policy_is_explicit_and_fail_closed() {
+        let bytes = b"origins-package-v2";
+        let mut manifest = manifest(bytes);
+        let current = InstalledComponent {
+            component_id: manifest.component_id.clone(),
+            revision: manifest.revision,
+            package_digest: manifest.package_digest.clone(),
+        };
+
+        manifest.persistent_data_policy = PersistentDataPolicy::RetainOnRemove;
+        assert_eq!(
+            plan_component_data_removal(&manifest, &current, false).unwrap(),
+            ComponentDataDisposition::Retain
+        );
+
+        manifest.persistent_data_policy = PersistentDataPolicy::ExplicitMigration;
+        assert!(matches!(
+            plan_component_data_removal(&manifest, &current, false),
+            Err(ComponentAdmissionError::PersistentDataMigrationRequired(_))
+        ));
+        assert_eq!(
+            plan_component_data_removal(&manifest, &current, true).unwrap(),
+            ComponentDataDisposition::Migrated
+        );
+
+        manifest.persistent_data_policy = PersistentDataPolicy::Ephemeral;
+        assert_eq!(
+            plan_component_data_removal(&manifest, &current, false).unwrap(),
+            ComponentDataDisposition::DiscardEphemeral
+        );
+
+        let wrong = InstalledComponent {
+            revision: current.revision + 1,
+            ..current
+        };
+        assert!(plan_component_data_removal(&manifest, &wrong, false).is_err());
     }
 
     #[test]
