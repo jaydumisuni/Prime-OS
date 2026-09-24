@@ -102,6 +102,7 @@ pub struct VmRuntimeProofObservation {
     pub session_id: String,
     pub passed: bool,
     pub zero_residual_state: bool,
+    pub evidence_schema: String,
     pub evidence_sha256: String,
     pub observation_id: String,
 }
@@ -321,6 +322,7 @@ fn create_runtime_proof_observation(
         session_id: plan.session_id.clone(),
         passed,
         zero_residual_state,
+        evidence_schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
         evidence_sha256: evidence_sha256.to_owned(),
         observation_id: String::new(),
     };
@@ -363,6 +365,7 @@ pub fn evaluate_runtime_proof(
         let expected_observation_id = runtime_observation_id(observation);
         if observation.proof_id != plan.proof_id
             || observation.observation_id != expected_observation_id
+            || observation.evidence_schema != WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA
             || !canonical_sha256_hex(&observation.evidence_sha256)
             || observation.guest_id != plan.guest_id
             || observation.guest_revision != plan.guest_revision
@@ -411,6 +414,7 @@ fn runtime_observation_id(observation: &VmRuntimeProofObservation) -> String {
         "session_id": observation.session_id,
         "passed": observation.passed,
         "zero_residual_state": observation.zero_residual_state,
+        "evidence_schema": observation.evidence_schema,
         "evidence_sha256": observation.evidence_sha256,
     });
     sha256_json(&body)

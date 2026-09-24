@@ -391,6 +391,14 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
         })
         .collect();
 
+    observations[1].evidence_schema = "prime.windows-vm-runtime-evidence.v0".to_owned();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+    observations[1].evidence_schema =
+        primed::windows_vm::WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned();
+
     observations[2].passed = false;
     assert_eq!(
         evaluate_runtime_proof(&plan, &observations),
