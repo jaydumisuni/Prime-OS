@@ -216,8 +216,8 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
 #[test]
 fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     use primed::windows_vm::{
-        create_runtime_proof_observation, evaluate_runtime_proof, prepare_runtime_proof_plan,
-        VmRuntimeAdversarialCase, VmRuntimeProofState,
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeAdversarialCase, VmRuntimeProofState,
     };
 
     let dir = tempdir().unwrap();
@@ -255,12 +255,12 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
         .cloned()
         .enumerate()
         .map(|(index, case)| {
-            create_runtime_proof_observation(
+            create_runtime_proof_observation_from_evidence(
                 &plan,
                 case,
                 true,
                 true,
-                &format!("{:064x}", index + 1),
+                format!("runtime-evidence-{index}").as_bytes(),
             )
             .unwrap()
         })
@@ -275,8 +275,8 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
 #[test]
 fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state() {
     use primed::windows_vm::{
-        create_runtime_proof_observation, evaluate_runtime_proof, prepare_runtime_proof_plan,
-        VmRuntimeProofState,
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState,
     };
 
     let dir = tempdir().unwrap();
@@ -294,12 +294,12 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
             .cloned()
             .enumerate()
             .map(|(index, case)| {
-                create_runtime_proof_observation(
+                create_runtime_proof_observation_from_evidence(
                     &plan,
                     case,
                     true,
                     true,
-                    &format!("{:064x}", index + 1),
+                    format!("runtime-evidence-{index}").as_bytes(),
                 )
                 .unwrap()
             })
@@ -335,12 +335,12 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
     );
 
     let mut observations = make();
-    observations[1] = create_runtime_proof_observation(
+    observations[1] = create_runtime_proof_observation_from_evidence(
         &plan,
         observations[1].case.clone(),
         true,
         true,
-        &observations[0].evidence_sha256,
+        b"runtime-evidence-0",
     )
     .unwrap();
     assert_eq!(
@@ -352,8 +352,8 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
 #[test]
 fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_digest() {
     use primed::windows_vm::{
-        create_runtime_proof_observation, evaluate_runtime_proof, prepare_runtime_proof_plan,
-        VmRuntimeProofState,
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState,
     };
 
     let dir = tempdir().unwrap();
@@ -365,12 +365,12 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
     fs::create_dir(&root).unwrap();
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
-    assert!(create_runtime_proof_observation(
+    assert!(create_runtime_proof_observation_from_evidence(
         &plan,
         plan.required_cases[0].clone(),
         true,
         true,
-        "NOT-A-DIGEST",
+        b"",
     )
     .is_err());
 
@@ -380,12 +380,12 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
         .cloned()
         .enumerate()
         .map(|(index, case)| {
-            create_runtime_proof_observation(
+            create_runtime_proof_observation_from_evidence(
                 &plan,
                 case,
                 true,
                 true,
-                &format!("{:064x}", index + 1),
+                format!("runtime-evidence-{index}").as_bytes(),
             )
             .unwrap()
         })

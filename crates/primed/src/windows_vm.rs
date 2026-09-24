@@ -294,7 +294,7 @@ pub fn create_runtime_proof_observation_from_envelope(
     )
 }
 
-pub fn create_runtime_proof_observation(
+fn create_runtime_proof_observation(
     plan: &VmRuntimeProofPlan,
     case: VmRuntimeAdversarialCase,
     passed: bool,
