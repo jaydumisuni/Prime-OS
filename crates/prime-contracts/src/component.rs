@@ -46,6 +46,7 @@ pub struct PrimeComponentManifest {
     pub dependencies: Vec<ComponentDependency>,
     pub minimum_prime_generation: Option<String>,
     pub required_capability_interface: Option<String>,
+    pub required_application_profile_schema: Option<String>,
     pub persistent_data_policy: PersistentDataPolicy,
     #[serde(default)]
     pub application_profiles: Vec<String>,
@@ -213,6 +214,7 @@ fn valid_sha256_label(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::APPLICATIONS_PROJECTION_SCHEMA;
 
     const DIGEST_A: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -234,6 +236,7 @@ mod tests {
             dependencies: vec![],
             minimum_prime_generation: Some("prime-generation-p2".to_owned()),
             required_capability_interface: Some("1.0".to_owned()),
+            required_application_profile_schema: Some(APPLICATIONS_PROJECTION_SCHEMA.to_owned()),
             persistent_data_policy: PersistentDataPolicy::RetainOnRemove,
             application_profiles: vec![],
             services: vec!["originsd".to_owned()],

@@ -1,6 +1,6 @@
 use prime_contracts::{
     validate_component_manifest, ComponentManifestError, PersistentDataPolicy,
-    PrimeComponentManifest, CAPABILITY_INTERFACE_VERSION,
+    PrimeComponentManifest, APPLICATIONS_PROJECTION_SCHEMA, CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -21,6 +21,7 @@ pub struct ComponentAdmissionContext<'a> {
     pub host_arch: &'a str,
     pub prime_generation: &'a str,
     pub capability_interface_version: &'a str,
+    pub application_profile_schema: &'a str,
     pub installed: &'a [InstalledComponent],
 }
 
@@ -109,6 +110,8 @@ pub enum ComponentAdmissionError {
         "component requires unsupported capability interface {required}; host provides {host}"
     )]
     CapabilityInterfaceMismatch { required: String, host: String },
+    #[error("component requires unsupported application profile schema {required}; host provides {host}")]
+    ApplicationProfileSchemaMismatch { required: String, host: String },
     #[error("component is incompatible with current Prime generation")]
     GenerationIncompatible,
     #[error("required component dependency {0} is missing")]
@@ -264,6 +267,17 @@ where
         }
     }
 
+    if let Some(required) = &manifest.required_application_profile_schema {
+        if required != context.application_profile_schema
+            || required != APPLICATIONS_PROJECTION_SCHEMA
+        {
+            return Err(ComponentAdmissionError::ApplicationProfileSchemaMismatch {
+                required: required.clone(),
+                host: context.application_profile_schema.to_owned(),
+            });
+        }
+    }
+
     if let Some(required_generation) = &manifest.minimum_prime_generation {
         if !generation_compatible(required_generation, context.prime_generation) {
             return Err(ComponentAdmissionError::GenerationIncompatible);
@@ -387,6 +401,7 @@ mod tests {
             dependencies: vec![],
             minimum_prime_generation: Some("prime-p2".to_owned()),
             required_capability_interface: Some(CAPABILITY_INTERFACE_VERSION.to_owned()),
+            required_application_profile_schema: Some(APPLICATIONS_PROJECTION_SCHEMA.to_owned()),
             persistent_data_policy: PersistentDataPolicy::RetainOnRemove,
             application_profiles: vec![],
             services: vec!["originsd".to_owned()],
@@ -401,6 +416,7 @@ mod tests {
             host_arch: "x86_64",
             prime_generation: "prime-p2-current",
             capability_interface_version: CAPABILITY_INTERFACE_VERSION,
+            application_profile_schema: APPLICATIONS_PROJECTION_SCHEMA,
             installed,
         }
     }
@@ -787,5 +803,25 @@ mod tests {
                 Err(ComponentAdmissionError::UnsafePackagePath)
             ));
         }
+    }
+    #[test]
+    fn application_profile_schema_compatibility_fails_closed() {
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let installed = [];
+        let mut ctx = context(&installed);
+        ctx.application_profile_schema = "prime.applications.v0";
+        let result = verify_offline_component_package(
+            &path,
+            &manifest,
+            &ctx,
+            |_| true,
+            |required, current| current.starts_with(required),
+        );
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::ApplicationProfileSchemaMismatch { .. })
+        ));
     }
 }
