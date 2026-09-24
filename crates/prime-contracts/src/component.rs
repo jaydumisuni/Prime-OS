@@ -75,6 +75,7 @@ pub enum ComponentManifestError {
     DuplicateDependency,
     RegistrationIdentity,
     BaseSystemRequirement,
+    CompatibilityRequirement,
 }
 
 impl fmt::Display for ComponentManifestError {
@@ -95,6 +96,9 @@ impl fmt::Display for ComponentManifestError {
                 "component registration identity is invalid or duplicated"
             }
             Self::BaseSystemRequirement => "base-system requirement is empty or duplicated",
+            Self::CompatibilityRequirement => {
+                "component compatibility requirement is empty or non-canonical"
+            }
         };
         f.write_str(message)
     }
@@ -134,6 +138,19 @@ pub fn validate_component_manifest(
         &manifest.architectures,
         ComponentManifestError::Architecture,
     )?;
+
+    for requirement in [
+        manifest.minimum_prime_generation.as_deref(),
+        manifest.required_capability_interface.as_deref(),
+        manifest.required_application_profile_schema.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if requirement.trim().is_empty() || requirement != requirement.trim() {
+            return Err(ComponentManifestError::CompatibilityRequirement);
+        }
+    }
 
     let mut dependencies = BTreeSet::new();
     for dependency in &manifest.dependencies {
@@ -303,6 +320,25 @@ mod tests {
         assert_eq!(
             validate_component_manifest(&item),
             Err(ComponentManifestError::DuplicateDependency)
+        );
+    }
+
+    #[test]
+    fn compatibility_requirements_must_be_nonempty_and_canonical() {
+        for invalid in ["", " capability-v1", "profile-v1 "] {
+            let mut item = manifest();
+            item.required_capability_interface = Some(invalid.to_owned());
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+        }
+
+        let mut item = manifest();
+        item.minimum_prime_generation = Some(" ".to_owned());
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::CompatibilityRequirement)
         );
     }
 
