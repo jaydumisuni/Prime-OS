@@ -232,6 +232,7 @@ pub fn prepare_runtime_proof_plan(
         application_id,
         session_id,
         &required_cases,
+        &paths,
     );
     Ok(VmRuntimeProofPlan {
         proof_id,
@@ -346,6 +347,7 @@ pub fn evaluate_runtime_proof(
         &plan.application_id,
         &plan.session_id,
         &plan.required_cases,
+        &plan.paths,
     );
     if plan.proof_id != expected_proof_id || observations.len() != plan.required_cases.len() {
         return VmRuntimeProofState::Pending;
@@ -394,6 +396,7 @@ fn runtime_proof_id(
     application_id: &str,
     session_id: &str,
     required_cases: &[VmRuntimeAdversarialCase],
+    paths: &VmSessionPaths,
 ) -> String {
     let body = serde_json::json!({
         "schema": WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
@@ -403,6 +406,9 @@ fn runtime_proof_id(
         "application_id": application_id,
         "session_id": session_id,
         "required_cases": required_cases,
+        "runtime_dir": paths.runtime_dir,
+        "overlay_image": paths.overlay_image,
+        "agent_socket": paths.agent_socket,
     });
     sha256_json(&body)
 }

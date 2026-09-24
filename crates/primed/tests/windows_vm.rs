@@ -424,6 +424,12 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
     assert_ne!(a.proof_id, b.proof_id);
     assert_ne!(a.proof_id, c.proof_id);
 
+    let alternate_root = dir.path().join("alternate-runtime");
+    fs::create_dir(&alternate_root).unwrap();
+    let path_scoped =
+        prepare_runtime_proof_plan(&guest, &alternate_root, "app-001", "session-a").unwrap();
+    assert_ne!(a.proof_id, path_scoped.proof_id);
+
     let mut other = guest.clone();
     other.base_sha256 = "b".repeat(64);
     let d = prepare_runtime_proof_plan(&other, &root, "app-001", "session-a").unwrap();
