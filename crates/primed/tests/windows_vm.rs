@@ -456,3 +456,46 @@ fn runtime_observation_hashes_actual_nonempty_evidence_bytes() {
     )
     .is_err());
 }
+
+#[test]
+fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_envelope, prepare_runtime_proof_plan,
+        VmRuntimeEvidenceEnvelope, WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA,
+    };
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    let envelope = VmRuntimeEvidenceEnvelope {
+        schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
+        proof_id: plan.proof_id.clone(),
+        case: plan.required_cases[0].clone(),
+        guest_id: plan.guest_id.clone(),
+        guest_revision: plan.guest_revision,
+        guest_sha256: plan.guest_sha256.clone(),
+        application_id: plan.application_id.clone(),
+        session_id: plan.session_id.clone(),
+        evidence: b"concurrent-session-isolation:clean".to_vec(),
+    };
+    create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).unwrap();
+
+    let mut wrong_session = envelope.clone();
+    wrong_session.session_id = "session-b".to_owned();
+    assert!(
+        create_runtime_proof_observation_from_envelope(&plan, &wrong_session, true, true).is_err()
+    );
+
+    let mut wrong_case = envelope;
+    wrong_case.case = plan.required_cases[1].clone();
+    wrong_case.proof_id = "b".repeat(64);
+    assert!(
+        create_runtime_proof_observation_from_envelope(&plan, &wrong_case, true, true).is_err()
+    );
+}

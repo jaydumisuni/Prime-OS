@@ -14,6 +14,7 @@ pub const WINDOWS_VM_GUEST_SCHEMA: &str = "prime.windows-vm-guest.v1";
 pub const WINDOWS_VM_AGENT_SCHEMA: &str = "prime.windows-vm-agent.v1";
 pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proof.v1";
 pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
+pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GuestAgentHello {
@@ -109,6 +110,19 @@ pub struct VmRuntimeProofObservation {
 pub enum VmRuntimeProofState {
     Pending,
     Pass,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VmRuntimeEvidenceEnvelope {
+    pub schema: String,
+    pub proof_id: String,
+    pub case: VmRuntimeAdversarialCase,
+    pub guest_id: String,
+    pub guest_revision: u64,
+    pub guest_sha256: String,
+    pub application_id: String,
+    pub session_id: String,
+    pub evidence: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -232,13 +246,52 @@ pub fn create_runtime_proof_observation_from_evidence(
     zero_residual_state: bool,
     evidence: &[u8],
 ) -> Result<VmRuntimeProofObservation, WindowsVmError> {
-    if evidence.is_empty() {
+    let envelope = VmRuntimeEvidenceEnvelope {
+        schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
+        proof_id: plan.proof_id.clone(),
+        case: case.clone(),
+        guest_id: plan.guest_id.clone(),
+        guest_revision: plan.guest_revision,
+        guest_sha256: plan.guest_sha256.clone(),
+        application_id: plan.application_id.clone(),
+        session_id: plan.session_id.clone(),
+        evidence: evidence.to_vec(),
+    };
+    create_runtime_proof_observation_from_envelope(plan, &envelope, passed, zero_residual_state)
+}
+
+pub fn create_runtime_proof_observation_from_envelope(
+    plan: &VmRuntimeProofPlan,
+    envelope: &VmRuntimeEvidenceEnvelope,
+    passed: bool,
+    zero_residual_state: bool,
+) -> Result<VmRuntimeProofObservation, WindowsVmError> {
+    if envelope.schema != WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA
+        || envelope.proof_id != plan.proof_id
+        || envelope.guest_id != plan.guest_id
+        || envelope.guest_revision != plan.guest_revision
+        || envelope.guest_sha256 != plan.guest_sha256
+        || envelope.application_id != plan.application_id
+        || envelope.session_id != plan.session_id
+        || !plan.required_cases.contains(&envelope.case)
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof evidence envelope does not match plan",
+        ));
+    }
+    if envelope.evidence.is_empty() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence is empty",
         ));
     }
-    let evidence_sha256 = format!("{:x}", Sha256::digest(evidence));
-    create_runtime_proof_observation(plan, case, passed, zero_residual_state, &evidence_sha256)
+    let evidence_sha256 = format!("{:x}", Sha256::digest(&envelope.evidence));
+    create_runtime_proof_observation(
+        plan,
+        envelope.case.clone(),
+        passed,
+        zero_residual_state,
+        &evidence_sha256,
+    )
 }
 
 pub fn create_runtime_proof_observation(
