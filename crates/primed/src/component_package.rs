@@ -60,6 +60,22 @@ pub struct ComponentTransactionPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentTransactionState {
+    Planned,
+    Applying,
+    Applied,
+    Failed { reason: String },
+    RecoveryRequired { reason: String },
+    RolledBack,
+}
+
+impl ComponentTransactionState {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Applied | Self::RolledBack)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentDataDisposition {
     Retain,
     Migrated,
@@ -679,6 +695,24 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn transaction_failure_and_recovery_states_never_claim_success() {
+        for state in [
+            ComponentTransactionState::Planned,
+            ComponentTransactionState::Applying,
+            ComponentTransactionState::Failed {
+                reason: "write failed".to_owned(),
+            },
+            ComponentTransactionState::RecoveryRequired {
+                reason: "previous package must be restored".to_owned(),
+            },
+        ] {
+            assert!(!state.is_success());
+        }
+        assert!(ComponentTransactionState::Applied.is_success());
+        assert!(ComponentTransactionState::RolledBack.is_success());
     }
 
     #[test]
