@@ -76,6 +76,7 @@ pub enum ComponentManifestError {
     RegistrationIdentity,
     BaseSystemRequirement,
     CompatibilityRequirement,
+    Limitation,
 }
 
 impl fmt::Display for ComponentManifestError {
@@ -99,6 +100,7 @@ impl fmt::Display for ComponentManifestError {
             Self::CompatibilityRequirement => {
                 "component compatibility requirement is empty or non-canonical"
             }
+            Self::Limitation => "component limitation is empty, non-canonical, or duplicated",
         };
         f.write_str(message)
     }
@@ -183,6 +185,16 @@ pub fn validate_component_manifest(
             || !base_requirements.insert(requirement.as_str())
         {
             return Err(ComponentManifestError::BaseSystemRequirement);
+        }
+    }
+
+    let mut limitations = BTreeSet::new();
+    for limitation in &manifest.limitations {
+        if limitation.trim().is_empty()
+            || limitation != limitation.trim()
+            || !limitations.insert(limitation.as_str())
+        {
+            return Err(ComponentManifestError::Limitation);
         }
     }
 
@@ -364,6 +376,24 @@ mod tests {
         assert_eq!(
             validate_component_manifest(&item),
             Err(ComponentManifestError::Revision)
+        );
+    }
+    #[test]
+    fn limitations_must_be_nonempty_canonical_and_unique() {
+        let mut value = manifest();
+        value.limitations = vec!["requires-restart".to_owned()];
+        assert_eq!(validate_component_manifest(&value), Ok(()));
+
+        value.limitations = vec![" requires-restart".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::Limitation)
+        );
+
+        value.limitations = vec!["requires-restart".to_owned(), "requires-restart".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::Limitation)
         );
     }
 }
