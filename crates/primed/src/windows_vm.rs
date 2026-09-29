@@ -218,6 +218,11 @@ pub fn prepare_runtime_proof_plan(
             "runtime proof guest digest is not canonical SHA-256",
         ));
     }
+    if !root.is_absolute() {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof root must be absolute",
+        ));
+    }
     let paths = vm_session_paths(root, application_id, session_id)?;
     let required_cases = vec![
         VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
