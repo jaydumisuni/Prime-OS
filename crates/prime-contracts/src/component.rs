@@ -157,6 +157,7 @@ pub fn validate_component_manifest(
     let mut dependencies = BTreeSet::new();
     for dependency in &manifest.dependencies {
         if !valid_identifier(&dependency.component_id)
+            || dependency.component_id == manifest.component_id
             || dependency.minimum_revision == 0
             || dependency
                 .exact_package_digest
@@ -332,6 +333,20 @@ mod tests {
         assert_eq!(
             validate_component_manifest(&item),
             Err(ComponentManifestError::DuplicateDependency)
+        );
+    }
+
+    #[test]
+    fn component_cannot_depend_on_itself() {
+        let mut item = manifest();
+        item.dependencies = vec![ComponentDependency {
+            component_id: item.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::Dependency)
         );
     }
 
