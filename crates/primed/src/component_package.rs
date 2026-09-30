@@ -405,7 +405,7 @@ mod tests {
             package_digest: package_digest(bytes),
             publisher_id: "thetechguy.origins".to_owned(),
             publisher_key_id: DIGEST_B.to_owned(),
-            signature: "ed25519:fixture-signature".to_owned(),
+            signature: format!("ed25519:{}", "a".repeat(128)),
             architectures: vec!["x86_64".to_owned()],
             dependencies: vec![],
             minimum_prime_generation: Some("prime-p2".to_owned()),

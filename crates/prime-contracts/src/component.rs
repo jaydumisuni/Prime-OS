@@ -89,7 +89,7 @@ impl fmt::Display for ComponentManifestError {
             Self::PackageDigest => "package digest must be canonical SHA-256",
             Self::PublisherId => "publisher id is invalid",
             Self::PublisherKeyId => "publisher key id must be canonical SHA-256",
-            Self::Signature => "component signature is missing",
+            Self::Signature => "component signature must be canonical Ed25519",
             Self::Architecture => "component architecture is invalid or duplicated",
             Self::Dependency => "component dependency is invalid",
             Self::DuplicateDependency => "component dependency is duplicated",
@@ -132,7 +132,7 @@ pub fn validate_component_manifest(
     if !valid_sha256_label(&manifest.publisher_key_id) {
         return Err(ComponentManifestError::PublisherKeyId);
     }
-    if manifest.signature.trim().is_empty() {
+    if !valid_ed25519_signature(&manifest.signature) {
         return Err(ComponentManifestError::Signature);
     }
 
@@ -231,6 +231,16 @@ fn valid_identifier(value: &str) -> bool {
     })
 }
 
+fn valid_ed25519_signature(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("ed25519:") else {
+        return false;
+    };
+    hex.len() == 128
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 fn valid_sha256_label(value: &str) -> bool {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return false;
@@ -261,7 +271,7 @@ mod tests {
             package_digest: DIGEST_A.to_owned(),
             publisher_id: "thetechguy.origins".to_owned(),
             publisher_key_id: DIGEST_B.to_owned(),
-            signature: "ed25519:fixture-signature".to_owned(),
+            signature: format!("ed25519:{}", "a".repeat(128)),
             architectures: vec!["x86_64".to_owned()],
             dependencies: vec![],
             minimum_prime_generation: Some("prime-generation-p2".to_owned()),
@@ -296,6 +306,15 @@ mod tests {
             validate_component_manifest(&item),
             Err(ComponentManifestError::PublisherKeyId)
         );
+    }
+
+    #[test]
+    fn signature_must_be_canonical_ed25519() {
+        for invalid in ["", "fixture-signature", "ed25519:fixture-signature", "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"] {
+            let mut item = manifest();
+            item.signature = invalid.to_owned();
+            assert_eq!(validate_component_manifest(&item), Err(ComponentManifestError::Signature));
+        }
     }
 
     #[test]
