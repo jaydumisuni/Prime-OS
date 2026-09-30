@@ -196,8 +196,13 @@ pub fn vm_session_paths(
     if !root.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("session root is not absolute"));
     }
-    if root.components().any(|component| matches!(component, Component::ParentDir)) {
-        return Err(WindowsVmError::InvalidPlan("session root contains parent traversal"));
+    if root
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root contains parent traversal",
+        ));
     }
     if !safe_component(application_id) || !safe_component(session_id) {
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
