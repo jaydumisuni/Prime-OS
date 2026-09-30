@@ -116,6 +116,8 @@ pub enum ComponentAdmissionError {
     GenerationIncompatible,
     #[error("required component dependency {0} is missing")]
     DependencyMissing(String),
+    #[error("installed component identity {0} is ambiguous")]
+    DuplicateInstalledComponent(String),
     #[error("component dependency {component_id} revision is below required {minimum_revision}")]
     DependencyRevision {
         component_id: String,
@@ -307,10 +309,17 @@ fn validate_dependencies(
     manifest: &PrimeComponentManifest,
     installed: &[InstalledComponent],
 ) -> Result<(), ComponentAdmissionError> {
-    let by_id: BTreeMap<&str, &InstalledComponent> = installed
-        .iter()
-        .map(|component| (component.component_id.as_str(), component))
-        .collect();
+    let mut by_id: BTreeMap<&str, &InstalledComponent> = BTreeMap::new();
+    for component in installed {
+        if by_id
+            .insert(component.component_id.as_str(), component)
+            .is_some()
+        {
+            return Err(ComponentAdmissionError::DuplicateInstalledComponent(
+                component.component_id.clone(),
+            ));
+        }
+    }
 
     for dependency in &manifest.dependencies {
         let Some(observed) = by_id.get(dependency.component_id.as_str()) else {
@@ -568,6 +577,42 @@ mod tests {
             )
             .unwrap(),
             ComponentAdmissionOutcome::Ready(_)
+        ));
+    }
+
+    #[test]
+    fn duplicate_installed_component_identity_fails_closed() {
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let mut item = manifest(bytes);
+        item.dependencies = vec![ComponentDependency {
+            component_id: "runtime.python".to_owned(),
+            minimum_revision: 3,
+            exact_package_digest: None,
+        }];
+        let ambiguous = [
+            InstalledComponent {
+                component_id: "runtime.python".to_owned(),
+                revision: 3,
+                package_digest: DIGEST_A.to_owned(),
+            },
+            InstalledComponent {
+                component_id: "runtime.python".to_owned(),
+                revision: 4,
+                package_digest: DIGEST_B.to_owned(),
+            },
+        ];
+
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &item,
+                &context(&ambiguous),
+                |_| true,
+                |_, _| true,
+            ),
+            Err(ComponentAdmissionError::DuplicateInstalledComponent(component_id))
+                if component_id == "runtime.python"
         ));
     }
 
