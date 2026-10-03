@@ -120,7 +120,11 @@ pub fn validate_component_manifest(
     if manifest.revision == 0 {
         return Err(ComponentManifestError::Revision);
     }
-    if manifest.version.trim().is_empty() || manifest.version != manifest.version.trim() {
+    if manifest.version.trim().is_empty()
+        || manifest.version != manifest.version.trim()
+        || manifest.version.len() > 128
+        || manifest.version.chars().any(char::is_control)
+    {
         return Err(ComponentManifestError::Version);
     }
     if !valid_sha256_label(&manifest.package_digest) {
@@ -289,6 +293,25 @@ mod tests {
     #[test]
     fn generic_component_contract_accepts_exact_origins_shape() {
         validate_component_manifest(&manifest()).unwrap();
+    }
+
+    #[test]
+    fn version_must_be_bounded_and_single_line() {
+        for invalid in ["", " 1.0.0", "1.0.0 ", "1.0\nspoof", "1.0\tspoof"] {
+            let mut item = manifest();
+            item.version = invalid.to_owned();
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version)
+            );
+        }
+
+        let mut item = manifest();
+        item.version = "v".repeat(129);
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::Version)
+        );
     }
 
     #[test]
