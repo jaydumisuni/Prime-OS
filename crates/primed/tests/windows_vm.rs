@@ -426,6 +426,20 @@ fn runtime_proof_plan_rejects_relative_runtime_root() {
 }
 
 #[test]
+fn runtime_proof_plan_rejects_parent_traversal_runtime_root() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime").join("..").join("escape");
+
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+}
+
+#[test]
 fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
