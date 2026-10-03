@@ -153,7 +153,7 @@ pub fn validate_component_manifest(
     .into_iter()
     .flatten()
     {
-        if requirement.trim().is_empty() || requirement != requirement.trim() {
+        if !valid_requirement(requirement) {
             return Err(ComponentManifestError::CompatibilityRequirement);
         }
     }
@@ -233,6 +233,13 @@ fn valid_identifier(value: &str) -> bool {
     bytes.all(|byte| {
         byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     })
+}
+
+fn valid_requirement(value: &str) -> bool {
+    !value.is_empty()
+        && value == value.trim()
+        && value.len() <= 128
+        && !value.chars().any(char::is_control)
 }
 
 fn valid_ed25519_signature(value: &str) -> bool {
@@ -405,6 +412,22 @@ mod tests {
 
         let mut item = manifest();
         item.minimum_prime_generation = Some(" ".to_owned());
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::CompatibilityRequirement)
+        );
+
+        for invalid in ["generation\nspoof", "generation\tspoof"] {
+            let mut item = manifest();
+            item.minimum_prime_generation = Some(invalid.to_owned());
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+        }
+
+        let mut item = manifest();
+        item.required_application_profile_schema = Some("s".repeat(129));
         assert_eq!(
             validate_component_manifest(&item),
             Err(ComponentManifestError::CompatibilityRequirement)
