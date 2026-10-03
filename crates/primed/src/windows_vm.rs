@@ -196,6 +196,11 @@ pub fn vm_session_paths(
     if !root.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("session root is not absolute"));
     }
+    if root.parent().is_none() {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root is filesystem root",
+        ));
+    }
     if root
         .components()
         .any(|component| matches!(component, Component::ParentDir))
