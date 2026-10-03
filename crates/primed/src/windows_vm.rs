@@ -202,6 +202,16 @@ pub fn vm_session_paths(
         ));
     }
     if root
+        .as_os_str()
+        .to_string_lossy()
+        .split('/')
+        .any(|segment| segment == ".")
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root contains current-directory traversal",
+        ));
+    }
+    if root
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
