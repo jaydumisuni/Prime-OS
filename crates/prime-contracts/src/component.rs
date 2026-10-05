@@ -185,25 +185,26 @@ pub fn validate_component_manifest(
 
     let mut base_requirements = BTreeSet::new();
     for requirement in &manifest.base_system_requirements {
-        if requirement.trim().is_empty()
-            || requirement != requirement.trim()
-            || !base_requirements.insert(requirement.as_str())
-        {
+        if !valid_bounded_text(requirement) || !base_requirements.insert(requirement.as_str()) {
             return Err(ComponentManifestError::BaseSystemRequirement);
         }
     }
 
     let mut limitations = BTreeSet::new();
     for limitation in &manifest.limitations {
-        if limitation.trim().is_empty()
-            || limitation != limitation.trim()
-            || !limitations.insert(limitation.as_str())
-        {
+        if !valid_bounded_text(limitation) || !limitations.insert(limitation.as_str()) {
             return Err(ComponentManifestError::Limitation);
         }
     }
 
     Ok(())
+}
+
+fn valid_bounded_text(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value == value.trim()
+        && value.len() <= 128
+        && !value.chars().any(char::is_control)
 }
 
 fn validate_unique_identities(
@@ -474,6 +475,37 @@ mod tests {
         assert_eq!(
             validate_component_manifest(&value),
             Err(ComponentManifestError::Limitation)
+        );
+
+        value.limitations = vec!["x".repeat(129)];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::Limitation)
+        );
+
+        value.limitations = vec!["requires\nrestart".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::Limitation)
+        );
+    }
+
+    #[test]
+    fn base_system_requirements_are_bounded_and_control_free() {
+        let mut value = manifest();
+        value.base_system_requirements = vec!["kernel.module.example".to_owned()];
+        assert_eq!(validate_component_manifest(&value), Ok(()));
+
+        value.base_system_requirements = vec!["x".repeat(129)];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::BaseSystemRequirement)
+        );
+
+        value.base_system_requirements = vec!["kernel\tmodule".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::BaseSystemRequirement)
         );
     }
 }
