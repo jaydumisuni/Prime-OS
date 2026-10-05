@@ -175,12 +175,17 @@ pub fn validate_component_manifest(
         }
     }
 
-    for registrations in [
+    let mut registrations = BTreeSet::new();
+    for registration_group in [
         &manifest.application_profiles,
         &manifest.services,
         &manifest.capabilities,
     ] {
-        validate_unique_identities(registrations, ComponentManifestError::RegistrationIdentity)?;
+        for registration in registration_group {
+            if !valid_identifier(registration) || !registrations.insert(registration.as_str()) {
+                return Err(ComponentManifestError::RegistrationIdentity);
+            }
+        }
     }
 
     let mut base_requirements = BTreeSet::new();
@@ -362,6 +367,17 @@ mod tests {
         assert_eq!(
             validate_component_manifest(&item),
             Err(ComponentManifestError::ComponentId)
+        );
+    }
+
+    #[test]
+    fn registration_identity_cannot_alias_across_namespaces() {
+        let mut item = manifest();
+        item.application_profiles = vec!["shared.identity".to_owned()];
+        item.services = vec!["shared.identity".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::RegistrationIdentity)
         );
     }
 
