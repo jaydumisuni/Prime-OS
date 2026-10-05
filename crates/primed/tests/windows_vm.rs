@@ -210,6 +210,8 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(b.agent_socket.starts_with(&b.runtime_dir));
 
     assert!(vm_session_paths(root.path(), "../escape", "session-a").is_err());
+    assert!(vm_session_paths(root.path(), &"a".repeat(129), "session-a").is_err());
+    assert!(vm_session_paths(root.path(), "app-001", &"s".repeat(129)).is_err());
     assert!(vm_session_paths(root.path(), "app-001", "/absolute").is_err());
     assert!(vm_session_paths(std::path::Path::new("/"), "app-001", "session-a").is_err());
     assert!(
