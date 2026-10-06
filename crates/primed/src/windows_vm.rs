@@ -201,12 +201,13 @@ pub fn vm_session_paths(
             "session root is filesystem root",
         ));
     }
-    if root
-        .as_os_str()
-        .to_string_lossy()
-        .split('/')
-        .any(|segment| segment == ".")
-    {
+    let root_text = root.as_os_str().to_string_lossy();
+    if root_text.ends_with('/') || root_text.contains("//") {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root is not canonical",
+        ));
+    }
+    if root_text.split('/').any(|segment| segment == ".") {
         return Err(WindowsVmError::InvalidPlan(
             "session root contains current-directory traversal",
         ));

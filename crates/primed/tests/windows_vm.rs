@@ -239,6 +239,8 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(
         vm_session_paths(std::path::Path::new("/tmp/./prime"), "app-001", "session-a").is_err()
     );
+    assert!(vm_session_paths(std::path::Path::new("/tmp/prime/"), "app-001", "session-a").is_err());
+    assert!(vm_session_paths(std::path::Path::new("/tmp//prime"), "app-001", "session-a").is_err());
 }
 
 #[test]
