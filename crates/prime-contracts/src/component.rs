@@ -236,9 +236,17 @@ fn valid_identifier(value: &str) -> bool {
     if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
         return false;
     }
-    bytes.all(|byte| {
-        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
-    })
+    let mut previous_was_separator = false;
+    for byte in bytes {
+        let is_separator = matches!(byte, b'.' | b'_' | b'-');
+        if !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || is_separator)
+            || (is_separator && previous_was_separator)
+        {
+            return false;
+        }
+        previous_was_separator = is_separator;
+    }
+    !previous_was_separator
 }
 
 fn valid_requirement(value: &str) -> bool {
@@ -368,6 +376,18 @@ mod tests {
             validate_component_manifest(&item),
             Err(ComponentManifestError::ComponentId)
         );
+    }
+
+    #[test]
+    fn identifiers_reject_ambiguous_separator_forms() {
+        for invalid in ["origins..runtime", "origins__runtime", "origins.-runtime", "origins.runtime."] {
+            let mut item = manifest();
+            item.component_id = invalid.to_owned();
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::ComponentId)
+            );
+        }
     }
 
     #[test]
