@@ -43,6 +43,24 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
 }
 
 #[test]
+fn guest_definition_rejects_noncanonical_guest_identity() {
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-guest-identity";
+    fs::write(&image, bytes).unwrap();
+
+    for guest_id in [" leading", "trailing ", "line\nbreak"] {
+        let mut guest = definition(&image, bytes);
+        guest.guest_id = guest_id.to_owned();
+        assert!(validate_guest_definition(&guest).is_err());
+    }
+
+    let mut oversized = definition(&image, bytes);
+    oversized.guest_id = "g".repeat(129);
+    assert!(validate_guest_definition(&oversized).is_err());
+}
+
+#[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();
     let overlay = dir.path().join("session.qcow2");

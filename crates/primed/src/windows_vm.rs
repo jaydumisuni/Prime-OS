@@ -518,8 +518,13 @@ pub fn validate_guest_definition(
     if definition.schema != WINDOWS_VM_GUEST_SCHEMA {
         return Err(WindowsVmError::InvalidGuest("unsupported schema"));
     }
-    if definition.guest_id.trim().is_empty() || definition.revision == 0 {
-        return Err(WindowsVmError::InvalidGuest("missing guest identity"));
+    if definition.guest_id.trim().is_empty()
+        || definition.guest_id.trim() != definition.guest_id
+        || definition.guest_id.len() > 128
+        || definition.guest_id.chars().any(char::is_control)
+        || definition.revision == 0
+    {
+        return Err(WindowsVmError::InvalidGuest("invalid guest identity"));
     }
     if !(512..=32768).contains(&definition.memory_mib) || !(1..=16).contains(&definition.vcpus) {
         return Err(WindowsVmError::InvalidGuest("resource bounds exceeded"));
