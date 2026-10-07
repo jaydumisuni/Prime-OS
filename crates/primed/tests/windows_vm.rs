@@ -232,6 +232,8 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(vm_session_paths(root.path(), "app-001", "").is_err());
     assert!(vm_session_paths(root.path(), "app-💥", "session-a").is_err());
     assert!(vm_session_paths(root.path(), "app-001", "session\nspoof").is_err());
+    assert!(vm_session_paths(root.path(), " app-001", "session-a").is_err());
+    assert!(vm_session_paths(root.path(), "app-001", "session-a ").is_err());
     assert!(vm_session_paths(root.path(), &"a".repeat(129), "session-a").is_err());
     assert!(vm_session_paths(root.path(), "app-001", &"s".repeat(129)).is_err());
     assert!(vm_session_paths(root.path(), "app-001", "/absolute").is_err());
