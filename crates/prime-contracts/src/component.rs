@@ -544,6 +544,12 @@ mod tests {
             Err(ComponentManifestError::BaseSystemRequirement)
         );
 
+        value.base_system_requirements = vec![" kernel.module.example".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::BaseSystemRequirement)
+        );
+
         value.base_system_requirements =
             vec!["kernel.module.example".to_owned(), "kernel.module.example".to_owned()];
         assert_eq!(
