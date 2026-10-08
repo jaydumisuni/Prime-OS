@@ -579,6 +579,22 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime paths are not absolute",
         ));
     }
+    // QEMU parses commas inside -drive and -chardev values as new options.
+    // Refuse paths that could change the requested VM isolation contract.
+    if [&request.overlay_image, &request.runtime_dir]
+        .iter()
+        .any(|path| {
+            path.to_str().is_none_or(|value| {
+                value
+                    .bytes()
+                    .any(|byte| byte == b',' || byte.is_ascii_control())
+            })
+        })
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime path contains QEMU option delimiters",
+        ));
+    }
     let overlay_meta = fs::symlink_metadata(&request.overlay_image)?;
     if overlay_meta.file_type().is_symlink() || !overlay_meta.file_type().is_file() {
         return Err(WindowsVmError::InvalidPlan("overlay is not a regular file"));

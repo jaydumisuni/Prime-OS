@@ -94,6 +94,43 @@ fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
 }
 
 #[test]
+fn qemu_plan_rejects_option_injection_through_runtime_paths() {
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+
+    for unsafe_overlay in [
+        runtime.join("overlay,readonly=off.qcow2"),
+        runtime.join("overlay\nspoof.qcow2"),
+    ] {
+        fs::write(&unsafe_overlay, b"overlay").unwrap();
+        assert!(build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: unsafe_overlay,
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .is_err());
+    }
+
+    let unsafe_runtime = dir.path().join("runtime,server=on");
+    fs::create_dir(&unsafe_runtime).unwrap();
+    assert!(build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: unsafe_runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .is_err());
+}
+
+#[test]
 fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
     let dir = tempdir().unwrap();
     let overlay = dir.path().join("session.qcow2");
