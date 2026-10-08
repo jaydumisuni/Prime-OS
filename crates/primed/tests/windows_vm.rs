@@ -188,6 +188,27 @@ fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
     )
     .unwrap();
 
+    let uppercase_digest = GuestAgentHello {
+        guest_sha256: "A".repeat(64),
+        ..hello.clone()
+    };
+    assert!(validate_guest_agent_hello(
+        &uppercase_digest,
+        "windows-fallback-test",
+        7,
+        &"a".repeat(64),
+        "x86_64",
+    )
+    .is_err());
+    assert!(validate_guest_agent_hello(
+        &hello,
+        "windows-fallback-test",
+        7,
+        &"A".repeat(64),
+        "x86_64",
+    )
+    .is_err());
+
     let wrong_arch = GuestAgentHello {
         workload_arch: "x86".to_owned(),
         ..hello.clone()

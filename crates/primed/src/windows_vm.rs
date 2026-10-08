@@ -159,14 +159,9 @@ pub fn validate_guest_agent_hello(
             "guest-agent identity mismatch",
         ));
     }
-    if hello.guest_sha256.len() != 64
-        || !hello
-            .guest_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-        || !hello
-            .guest_sha256
-            .eq_ignore_ascii_case(expected_guest_sha256)
+    if !canonical_sha256_hex(&hello.guest_sha256)
+        || !canonical_sha256_hex(expected_guest_sha256)
+        || hello.guest_sha256 != expected_guest_sha256
     {
         return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
     }
@@ -203,9 +198,7 @@ pub fn vm_session_paths(
     }
     let root_text = root.as_os_str().to_string_lossy();
     if root_text.ends_with('/') || root_text.contains("//") {
-        return Err(WindowsVmError::InvalidPlan(
-            "session root is not canonical",
-        ));
+        return Err(WindowsVmError::InvalidPlan("session root is not canonical"));
     }
     if root_text.split('/').any(|segment| segment == ".") {
         return Err(WindowsVmError::InvalidPlan(
