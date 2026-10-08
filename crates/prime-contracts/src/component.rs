@@ -380,7 +380,12 @@ mod tests {
 
     #[test]
     fn identifiers_reject_ambiguous_separator_forms() {
-        for invalid in ["origins..runtime", "origins__runtime", "origins.-runtime", "origins.runtime."] {
+        for invalid in [
+            "origins..runtime",
+            "origins__runtime",
+            "origins.-runtime",
+            "origins.runtime.",
+        ] {
             let mut item = manifest();
             item.component_id = invalid.to_owned();
             assert_eq!(
@@ -527,6 +532,49 @@ mod tests {
     }
 
     #[test]
+    fn architecture_identity_must_be_canonical_and_unique() {
+        for invalid in ["X86_64", "x86__64", "x86_64 ", "x86_64\nspoof"] {
+            let mut item = manifest();
+            item.architectures = vec![invalid.to_owned()];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Architecture)
+            );
+        }
+
+        let mut item = manifest();
+        item.architectures = vec!["x86_64".to_owned(), "x86_64".to_owned()];
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::Architecture)
+        );
+    }
+
+    #[test]
+    fn dependency_revision_and_digest_fail_closed() {
+        let mut item = manifest();
+        item.dependencies = vec![ComponentDependency {
+            component_id: "runtime.python".to_owned(),
+            minimum_revision: 0,
+            exact_package_digest: None,
+        }];
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::Dependency)
+        );
+
+        item.dependencies[0].minimum_revision = 1;
+        item.dependencies[0].exact_package_digest = Some("sha256:NOT-CANONICAL".to_owned());
+        assert_eq!(
+            validate_component_manifest(&item),
+            Err(ComponentManifestError::Dependency)
+        );
+
+        item.dependencies[0].exact_package_digest = Some(DIGEST_B.to_owned());
+        assert_eq!(validate_component_manifest(&item), Ok(()));
+    }
+
+    #[test]
     fn base_system_requirements_are_bounded_and_control_free() {
         let mut value = manifest();
         value.base_system_requirements = vec!["kernel.module.example".to_owned()];
@@ -556,8 +604,10 @@ mod tests {
             Err(ComponentManifestError::BaseSystemRequirement)
         );
 
-        value.base_system_requirements =
-            vec!["kernel.module.example".to_owned(), "kernel.module.example".to_owned()];
+        value.base_system_requirements = vec![
+            "kernel.module.example".to_owned(),
+            "kernel.module.example".to_owned(),
+        ];
         assert_eq!(
             validate_component_manifest(&value),
             Err(ComponentManifestError::BaseSystemRequirement)
