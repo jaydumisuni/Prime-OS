@@ -93,6 +93,44 @@ fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     assert!(!joined.contains("hostfwd"));
 }
 
+#[cfg(unix)]
+#[test]
+fn qemu_plan_pins_executable_before_alias_retarget() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = tempdir().unwrap();
+    let trusted = dir.path().join("trusted-qemu");
+    let replacement = dir.path().join("replacement-qemu");
+    for binary in [&trusted, &replacement] {
+        fs::write(binary, b"#!/bin/sh\n").unwrap();
+        let mut permissions = fs::metadata(binary).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(binary, permissions).unwrap();
+    }
+    let alias = dir.path().join("qemu-alias");
+    symlink(&trusted, &alias).unwrap();
+
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+
+    let plan = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: alias.clone(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap();
+
+    fs::remove_file(&alias).unwrap();
+    symlink(&replacement, &alias).unwrap();
+    assert_eq!(plan.program, fs::canonicalize(&trusted).unwrap());
+    assert_ne!(plan.program, fs::canonicalize(&alias).unwrap());
+}
+
 #[test]
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     let dir = tempdir().unwrap();
