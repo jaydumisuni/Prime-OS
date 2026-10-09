@@ -211,7 +211,10 @@ pub fn plan_component_rollback(
     current: &InstalledComponent,
     retained: &InstalledComponent,
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
-    if current.component_id != retained.component_id || retained.revision >= current.revision {
+    if current.component_id != retained.component_id
+        || retained.revision == 0
+        || retained.revision >= current.revision
+    {
         return Err(ComponentAdmissionError::RevisionNotAdvanced(
             current.component_id.clone(),
         ));
@@ -784,6 +787,11 @@ mod tests {
             package_digest: DIGEST_B.to_owned(),
         };
         for retained in [
+            InstalledComponent {
+                component_id: current.component_id.clone(),
+                revision: 0,
+                package_digest: DIGEST_A.to_owned(),
+            },
             InstalledComponent {
                 component_id: "other.runtime".to_owned(),
                 revision: 2,
