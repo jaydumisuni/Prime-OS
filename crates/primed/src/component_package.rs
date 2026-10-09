@@ -185,6 +185,7 @@ pub fn plan_component_data_removal(
     current: &InstalledComponent,
     explicit_migration_completed: bool,
 ) -> Result<ComponentDataDisposition, ComponentAdmissionError> {
+    validate_component_manifest(manifest)?;
     if manifest.component_id != current.component_id || manifest.revision != current.revision {
         return Err(ComponentAdmissionError::RevisionNotAdvanced(
             current.component_id.clone(),
@@ -831,6 +832,15 @@ mod tests {
             revision: manifest.revision,
             package_digest: manifest.package_digest.clone(),
         };
+
+        let mut invalid_manifest = manifest.clone();
+        invalid_manifest.schema = "prime.component.v0".to_owned();
+        assert!(matches!(
+            plan_component_data_removal(&invalid_manifest, &current, false),
+            Err(ComponentAdmissionError::Manifest(
+                ComponentManifestError::Schema
+            ))
+        ));
 
         manifest.persistent_data_policy = PersistentDataPolicy::RetainOnRemove;
         assert_eq!(
