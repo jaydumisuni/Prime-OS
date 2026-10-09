@@ -135,9 +135,8 @@ pub fn plan_component_transaction(
     package: &VerifiedComponentPackage,
     installed: &[InstalledComponent],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
-    let current = installed
-        .iter()
-        .find(|component| component.component_id == package.component_id);
+    let by_id = index_installed(installed)?;
+    let current = by_id.get(package.component_id.as_str()).copied();
 
     let kind = match current {
         None => ComponentTransactionKind::Install,
@@ -164,9 +163,10 @@ pub fn plan_component_removal(
     component_id: &str,
     installed: &[InstalledComponent],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
-    let current = installed
-        .iter()
-        .find(|component| component.component_id == component_id)
+    let by_id = index_installed(installed)?;
+    let current = by_id
+        .get(component_id)
+        .copied()
         .ok_or_else(|| ComponentAdmissionError::DependencyMissing(component_id.to_owned()))?;
 
     Ok(ComponentTransactionPlan {
@@ -305,11 +305,10 @@ where
     }))
 }
 
-fn validate_dependencies(
-    manifest: &PrimeComponentManifest,
+fn index_installed(
     installed: &[InstalledComponent],
-) -> Result<(), ComponentAdmissionError> {
-    let mut by_id: BTreeMap<&str, &InstalledComponent> = BTreeMap::new();
+) -> Result<BTreeMap<&str, &InstalledComponent>, ComponentAdmissionError> {
+    let mut by_id = BTreeMap::new();
     for component in installed {
         if by_id
             .insert(component.component_id.as_str(), component)
@@ -320,6 +319,14 @@ fn validate_dependencies(
             ));
         }
     }
+    Ok(by_id)
+}
+
+fn validate_dependencies(
+    manifest: &PrimeComponentManifest,
+    installed: &[InstalledComponent],
+) -> Result<(), ComponentAdmissionError> {
+    let by_id = index_installed(installed)?;
 
     for dependency in &manifest.dependencies {
         let Some(observed) = by_id.get(dependency.component_id.as_str()) else {
@@ -634,6 +641,42 @@ mod tests {
                 requirements: vec!["kernel.module.example".to_owned()],
             }
         );
+    }
+
+    #[test]
+    fn transaction_plans_reject_ambiguous_installed_inventory() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        for duplicated_id in ["origins.runtime", "runtime.python"] {
+            let ambiguous = [
+                InstalledComponent {
+                    component_id: duplicated_id.to_owned(),
+                    revision: 1,
+                    package_digest: DIGEST_A.to_owned(),
+                },
+                InstalledComponent {
+                    component_id: duplicated_id.to_owned(),
+                    revision: 2,
+                    package_digest: DIGEST_B.to_owned(),
+                },
+            ];
+            assert!(matches!(
+                plan_component_transaction(&package, &ambiguous),
+                Err(ComponentAdmissionError::DuplicateInstalledComponent(id))
+                    if id == duplicated_id
+            ));
+            assert!(matches!(
+                plan_component_removal(duplicated_id, &ambiguous),
+                Err(ComponentAdmissionError::DuplicateInstalledComponent(id))
+                    if id == duplicated_id
+            ));
+        }
     }
 
     #[test]
