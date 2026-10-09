@@ -102,6 +102,8 @@ pub enum ComponentAdmissionError {
     UnsafePackagePath,
     #[error("component package digest does not match manifest")]
     PackageDigestMismatch,
+    #[error("installed component {0} has a noncanonical package digest")]
+    InvalidInstalledPackageDigest(String),
     #[error("component publisher signature was not admitted")]
     SignatureRejected,
     #[error("component does not support host architecture {0}")]
@@ -219,6 +221,13 @@ pub fn plan_component_rollback(
             current.component_id.clone(),
         ));
     }
+    for component in [current, retained] {
+        if !canonical_component_digest(&component.package_digest) {
+            return Err(ComponentAdmissionError::InvalidInstalledPackageDigest(
+                component.component_id.clone(),
+            ));
+        }
+    }
 
     Ok(ComponentTransactionPlan {
         component_id: current.component_id.clone(),
@@ -310,6 +319,16 @@ where
         version: manifest.version.clone(),
         publisher_id: manifest.publisher_id.clone(),
     }))
+}
+
+fn canonical_component_digest(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn index_installed(
@@ -811,6 +830,44 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn rollback_rejects_untrusted_installed_digest_labels() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        assert!(plan_component_rollback(&current, &retained).is_ok());
+        for invalid in [
+            "",
+            "sha256:abc",
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "sha256:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        ] {
+            let bad_retained = InstalledComponent {
+                package_digest: invalid.to_owned(),
+                ..retained.clone()
+            };
+            assert!(matches!(
+                plan_component_rollback(&current, &bad_retained),
+                Err(ComponentAdmissionError::InvalidInstalledPackageDigest(_))
+            ));
+            let bad_current = InstalledComponent {
+                package_digest: invalid.to_owned(),
+                ..current.clone()
+            };
+            assert!(matches!(
+                plan_component_rollback(&bad_current, &retained),
+                Err(ComponentAdmissionError::InvalidInstalledPackageDigest(_))
+            ));
+        }
     }
 
     #[test]
