@@ -190,6 +190,9 @@ pub fn plan_component_data_removal(
             current.component_id.clone(),
         ));
     }
+    if manifest.package_digest != current.package_digest {
+        return Err(ComponentAdmissionError::PackageDigestMismatch);
+    }
 
     match manifest.persistent_data_policy {
         PersistentDataPolicy::RetainOnRemove => Ok(ComponentDataDisposition::Retain),
@@ -853,9 +856,18 @@ mod tests {
 
         let wrong = InstalledComponent {
             revision: current.revision + 1,
-            ..current
+            ..current.clone()
         };
         assert!(plan_component_data_removal(&manifest, &wrong, false).is_err());
+
+        let wrong_digest = InstalledComponent {
+            package_digest: DIGEST_B.to_owned(),
+            ..current
+        };
+        assert!(matches!(
+            plan_component_data_removal(&manifest, &wrong_digest, false),
+            Err(ComponentAdmissionError::PackageDigestMismatch)
+        ));
     }
 
     #[test]
