@@ -605,6 +605,18 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime directory is not a regular directory",
         ));
     }
+    // The VM overlay must belong to this session, not an unrelated host file.
+    // Canonical equality also rejects traversal and symlinked parent directories.
+    let runtime = fs::canonicalize(&request.runtime_dir)?;
+    let overlay = fs::canonicalize(&request.overlay_image)?;
+    if runtime != request.runtime_dir
+        || overlay != request.overlay_image
+        || overlay != runtime.join("overlay.qcow2")
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "overlay escapes the selected VM runtime directory",
+        ));
+    }
     if !(512..=32768).contains(&request.memory_mib) || !(1..=16).contains(&request.vcpus) {
         return Err(WindowsVmError::InvalidPlan("resource bounds exceeded"));
     }

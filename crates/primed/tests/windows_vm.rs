@@ -63,10 +63,10 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
 #[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();
-    let overlay = dir.path().join("session.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
     let runtime = dir.path().join("runtime");
     fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
 
     let plan = build_qemu_plan(&VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
@@ -131,12 +131,38 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
 }
 
 #[test]
+fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("session-a");
+    let other_runtime = dir.path().join("session-b");
+    fs::create_dir(&runtime).unwrap();
+    fs::create_dir(&other_runtime).unwrap();
+    let other_overlay = other_runtime.join("overlay.qcow2");
+    fs::write(&other_overlay, b"other-session").unwrap();
+
+    for unsafe_overlay in [
+        other_overlay.clone(),
+        runtime.join("..").join("session-b").join("overlay.qcow2"),
+    ] {
+        assert!(build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: unsafe_overlay,
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .is_err());
+    }
+}
+
+#[test]
 fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
     let dir = tempdir().unwrap();
-    let overlay = dir.path().join("session.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
     let runtime = dir.path().join("runtime");
     fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
 
     let allowed = build_qemu_plan(&VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
