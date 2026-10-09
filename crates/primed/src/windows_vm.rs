@@ -669,7 +669,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         }
     }
     Ok(QemuPlan {
-        program: request.qemu_binary.clone(),
+        program: qemu,
         args,
     })
 }
