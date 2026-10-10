@@ -169,6 +169,25 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
 }
 
 #[test]
+fn qemu_plan_rejects_overlong_guest_agent_socket() {
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("s".repeat(100));
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("AF_UNIX"));
+}
+
+#[test]
 fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("session-a");
@@ -357,6 +376,7 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(vm_session_paths(root.path(), " app-001", "session-a").is_err());
     assert!(vm_session_paths(root.path(), "app-001", "session-a ").is_err());
     assert!(vm_session_paths(root.path(), &"a".repeat(129), "session-a").is_err());
+    assert!(vm_session_paths(root.path(), &"a".repeat(100), "session-a").is_err());
     assert!(vm_session_paths(root.path(), "app-001", &"s".repeat(129)).is_err());
     assert!(vm_session_paths(root.path(), "app-001", "/absolute").is_err());
     assert!(vm_session_paths(std::path::Path::new("/"), "app-001", "session-a").is_err());

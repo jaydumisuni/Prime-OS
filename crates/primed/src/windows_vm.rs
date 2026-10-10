@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
@@ -175,6 +176,16 @@ pub fn validate_guest_agent_hello(
     Ok(())
 }
 
+fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
+    // Linux sockaddr_un.sun_path is 108 bytes including the trailing NUL.
+    if path.as_os_str().as_bytes().len() >= 108 {
+        return Err(WindowsVmError::InvalidPlan(
+            "guest agent socket path exceeds AF_UNIX limit",
+        ));
+    }
+    Ok(())
+}
+
 pub fn vm_session_paths(
     root: &Path,
     application_id: &str,
@@ -217,9 +228,11 @@ pub fn vm_session_paths(
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
     }
     let runtime_dir = root.join(application_id).join(session_id);
+    let agent_socket = runtime_dir.join("agent.sock");
+    validate_agent_socket_path(&agent_socket)?;
     Ok(VmSessionPaths {
         overlay_image: runtime_dir.join("overlay.qcow2"),
-        agent_socket: runtime_dir.join("agent.sock"),
+        agent_socket,
         runtime_dir,
     })
 }
@@ -629,6 +642,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     usb.dedup();
 
     let agent = request.runtime_dir.join("agent.sock");
+    validate_agent_socket_path(&agent)?;
     let mut args = vec![
         "-accel".to_owned(),
         "kvm".to_owned(),
