@@ -336,6 +336,11 @@ fn index_installed(
 ) -> Result<BTreeMap<&str, &InstalledComponent>, ComponentAdmissionError> {
     let mut by_id = BTreeMap::new();
     for component in installed {
+        if !canonical_component_digest(&component.package_digest) {
+            return Err(ComponentAdmissionError::InvalidInstalledPackageDigest(
+                component.component_id.clone(),
+            ));
+        }
         if by_id
             .insert(component.component_id.as_str(), component)
             .is_some()
@@ -830,6 +835,38 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn transaction_and_removal_reject_untrusted_installed_digest_labels() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        for invalid in [
+            "",
+            "sha256:abc",
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "sha256:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        ] {
+            let installed = [InstalledComponent {
+                component_id: package.component_id.clone(),
+                revision: 2,
+                package_digest: invalid.to_owned(),
+            }];
+            assert!(matches!(
+                plan_component_transaction(&package, &installed),
+                Err(ComponentAdmissionError::InvalidInstalledPackageDigest(_))
+            ));
+            assert!(matches!(
+                plan_component_removal(&package.component_id, &installed),
+                Err(ComponentAdmissionError::InvalidInstalledPackageDigest(_))
+            ));
+        }
     }
 
     #[test]
