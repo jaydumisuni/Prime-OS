@@ -104,6 +104,8 @@ pub enum ComponentAdmissionError {
     PackageDigestMismatch,
     #[error("installed component {0} has a noncanonical package digest")]
     InvalidInstalledPackageDigest(String),
+    #[error("target component {0} has a noncanonical package digest")]
+    InvalidTargetPackageDigest(String),
     #[error("component publisher signature was not admitted")]
     SignatureRejected,
     #[error("component does not support host architecture {0}")]
@@ -137,6 +139,11 @@ pub fn plan_component_transaction(
     package: &VerifiedComponentPackage,
     installed: &[InstalledComponent],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    if !canonical_component_digest(&package.package_digest) {
+        return Err(ComponentAdmissionError::InvalidTargetPackageDigest(
+            package.component_id.clone(),
+        ));
+    }
     let by_id = index_installed(installed)?;
     let current = by_id.get(package.component_id.as_str()).copied();
 
@@ -712,6 +719,38 @@ mod tests {
                 Err(ComponentAdmissionError::DuplicateInstalledComponent(id))
                     if id == duplicated_id
             ));
+        }
+    }
+
+    #[test]
+    fn transaction_plan_rejects_noncanonical_target_package_digests() {
+        let mut package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let current = [InstalledComponent {
+            component_id: package.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        }];
+        for invalid in [
+            "",
+            "latest",
+            "sha256:NOT-CANONICAL",
+            "sha256:abc",
+            "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            package.package_digest = invalid.to_owned();
+            for installed in [&[][..], &current[..]] {
+                assert!(matches!(
+                    plan_component_transaction(&package, installed),
+                    Err(ComponentAdmissionError::InvalidTargetPackageDigest(id)) if id == "origins.runtime"
+                ));
+            }
         }
     }
 
