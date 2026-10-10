@@ -231,6 +231,11 @@ pub fn vm_session_paths(
             "session root is a symlink alias",
         ));
     }
+    if !fs::symlink_metadata(root)?.file_type().is_dir() {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root is not a directory",
+        ));
+    }
     if !safe_component(application_id) || !safe_component(session_id) {
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
     }

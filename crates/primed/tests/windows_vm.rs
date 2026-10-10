@@ -404,6 +404,18 @@ fn vm_session_paths_rejects_symlinked_root_alias() {
 }
 
 #[test]
+fn vm_session_paths_rejects_regular_file_as_root() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = tempdir().unwrap();
+    let file_root = dir.path().join("not-a-directory");
+    fs::write(&file_root, b"not a VM session directory").unwrap();
+
+    assert!(vm_session_paths(&file_root, "app-001", "session-a").is_err());
+    assert_eq!(fs::read(&file_root).unwrap(), b"not a VM session directory");
+}
+
+#[test]
 fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
