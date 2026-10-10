@@ -391,6 +391,11 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
+    // A regular final file can still be reached through a symlinked parent.
+    // Reject aliases and traversal so the admitted package path is canonical.
+    if fs::canonicalize(path)? != path {
+        return Err(ComponentAdmissionError::UnsafePackagePath);
+    }
     Ok(())
 }
 
@@ -1016,6 +1021,48 @@ mod tests {
             ));
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_symlinked_parent_and_dotdot_alias() {
+        use std::os::unix::fs::symlink;
+
+        let bytes = b"origins-package-v2";
+        let (dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let alias = dir.path().join("alias");
+        symlink(dir.path(), &alias).unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+
+        for candidate in [
+            alias.join("component.primepkg"),
+            dir.path()
+                .join("nested")
+                .join("..")
+                .join("component.primepkg"),
+        ] {
+            assert!(matches!(
+                verify_offline_component_package(
+                    &candidate,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &manifest,
+                &context(&[]),
+                |_| true,
+                |_, _| true
+            ),
+            Ok(ComponentAdmissionOutcome::Ready(_))
+        ));
+    }
+
     #[test]
     fn application_profile_schema_compatibility_fails_closed() {
         let bytes = b"origins-package-v2";
