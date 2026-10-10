@@ -224,6 +224,13 @@ pub fn vm_session_paths(
             "session root contains parent traversal",
         ));
     }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|_| WindowsVmError::InvalidPlan("session root must exist"))?;
+    if canonical_root != root {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root is a symlink alias",
+        ));
+    }
     if !safe_component(application_id) || !safe_component(session_id) {
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
     }

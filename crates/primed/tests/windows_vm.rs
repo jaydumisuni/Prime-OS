@@ -387,6 +387,22 @@ fn vm_session_paths_are_application_scoped_and_reject_escape() {
     assert!(vm_session_paths(std::path::Path::new("/tmp//prime"), "app-001", "session-a").is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn vm_session_paths_rejects_symlinked_root_alias() {
+    use primed::windows_vm::vm_session_paths;
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let real_root = dir.path().join("real");
+    fs::create_dir(&real_root).unwrap();
+    let alias = dir.path().join("alias");
+    symlink(&real_root, &alias).unwrap();
+
+    assert!(vm_session_paths(&alias, "app-001", "session-a").is_err());
+    assert!(vm_session_paths(&real_root, "app-001", "session-a").is_ok());
+}
+
 #[test]
 fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     use primed::windows_vm::{
