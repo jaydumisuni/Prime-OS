@@ -739,3 +739,16 @@ fn runtime_proof_plan_rejects_noncanonical_forged_guest_digest() {
     guest.base_sha256 = "g".repeat(64);
     assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
 }
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_symlinked_image_parent() {
+    use std::os::unix::fs::symlink;
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("guest.qcow2");
+    let bytes = b"w8-parent";
+    fs::write(&image, bytes).unwrap();
+    let alias = dir.path().join("alias");
+    symlink(dir.path(), &alias).unwrap();
+    assert!(validate_guest_definition(&definition(&alias.join("guest.qcow2"), bytes)).is_err());
+    assert!(validate_guest_definition(&definition(&image, bytes)).is_ok());
+}

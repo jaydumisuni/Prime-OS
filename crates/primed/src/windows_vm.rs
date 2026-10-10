@@ -548,6 +548,11 @@ pub fn validate_guest_definition(
     if !image.is_absolute() {
         return Err(WindowsVmError::InvalidGuest("base image is not absolute"));
     }
+    if fs::canonicalize(&image)? != image {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path is not canonical",
+        ));
+    }
     let metadata = fs::symlink_metadata(&image)?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
         return Err(WindowsVmError::InvalidGuest(
