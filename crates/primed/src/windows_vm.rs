@@ -556,7 +556,10 @@ pub fn validate_guest_definition(
     if definition.guest_id.trim().is_empty()
         || definition.guest_id.trim() != definition.guest_id
         || definition.guest_id.len() > 128
-        || definition.guest_id.chars().any(char::is_control)
+        || !definition
+            .guest_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         || definition.revision == 0
     {
         return Err(WindowsVmError::InvalidGuest("invalid guest identity"));

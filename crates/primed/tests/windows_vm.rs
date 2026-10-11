@@ -69,7 +69,15 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
     let bytes = b"prime-w8-guest-identity";
     fs::write(&image, bytes).unwrap();
 
-    for guest_id in [" leading", "trailing ", "line\nbreak"] {
+    for guest_id in [
+        " leading",
+        "trailing ",
+        "line\nbreak",
+        "guest/alias",
+        "guest\\alias",
+        "guest\u{202e}spoof",
+        "guest.name",
+    ] {
         let mut guest = definition(&image, bytes);
         guest.guest_id = guest_id.to_owned();
         assert!(validate_guest_definition(&guest).is_err());
