@@ -1,6 +1,7 @@
 use prime_contracts::{
-    validate_component_manifest, ComponentManifestError, PersistentDataPolicy,
-    PrimeComponentManifest, APPLICATIONS_PROJECTION_SCHEMA, CAPABILITY_INTERFACE_VERSION,
+    valid_component_identifier, validate_component_manifest, ComponentManifestError,
+    PersistentDataPolicy, PrimeComponentManifest, APPLICATIONS_PROJECTION_SCHEMA,
+    CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -102,6 +103,10 @@ pub enum ComponentAdmissionError {
     UnsafePackagePath,
     #[error("component package digest does not match manifest")]
     PackageDigestMismatch,
+    #[error("target component {0} has a noncanonical identity")]
+    InvalidTargetComponentId(String),
+    #[error("installed component {0} has a noncanonical identity")]
+    InvalidInstalledComponentId(String),
     #[error("installed component {0} has an invalid zero revision")]
     InvalidInstalledRevision(String),
     #[error("installed component {0} has a noncanonical package digest")]
@@ -141,6 +146,11 @@ pub fn plan_component_transaction(
     package: &VerifiedComponentPackage,
     installed: &[InstalledComponent],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    if !valid_component_identifier(&package.component_id) {
+        return Err(ComponentAdmissionError::InvalidTargetComponentId(
+            package.component_id.clone(),
+        ));
+    }
     if !canonical_component_digest(&package.package_digest) {
         return Err(ComponentAdmissionError::InvalidTargetPackageDigest(
             package.component_id.clone(),
@@ -227,6 +237,13 @@ pub fn plan_component_rollback(
     current: &InstalledComponent,
     retained: &InstalledComponent,
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    for component in [current, retained] {
+        if !valid_component_identifier(&component.component_id) {
+            return Err(ComponentAdmissionError::InvalidInstalledComponentId(
+                component.component_id.clone(),
+            ));
+        }
+    }
     if current.component_id != retained.component_id
         || retained.revision == 0
         || retained.revision >= current.revision
@@ -350,6 +367,11 @@ fn index_installed(
 ) -> Result<BTreeMap<&str, &InstalledComponent>, ComponentAdmissionError> {
     let mut by_id = BTreeMap::new();
     for component in installed {
+        if !valid_component_identifier(&component.component_id) {
+            return Err(ComponentAdmissionError::InvalidInstalledComponentId(
+                component.component_id.clone(),
+            ));
+        }
         if component.revision == 0 {
             return Err(ComponentAdmissionError::InvalidInstalledRevision(
                 component.component_id.clone(),
@@ -934,6 +956,56 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn installed_inventory_rejects_noncanonical_component_id() {
+        for id in [
+            "Origins.runtime",
+            "origins..runtime",
+            "origins/runtime",
+            " origins.runtime",
+        ] {
+            let installed = [InstalledComponent {
+                component_id: id.to_owned(),
+                revision: 2,
+                package_digest: DIGEST_A.to_owned(),
+            }];
+            assert!(
+                plan_component_removal(id, &installed).is_err(),
+                "noncanonical installed identity was accepted: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn transaction_and_rollback_reject_noncanonical_component_id() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "Origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        assert!(matches!(
+            plan_component_transaction(&package, &[]),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(_))
+        ));
+        let current = InstalledComponent {
+            component_id: package.component_id,
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+            ..current.clone()
+        };
+        assert!(matches!(
+            plan_component_rollback(&current, &retained),
+            Err(ComponentAdmissionError::InvalidInstalledComponentId(_))
+        ));
     }
 
     #[test]

@@ -114,7 +114,7 @@ pub fn validate_component_manifest(
     if manifest.schema != PRIME_COMPONENT_SCHEMA {
         return Err(ComponentManifestError::Schema);
     }
-    if !valid_identifier(&manifest.component_id) {
+    if !valid_component_identifier(&manifest.component_id) {
         return Err(ComponentManifestError::ComponentId);
     }
     if manifest.revision == 0 {
@@ -130,7 +130,7 @@ pub fn validate_component_manifest(
     if !valid_sha256_label(&manifest.package_digest) {
         return Err(ComponentManifestError::PackageDigest);
     }
-    if !valid_identifier(&manifest.publisher_id) {
+    if !valid_component_identifier(&manifest.publisher_id) {
         return Err(ComponentManifestError::PublisherId);
     }
     if !valid_sha256_label(&manifest.publisher_key_id) {
@@ -160,7 +160,7 @@ pub fn validate_component_manifest(
 
     let mut dependencies = BTreeSet::new();
     for dependency in &manifest.dependencies {
-        if !valid_identifier(&dependency.component_id)
+        if !valid_component_identifier(&dependency.component_id)
             || dependency.component_id == manifest.component_id
             || dependency.minimum_revision == 0
             || dependency
@@ -182,7 +182,9 @@ pub fn validate_component_manifest(
         &manifest.capabilities,
     ] {
         for registration in registration_group {
-            if !valid_identifier(registration) || !registrations.insert(registration.as_str()) {
+            if !valid_component_identifier(registration)
+                || !registrations.insert(registration.as_str())
+            {
                 return Err(ComponentManifestError::RegistrationIdentity);
             }
         }
@@ -218,14 +220,14 @@ fn validate_unique_identities(
 ) -> Result<(), ComponentManifestError> {
     let mut seen = BTreeSet::new();
     for value in values {
-        if !valid_identifier(value) || !seen.insert(value.as_str()) {
+        if !valid_component_identifier(value) || !seen.insert(value.as_str()) {
             return Err(error);
         }
     }
     Ok(())
 }
 
-fn valid_identifier(value: &str) -> bool {
+pub fn valid_component_identifier(value: &str) -> bool {
     if value.is_empty() || value.len() > 128 {
         return false;
     }
