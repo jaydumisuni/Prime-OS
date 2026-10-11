@@ -239,7 +239,23 @@ pub fn vm_session_paths(
     if !safe_component(application_id) || !safe_component(session_id) {
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
     }
-    let runtime_dir = root.join(application_id).join(session_id);
+    let application_dir = root.join(application_id);
+    let runtime_dir = application_dir.join(session_id);
+    // An existing application/session directory must not redirect the VM
+    // outside its scoped runtime root before a proof plan is bound to it.
+    for path in [&application_dir, &runtime_dir] {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_dir() || fs::canonicalize(path)? != *path {
+                    return Err(WindowsVmError::InvalidPlan(
+                        "session directory is not a canonical directory",
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let agent_socket = runtime_dir.join("agent.sock");
     validate_agent_socket_path(&agent_socket)?;
     Ok(VmSessionPaths {

@@ -423,6 +423,35 @@ fn vm_session_paths_rejects_symlinked_root_alias() {
     assert!(vm_session_paths(&real_root, "app-001", "session-a").is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn vm_session_paths_rejects_existing_symlinked_application_and_session() {
+    use primed::windows_vm::vm_session_paths;
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("runtime");
+    let outside = dir.path().join("outside");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&outside).unwrap();
+
+    symlink(&outside, root.join("app-001")).unwrap();
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
+    fs::remove_file(root.join("app-001")).unwrap();
+
+    let app = root.join("app-001");
+    fs::create_dir(&app).unwrap();
+    symlink(&outside, app.join("session-a")).unwrap();
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
+    fs::remove_file(app.join("session-a")).unwrap();
+
+    fs::write(app.join("session-a"), b"not a session directory").unwrap();
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
+    fs::remove_file(app.join("session-a")).unwrap();
+
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_ok());
+}
+
 #[test]
 fn vm_session_paths_rejects_regular_file_as_root() {
     use primed::windows_vm::vm_session_paths;
