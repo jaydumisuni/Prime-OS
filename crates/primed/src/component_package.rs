@@ -102,6 +102,8 @@ pub enum ComponentAdmissionError {
     UnsafePackagePath,
     #[error("component package digest does not match manifest")]
     PackageDigestMismatch,
+    #[error("installed component {0} has an invalid zero revision")]
+    InvalidInstalledRevision(String),
     #[error("installed component {0} has a noncanonical package digest")]
     InvalidInstalledPackageDigest(String),
     #[error("target component {0} has a noncanonical package digest")]
@@ -348,6 +350,11 @@ fn index_installed(
 ) -> Result<BTreeMap<&str, &InstalledComponent>, ComponentAdmissionError> {
     let mut by_id = BTreeMap::new();
     for component in installed {
+        if component.revision == 0 {
+            return Err(ComponentAdmissionError::InvalidInstalledRevision(
+                component.component_id.clone(),
+            ));
+        }
         if !canonical_component_digest(&component.package_digest) {
             return Err(ComponentAdmissionError::InvalidInstalledPackageDigest(
                 component.component_id.clone(),
@@ -773,6 +780,33 @@ mod tests {
             plan_component_transaction(&package, &[]),
             Err(ComponentAdmissionError::RevisionNotAdvanced(id)) if id == "origins.runtime"
         ));
+    }
+
+    #[test]
+    fn installed_inventory_rejects_reserved_zero_revision_for_all_plans() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        for component_id in ["origins.runtime", "runtime.python"] {
+            let installed = [InstalledComponent {
+                component_id: component_id.to_owned(),
+                revision: 0,
+                package_digest: DIGEST_A.to_owned(),
+            }];
+            assert!(matches!(
+                plan_component_transaction(&package, &installed),
+                Err(ComponentAdmissionError::InvalidInstalledRevision(id)) if id == component_id
+            ));
+            assert!(matches!(
+                plan_component_removal(component_id, &installed),
+                Err(ComponentAdmissionError::InvalidInstalledRevision(id)) if id == component_id
+            ));
+        }
     }
 
     #[test]
