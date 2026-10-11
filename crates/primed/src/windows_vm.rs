@@ -548,13 +548,8 @@ pub fn validate_guest_definition(
     if !(512..=32768).contains(&definition.memory_mib) || !(1..=16).contains(&definition.vcpus) {
         return Err(WindowsVmError::InvalidGuest("resource bounds exceeded"));
     }
-    if definition.base_sha256.len() != 64
-        || !definition
-            .base_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(WindowsVmError::InvalidGuest("invalid sha256"));
+    if !canonical_sha256_hex(&definition.base_sha256) {
+        return Err(WindowsVmError::InvalidGuest("invalid canonical sha256"));
     }
     let image = PathBuf::from(&definition.base_image);
     if !image.is_absolute() {
@@ -582,7 +577,7 @@ pub fn validate_guest_definition(
         hasher.update(&buffer[..read]);
     }
     let actual = format!("{:x}", hasher.finalize());
-    if !actual.eq_ignore_ascii_case(&definition.base_sha256) {
+    if actual != definition.base_sha256 {
         return Err(WindowsVmError::GuestDigestMismatch);
     }
     Ok(ValidatedVmGuest {

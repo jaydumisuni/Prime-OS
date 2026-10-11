@@ -43,6 +43,26 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
 }
 
 #[test]
+fn guest_definition_rejects_noncanonical_digest_encoding() {
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-guest-canonical-digest";
+    fs::write(&image, bytes).unwrap();
+
+    let canonical = definition(&image, bytes);
+    assert!(validate_guest_definition(&canonical).is_ok());
+
+    let mut uppercase = canonical.clone();
+    uppercase.base_sha256 = uppercase.base_sha256.to_ascii_uppercase();
+    assert_ne!(uppercase.base_sha256, canonical.base_sha256);
+    assert!(validate_guest_definition(&uppercase).is_err());
+
+    let mut nonhex = canonical;
+    nonhex.base_sha256 = "g".repeat(64);
+    assert!(validate_guest_definition(&nonhex).is_err());
+}
+
+#[test]
 fn guest_definition_rejects_noncanonical_guest_identity() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
