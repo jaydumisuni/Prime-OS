@@ -144,6 +144,11 @@ pub fn plan_component_transaction(
             package.component_id.clone(),
         ));
     }
+    if package.revision == 0 {
+        return Err(ComponentAdmissionError::RevisionNotAdvanced(
+            package.component_id.clone(),
+        ));
+    }
     let by_id = index_installed(installed)?;
     let current = by_id.get(package.component_id.as_str()).copied();
 
@@ -752,6 +757,22 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn transaction_plan_rejects_zero_revision_even_without_installed_component() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 0,
+            version: "0.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        assert!(matches!(
+            plan_component_transaction(&package, &[]),
+            Err(ComponentAdmissionError::RevisionNotAdvanced(id)) if id == "origins.runtime"
+        ));
     }
 
     #[test]
