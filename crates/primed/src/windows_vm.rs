@@ -679,6 +679,17 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
 
     let agent = request.runtime_dir.join("agent.sock");
     validate_agent_socket_path(&agent)?;
+    // Reject an already-occupied agent socket path before handing it to QEMU.
+    // The runtime directory still requires exclusive ownership against races.
+    match fs::symlink_metadata(&agent) {
+        Ok(_) => {
+            return Err(WindowsVmError::InvalidPlan(
+                "guest agent socket path is already occupied",
+            ))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let mut args = vec![
         "-accel".to_owned(),
         "kvm".to_owned(),

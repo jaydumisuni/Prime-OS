@@ -215,6 +215,47 @@ fn qemu_plan_rejects_overlong_guest_agent_socket() {
     assert!(error.to_string().contains("AF_UNIX"));
 }
 
+#[cfg(unix)]
+#[test]
+fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
+    use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
+
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+    let agent = runtime.join("agent.sock");
+    let outside = dir.path().join("unrelated-host-file");
+    fs::write(&outside, b"must-remain-intact").unwrap();
+
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    symlink(&outside, &agent).unwrap();
+    assert!(build_qemu_plan(&request).is_err());
+    fs::remove_file(&agent).unwrap();
+
+    fs::write(&agent, b"occupied").unwrap();
+    assert!(build_qemu_plan(&request).is_err());
+    fs::remove_file(&agent).unwrap();
+
+    let listener = UnixListener::bind(&agent).unwrap();
+    assert!(build_qemu_plan(&request).is_err());
+    drop(listener);
+    fs::remove_file(&agent).unwrap();
+
+    assert_eq!(fs::read(outside).unwrap(), b"must-remain-intact");
+    assert!(build_qemu_plan(&request).is_ok());
+}
+
 #[test]
 fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
     let dir = tempdir().unwrap();
