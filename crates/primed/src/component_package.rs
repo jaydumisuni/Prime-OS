@@ -1291,6 +1291,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn offline_package_rejects_hardlink_alias_as_requested_path() {
+        let bytes = b"origins-package-v2";
+        let (dir, original) = write_package(bytes);
+        let alias = dir.path().join("alias.primepkg");
+        fs::hard_link(&original, &alias).unwrap();
+        let manifest = manifest(bytes);
+        assert!(matches!(
+            verify_offline_component_package(
+                &alias,
+                &manifest,
+                &context(&[]),
+                |_| true,
+                |_, _| true,
+            ),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_path_rejects_symlinked_parent_and_dotdot_alias() {
         use std::os::unix::fs::symlink;
 
