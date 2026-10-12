@@ -156,6 +156,22 @@ pub fn plan_component_transaction(
             package.component_id.clone(),
         ));
     }
+    // VerifiedComponentPackage is public; fail closed if a caller constructs it
+    // without passing through manifest admission.
+    if !valid_component_identifier(&package.publisher_id) {
+        return Err(ComponentAdmissionError::Manifest(
+            ComponentManifestError::PublisherId,
+        ));
+    }
+    if package.version.trim().is_empty()
+        || package.version != package.version.trim()
+        || package.version.len() > 128
+        || package.version.chars().any(char::is_control)
+    {
+        return Err(ComponentAdmissionError::Manifest(
+            ComponentManifestError::Version,
+        ));
+    }
     if package.revision == 0 {
         return Err(ComponentAdmissionError::RevisionNotAdvanced(
             package.component_id.clone(),
@@ -790,6 +806,37 @@ mod tests {
                     Err(ComponentAdmissionError::InvalidTargetPackageDigest(id)) if id == "origins.runtime"
                 ));
             }
+        }
+    }
+
+    #[test]
+    fn transaction_plan_rejects_forged_public_package_metadata() {
+        let mut package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        for invalid in ["", "TheTechGuy.origins", "thetechguy..origins"] {
+            package.publisher_id = invalid.to_owned();
+            assert!(matches!(
+                plan_component_transaction(&package, &[]),
+                Err(ComponentAdmissionError::Manifest(
+                    ComponentManifestError::PublisherId
+                ))
+            ));
+        }
+        package.publisher_id = "thetechguy.origins".to_owned();
+        for invalid in ["", " 3.0.0", "3.0.0\nspoof"] {
+            package.version = invalid.to_owned();
+            assert!(matches!(
+                plan_component_transaction(&package, &[]),
+                Err(ComponentAdmissionError::Manifest(
+                    ComponentManifestError::Version
+                ))
+            ));
         }
     }
 
