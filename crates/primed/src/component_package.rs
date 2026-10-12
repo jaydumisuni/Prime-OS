@@ -453,6 +453,13 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
+    }
     // A regular final file can still be reached through a symlinked parent.
     // Reject aliases and traversal so the admitted package path is canonical.
     if fs::canonicalize(path)? != path {
@@ -1261,6 +1268,27 @@ mod tests {
             ));
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_hardlinked_external_alias() {
+        let bytes = b"origins-package-v2";
+        let (dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let external = dir.path().join("external.primepkg");
+        fs::hard_link(&path, &external).unwrap();
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &manifest,
+                &context(&[]),
+                |_| true,
+                |_, _| true,
+            ),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        assert_eq!(fs::read(&external).unwrap(), bytes);
+    }
+
     #[cfg(unix)]
     #[test]
     fn package_path_rejects_symlinked_parent_and_dotdot_alias() {
