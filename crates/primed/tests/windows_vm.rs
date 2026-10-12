@@ -42,6 +42,20 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
     assert!(error.to_string().contains("digest"));
 }
 
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_hardlinked_base_image_alias() {
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let outside = dir.path().join("unrelated-host-file");
+    let bytes = b"prime-w8-guest-hardlink-alias";
+    fs::write(&image, bytes).unwrap();
+    fs::hard_link(&image, &outside).unwrap();
+
+    assert!(validate_guest_definition(&definition(&image, bytes)).is_err());
+    assert_eq!(fs::read(&outside).unwrap(), bytes);
+}
+
 #[test]
 fn guest_definition_rejects_noncanonical_digest_encoding() {
     let dir = tempdir().unwrap();

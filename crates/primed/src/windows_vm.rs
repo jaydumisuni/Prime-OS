@@ -585,6 +585,13 @@ pub fn validate_guest_definition(
             "base image is not a regular non-symlink file",
         ));
     }
+    // A hardlinked guest image can alias unrelated host data despite a
+    // canonical path and matching digest; reject shared inode ownership.
+    if metadata.nlink() != 1 {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image has a hardlink alias",
+        ));
+    }
     let mut file = fs::File::open(&image)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 1024];
