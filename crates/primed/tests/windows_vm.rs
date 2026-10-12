@@ -241,6 +241,30 @@ fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn qemu_plan_rejects_hardlinked_overlay_aliasing_host_file() {
+    let dir = tempdir().unwrap();
+    let external = dir.path().join("unrelated-host-file");
+    fs::write(&external, b"host-data").unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::hard_link(&external, &overlay).unwrap();
+
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("hardlink"));
+    assert_eq!(fs::read(&external).unwrap(), b"host-data");
+}
+
 #[test]
 fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
     let dir = tempdir().unwrap();

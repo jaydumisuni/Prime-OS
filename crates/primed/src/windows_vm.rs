@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
@@ -642,6 +642,11 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     let overlay_meta = fs::symlink_metadata(&request.overlay_image)?;
     if overlay_meta.file_type().is_symlink() || !overlay_meta.file_type().is_file() {
         return Err(WindowsVmError::InvalidPlan("overlay is not a regular file"));
+    }
+    // A hardlinked overlay may alias unrelated host data even when its
+    // canonical path is confined to the selected VM runtime directory.
+    if overlay_meta.nlink() != 1 {
+        return Err(WindowsVmError::InvalidPlan("overlay has a hardlink alias"));
     }
     let runtime_meta = fs::symlink_metadata(&request.runtime_dir)?;
     if runtime_meta.file_type().is_symlink() || !runtime_meta.file_type().is_dir() {
