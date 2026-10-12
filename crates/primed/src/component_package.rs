@@ -189,6 +189,11 @@ pub fn plan_component_removal(
     component_id: &str,
     installed: &[InstalledComponent],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    if !valid_component_identifier(component_id) {
+        return Err(ComponentAdmissionError::InvalidTargetComponentId(
+            component_id.to_owned(),
+        ));
+    }
     let by_id = index_installed(installed)?;
     let current = by_id
         .get(component_id)
@@ -956,6 +961,28 @@ mod tests {
             assert!(plan_component_rollback(&current, &retained).is_err());
         }
         assert!(plan_component_removal("missing.runtime", std::slice::from_ref(&current)).is_err());
+    }
+
+    #[test]
+    fn removal_rejects_noncanonical_request_identity_before_inventory_lookup() {
+        let installed = [InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        }];
+        for id in [
+            "Origins.runtime",
+            "origins..runtime",
+            "origins/runtime",
+            " origins.runtime",
+        ] {
+            for inventory in [&[][..], &installed[..]] {
+                assert!(matches!(
+                    plan_component_removal(id, inventory),
+                    Err(ComponentAdmissionError::InvalidTargetComponentId(actual)) if actual == id
+                ));
+            }
+        }
     }
 
     #[test]
