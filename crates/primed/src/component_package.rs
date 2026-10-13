@@ -92,7 +92,13 @@ impl ComponentTransactionState {
                 | (Self::Failed { .. }, Self::RecoveryRequired { .. })
                 | (Self::RecoveryRequired { .. }, Self::RolledBack)
         );
-        if permitted {
+        let reason_valid = |state: &Self| match state {
+            Self::Failed { reason } | Self::RecoveryRequired { reason } => {
+                !reason.trim().is_empty() && !reason.chars().any(char::is_control)
+            }
+            _ => true,
+        };
+        if permitted && reason_valid(&self) && reason_valid(&next) {
             Ok(next)
         } else {
             Err(ComponentTransactionTransitionError)
@@ -1273,6 +1279,53 @@ mod tests {
             .advance(State::RolledBack)
             .unwrap();
         assert!(recovered.is_success());
+    }
+
+    #[test]
+    fn transaction_failure_states_require_meaningful_recovery_reasons() {
+        use ComponentTransactionState as State;
+
+        for invalid in ["", "   ", "\n", "failure\nforged"] {
+            for next in [
+                State::Failed {
+                    reason: invalid.to_owned(),
+                },
+                State::RecoveryRequired {
+                    reason: invalid.to_owned(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "invalid failure/recovery reason was accepted: {invalid:?}"
+                );
+            }
+        }
+
+        for invalid in ["", "   ", "\n"] {
+            assert_eq!(
+                (State::Failed {
+                    reason: invalid.into()
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore previous package".into()
+                }),
+                Err(ComponentTransactionTransitionError)
+            );
+            assert_eq!(
+                (State::RecoveryRequired {
+                    reason: invalid.into()
+                })
+                .advance(State::RolledBack),
+                Err(ComponentTransactionTransitionError)
+            );
+        }
+
+        assert!(State::Applying
+            .advance(State::Failed {
+                reason: "disk write interrupted".into()
+            })
+            .is_ok());
     }
 
     #[test]
