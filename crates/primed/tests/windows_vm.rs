@@ -997,3 +997,34 @@ fn runtime_proof_plan_rejects_unvalidated_guest_identity_and_resources() {
     invalid.vcpus = 0;
     assert!(prepare_runtime_proof_plan(&invalid, &root, "app-001", "session-a").is_err());
 }
+
+#[test]
+fn guest_agent_handshake_rejects_noncanonical_expected_identity() {
+    use primed::windows_vm::{
+        validate_guest_agent_hello, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    let mut hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    for invalid_id in ["", " leading", "guest/alias"] {
+        hello.guest_id = invalid_id.to_owned();
+        assert!(
+            validate_guest_agent_hello(&hello, invalid_id, 1, &"a".repeat(64), "x86_64").is_err()
+        );
+    }
+    hello.guest_id = "windows-fallback-test".to_owned();
+    hello.guest_revision = 0;
+    assert!(validate_guest_agent_hello(
+        &hello,
+        "windows-fallback-test",
+        0,
+        &"a".repeat(64),
+        "x86_64"
+    )
+    .is_err());
+}

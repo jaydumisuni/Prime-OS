@@ -150,6 +150,18 @@ pub fn validate_guest_agent_hello(
     expected_guest_sha256: &str,
     expected_workload_arch: &str,
 ) -> Result<(), WindowsVmError> {
+    // Expected identity is caller-supplied; matching an invalid expectation is not authority.
+    if expected_guest_id.is_empty()
+        || expected_guest_id.len() > 128
+        || !expected_guest_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || expected_guest_revision == 0
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "invalid expected guest identity",
+        ));
+    }
     if hello.schema != WINDOWS_VM_AGENT_SCHEMA || hello.protocol_revision != 1 {
         return Err(WindowsVmError::InvalidGuest(
             "unsupported guest-agent protocol",
