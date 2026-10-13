@@ -305,6 +305,7 @@ where
 {
     validate_component_manifest(manifest)?;
     validate_package_path(package_path)?;
+    let original_metadata = fs::metadata(package_path)?;
 
     let observed_digest = sha256_file(package_path)?;
     if observed_digest != manifest.package_digest {
@@ -355,6 +356,25 @@ where
     }
 
     validate_dependencies(manifest, context.installed)?;
+
+    // Callbacks can replace the pathname after the initial digest was checked.
+    // Revalidate the path and the bytes before returning any admission outcome.
+    validate_package_path(package_path)?;
+    let current_metadata = fs::metadata(package_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if current_metadata.dev() != original_metadata.dev()
+            || current_metadata.ino() != original_metadata.ino()
+        {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
+    }
+    if current_metadata.len() != original_metadata.len()
+        || sha256_file(package_path)? != observed_digest
+    {
+        return Err(ComponentAdmissionError::PackageDigestMismatch);
+    }
 
     if !manifest.base_system_requirements.is_empty() {
         return Ok(ComponentAdmissionOutcome::GenerationHandoff {
@@ -1308,6 +1328,54 @@ mod tests {
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
         assert_eq!(fs::read(&original).unwrap(), bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_path_replaced_after_digest_verification() {
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let original = path.with_extension("original");
+        let result = verify_offline_component_package(
+            &path,
+            &manifest,
+            &context(&[]),
+            |_| {
+                fs::rename(&path, &original).unwrap();
+                fs::write(&path, b"unverified-replacement").unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_same_digest_inode_replacement_during_signature() {
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let original = path.with_extension("original");
+        let result = verify_offline_component_package(
+            &path,
+            &manifest,
+            &context(&[]),
+            |_| {
+                fs::rename(&path, &original).unwrap();
+                fs::write(&path, bytes).unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
     }
 
     #[cfg(unix)]
