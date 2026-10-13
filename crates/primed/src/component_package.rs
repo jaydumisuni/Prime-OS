@@ -71,9 +71,32 @@ pub enum ComponentTransactionState {
     RolledBack,
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("invalid component transaction state transition")]
+pub struct ComponentTransactionTransitionError;
+
 impl ComponentTransactionState {
     pub fn is_success(&self) -> bool {
         matches!(self, Self::Applied | Self::RolledBack)
+    }
+
+    // A terminal state cannot be reached directly from planning or failure.
+    // Callers must record application and, when needed, recovery first.
+    pub fn advance(self, next: Self) -> Result<Self, ComponentTransactionTransitionError> {
+        let permitted = matches!(
+            (&self, &next),
+            (Self::Planned, Self::Applying)
+                | (Self::Applying, Self::Applied)
+                | (Self::Applying, Self::Failed { .. })
+                | (Self::Applying, Self::RecoveryRequired { .. })
+                | (Self::Failed { .. }, Self::RecoveryRequired { .. })
+                | (Self::RecoveryRequired { .. }, Self::RolledBack)
+        );
+        if permitted {
+            Ok(next)
+        } else {
+            Err(ComponentTransactionTransitionError)
+        }
     }
 }
 
@@ -1195,6 +1218,61 @@ mod tests {
         }
         assert!(ComponentTransactionState::Applied.is_success());
         assert!(ComponentTransactionState::RolledBack.is_success());
+    }
+
+    #[test]
+    fn transaction_state_transitions_require_application_and_recovery() {
+        use ComponentTransactionState as State;
+
+        for (from, to) in [
+            (State::Planned, State::Applied),
+            (State::Planned, State::RolledBack),
+            (
+                State::Planned,
+                State::RecoveryRequired {
+                    reason: "skip apply".into(),
+                },
+            ),
+            (
+                State::Failed {
+                    reason: "failed".into(),
+                },
+                State::Applied,
+            ),
+            (
+                State::Failed {
+                    reason: "failed".into(),
+                },
+                State::RolledBack,
+            ),
+            (State::Applied, State::Applying),
+            (State::RolledBack, State::Applied),
+            (State::Applying, State::RolledBack),
+        ] {
+            assert_eq!(from.advance(to), Err(ComponentTransactionTransitionError));
+        }
+
+        let applied = State::Planned
+            .advance(State::Applying)
+            .unwrap()
+            .advance(State::Applied)
+            .unwrap();
+        assert!(applied.is_success());
+
+        let recovered = State::Planned
+            .advance(State::Applying)
+            .unwrap()
+            .advance(State::Failed {
+                reason: "write interrupted".into(),
+            })
+            .unwrap()
+            .advance(State::RecoveryRequired {
+                reason: "restore prior package".into(),
+            })
+            .unwrap()
+            .advance(State::RolledBack)
+            .unwrap();
+        assert!(recovered.is_success());
     }
 
     #[test]
