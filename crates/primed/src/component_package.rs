@@ -94,7 +94,11 @@ impl ComponentTransactionState {
         );
         let reason_valid = |state: &Self| match state {
             Self::Failed { reason } | Self::RecoveryRequired { reason } => {
-                !reason.trim().is_empty() && !reason.chars().any(char::is_control)
+                // Unicode line/paragraph separators are not control chars but can forge log lines.
+                !reason.trim().is_empty()
+                    && !reason
+                        .chars()
+                        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
             }
             _ => true,
         };
@@ -1285,7 +1289,14 @@ mod tests {
     fn transaction_failure_states_require_meaningful_recovery_reasons() {
         use ComponentTransactionState as State;
 
-        for invalid in ["", "   ", "\n", "failure\nforged"] {
+        for invalid in [
+            "",
+            "   ",
+            "\n",
+            "failure\nforged",
+            "failure\u{2028}forged",
+            "failure\u{2029}forged",
+        ] {
             for next in [
                 State::Failed {
                     reason: invalid.to_owned(),
