@@ -265,6 +265,13 @@ pub fn vm_session_paths(
     })
 }
 
+const MANDATORY_RUNTIME_PROOF_CASES: [VmRuntimeAdversarialCase; 4] = [
+    VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
+    VmRuntimeAdversarialCase::ForcedProcessTermination,
+    VmRuntimeAdversarialCase::CorruptGuestAuthority,
+    VmRuntimeAdversarialCase::DeniedUsbNode,
+];
+
 pub fn prepare_runtime_proof_plan(
     guest: &ValidatedVmGuest,
     root: &Path,
@@ -282,12 +289,7 @@ pub fn prepare_runtime_proof_plan(
         ));
     }
     let paths = vm_session_paths(root, application_id, session_id)?;
-    let required_cases = vec![
-        VmRuntimeAdversarialCase::ConcurrentSessionIsolation,
-        VmRuntimeAdversarialCase::ForcedProcessTermination,
-        VmRuntimeAdversarialCase::CorruptGuestAuthority,
-        VmRuntimeAdversarialCase::DeniedUsbNode,
-    ];
+    let required_cases = MANDATORY_RUNTIME_PROOF_CASES.to_vec();
     let proof_id = runtime_proof_id(
         &guest.guest_id,
         guest.revision,
@@ -412,7 +414,10 @@ pub fn evaluate_runtime_proof(
         &plan.required_cases,
         &plan.paths,
     );
-    if plan.proof_id != expected_proof_id || observations.len() != plan.required_cases.len() {
+    if plan.required_cases.as_slice() != MANDATORY_RUNTIME_PROOF_CASES.as_slice()
+        || plan.proof_id != expected_proof_id
+        || observations.len() != plan.required_cases.len()
+    {
         return VmRuntimeProofState::Pending;
     }
 
