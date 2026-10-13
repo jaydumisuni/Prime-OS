@@ -444,6 +444,14 @@ pub fn evaluate_runtime_proof(
         &plan.paths,
     );
     if plan.required_cases.as_slice() != MANDATORY_RUNTIME_PROOF_CASES.as_slice()
+        || plan.guest_id.is_empty()
+        || plan.guest_id.len() > 128
+        || !plan
+            .guest_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || plan.guest_revision == 0
+        || !canonical_sha256_hex(&plan.guest_sha256)
         || plan.proof_id != expected_proof_id
         || observations.len() != plan.required_cases.len()
     {
