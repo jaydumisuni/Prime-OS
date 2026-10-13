@@ -278,9 +278,26 @@ pub fn prepare_runtime_proof_plan(
     application_id: &str,
     session_id: &str,
 ) -> Result<VmRuntimeProofPlan, WindowsVmError> {
-    if !canonical_sha256_hex(&guest.base_sha256) {
+    // ValidatedVmGuest is public and may have been mutated after admission.
+    // Revalidate its identity, resource bounds, and image before issuing proof authority.
+    let base_image = guest
+        .base_image
+        .to_str()
+        .ok_or(WindowsVmError::InvalidPlan(
+            "runtime proof guest image path is not UTF-8",
+        ))?;
+    let revalidated = validate_guest_definition(&VmGuestDefinition {
+        schema: WINDOWS_VM_GUEST_SCHEMA.to_owned(),
+        guest_id: guest.guest_id.clone(),
+        revision: guest.revision,
+        base_image: base_image.to_owned(),
+        base_sha256: guest.base_sha256.clone(),
+        memory_mib: guest.memory_mib,
+        vcpus: guest.vcpus,
+    })?;
+    if revalidated != *guest {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime proof guest digest is not canonical SHA-256",
+            "runtime proof guest changed after validation",
         ));
     }
     if !root.is_absolute() {

@@ -801,10 +801,16 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
         prepare_runtime_proof_plan(&guest, &alternate_root, "app-001", "session-a").unwrap();
     assert_ne!(a.proof_id, path_scoped.proof_id);
 
-    let mut other = guest.clone();
-    other.base_sha256 = "b".repeat(64);
+    let other_image = dir.path().join("other-windows.qcow2");
+    let other_bytes = b"prime-w8-runtime-proof-other-guest";
+    fs::write(&other_image, other_bytes).unwrap();
+    let other = validate_guest_definition(&definition(&other_image, other_bytes)).unwrap();
     let d = prepare_runtime_proof_plan(&other, &root, "app-001", "session-a").unwrap();
     assert_ne!(a.proof_id, d.proof_id);
+
+    let mut forged = guest.clone();
+    forged.base_sha256 = "b".repeat(64);
+    assert!(prepare_runtime_proof_plan(&forged, &root, "app-001", "session-a").is_err());
 }
 
 #[test]
@@ -961,4 +967,33 @@ fn runtime_proof_rejects_rehashed_plan_with_missing_mandatory_case() {
         evaluate_runtime_proof(&plan, &[observation]),
         VmRuntimeProofState::Pending
     );
+}
+
+#[test]
+fn runtime_proof_plan_rejects_unvalidated_guest_identity_and_resources() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+
+    let mut invalid = guest.clone();
+    invalid.guest_id = "../other-guest".to_owned();
+    assert!(prepare_runtime_proof_plan(&invalid, &root, "app-001", "session-a").is_err());
+
+    let mut invalid = guest.clone();
+    invalid.revision = 0;
+    assert!(prepare_runtime_proof_plan(&invalid, &root, "app-001", "session-a").is_err());
+
+    let mut invalid = guest.clone();
+    invalid.memory_mib = 0;
+    assert!(prepare_runtime_proof_plan(&invalid, &root, "app-001", "session-a").is_err());
+
+    let mut invalid = guest;
+    invalid.vcpus = 0;
+    assert!(prepare_runtime_proof_plan(&invalid, &root, "app-001", "session-a").is_err());
 }
