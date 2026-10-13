@@ -1028,3 +1028,23 @@ fn guest_agent_handshake_rejects_noncanonical_expected_identity() {
     )
     .is_err());
 }
+
+#[test]
+fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let original = b"prime-w8-runtime-proof-guest";
+    fs::write(&image, original).unwrap();
+    let guest = validate_guest_definition(&definition(&image, original)).unwrap();
+
+    // Runtime proof authority must bind the bytes still present after admission.
+    fs::write(&image, b"modified-after-admission").unwrap();
+
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let error = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap_err();
+    assert!(error.to_string().contains("digest"));
+    assert!(!root.join("app-001").exists());
+}
