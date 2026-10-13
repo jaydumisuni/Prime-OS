@@ -94,11 +94,17 @@ impl ComponentTransactionState {
         );
         let reason_valid = |state: &Self| match state {
             Self::Failed { reason } | Self::RecoveryRequired { reason } => {
-                // Unicode line/paragraph separators are not control chars but can forge log lines.
+                // Unicode separators and bidirectional controls can spoof log evidence.
                 !reason.trim().is_empty()
-                    && !reason
-                        .chars()
-                        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+                    && !reason.chars().any(|c| {
+                        c.is_control()
+                            || matches!(
+                                c,
+                                '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}'
+                                    | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}'
+                                    | '\u{061C}'
+                            )
+                    })
             }
             _ => true,
         };
@@ -1296,6 +1302,10 @@ mod tests {
             "failure\nforged",
             "failure\u{2028}forged",
             "failure\u{2029}forged",
+            "failure\u{202E}forged",
+            "failure\u{2066}forged",
+            "failure\u{200F}forged",
+            "failure\u{061C}forged",
         ] {
             for next in [
                 State::Failed {
