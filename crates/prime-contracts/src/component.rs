@@ -120,11 +120,7 @@ pub fn validate_component_manifest(
     if manifest.revision == 0 {
         return Err(ComponentManifestError::Revision);
     }
-    if manifest.version.trim().is_empty()
-        || manifest.version != manifest.version.trim()
-        || manifest.version.len() > 128
-        || manifest.version.chars().any(char::is_control)
-    {
+    if !valid_component_version(&manifest.version) {
         return Err(ComponentManifestError::Version);
     }
     if !valid_sha256_label(&manifest.package_digest) {
@@ -205,6 +201,18 @@ pub fn validate_component_manifest(
     }
 
     Ok(())
+}
+
+pub fn valid_component_version(value: &str) -> bool {
+    valid_bounded_text(value)
+        && !value.chars().any(|c| {
+            matches!(
+                c,
+                '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}'
+                    | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}'
+                    | '\u{061C}'
+            )
+        })
 }
 
 fn valid_bounded_text(value: &str) -> bool {
@@ -320,7 +328,16 @@ mod tests {
 
     #[test]
     fn version_must_be_bounded_and_single_line() {
-        for invalid in ["", " 1.0.0", "1.0.0 ", "1.0\nspoof", "1.0\tspoof"] {
+        for invalid in [
+            "",
+            " 1.0.0",
+            "1.0.0 ",
+            "1.0\nspoof",
+            "1.0\tspoof",
+            "1.0\u{202E}spoof",
+            "1.0\u{2028}spoof",
+            "1.0\u{2066}spoof",
+        ] {
             let mut item = manifest();
             item.version = invalid.to_owned();
             assert_eq!(
