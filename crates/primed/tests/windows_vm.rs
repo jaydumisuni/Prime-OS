@@ -1156,3 +1156,38 @@ fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
     assert_eq!(fs::read(outside).unwrap(), b"must-remain-intact");
     assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_ok());
 }
+
+#[cfg(unix)]
+#[test]
+fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-overlay-alias-proof";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    let runtime = root.join("app-001").join("session-a");
+    fs::create_dir_all(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    let outside = dir.path().join("outside-host-file");
+    fs::write(&outside, b"do-not-touch").unwrap();
+
+    symlink(&outside, &overlay).unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    assert_eq!(fs::read(&outside).unwrap(), b"do-not-touch");
+    fs::remove_file(&overlay).unwrap();
+
+    symlink(dir.path().join("missing-target"), &overlay).unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    fs::remove_file(&overlay).unwrap();
+
+    fs::create_dir(&overlay).unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    fs::remove_dir(&overlay).unwrap();
+
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_ok());
+    assert_eq!(fs::read(&outside).unwrap(), b"do-not-touch");
+}
