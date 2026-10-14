@@ -220,7 +220,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && value == value.trim()
         && value.len() <= 128
         && !value.chars().any(char::is_control)
-        && !value.chars().any(|c| matches!(c as u32, 0x200B | 0x200C | 0x200D | 0x2060 | 0xFEFF))
+        && !value.chars().any(|c| matches!(c as u32, 0x00AD | 0x200B | 0x200C | 0x200D | 0x2060 | 0x206A..=0x206F | 0xFEFF))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
 
@@ -340,6 +340,8 @@ mod tests {
             "1.0\u{200D}spoof",
             "1.0\u{2060}spoof",
             "1.0\u{FEFF}spoof",
+            "1.0\u{00AD}spoof",
+            "1.0\u{206A}spoof",
         ] {
             let mut item = manifest();
             item.version = invalid.to_owned();
@@ -500,6 +502,36 @@ mod tests {
             validate_component_manifest(&item),
             Err(ComponentManifestError::CompatibilityRequirement)
         );
+    }
+
+    #[test]
+    fn deprecated_format_controls_cannot_spoof_component_text() {
+        for hidden in [
+            char::from_u32(0x00AD).unwrap(),
+            char::from_u32(0x206A).unwrap(),
+            char::from_u32(0x206F).unwrap(),
+        ] {
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{hidden}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement)
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{hidden}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+
+            let mut item = manifest();
+            item.limitations = vec![format!("requires{hidden}restart")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation)
+            );
+        }
     }
 
     #[test]
