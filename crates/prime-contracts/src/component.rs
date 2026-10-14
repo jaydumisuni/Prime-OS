@@ -220,7 +220,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && value == value.trim()
         && value.len() <= 128
         && !value.chars().any(char::is_control)
-        && !value.chars().any(|c| matches!(c as u32, 0x00AD | 0x200B | 0x200C | 0x200D | 0x2060 | 0x206A..=0x206F | 0xFEFF))
+        && !value.chars().any(|c| matches!(c as u32, 0x00AD | 0x034F | 0x180E | 0x200B | 0x200C | 0x200D | 0x2060 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
 
@@ -530,6 +530,32 @@ mod tests {
             assert_eq!(
                 validate_component_manifest(&item),
                 Err(ComponentManifestError::Limitation)
+            );
+        }
+    }
+
+    #[test]
+    fn invisible_grapheme_modifiers_cannot_spoof_component_text() {
+        for hidden in ['\u{034F}', '\u{180E}', '\u{FE0F}'] {
+            let mut item = manifest();
+            item.version = format!("1.0{hidden}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version)
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{hidden}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{hidden}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement)
             );
         }
     }
