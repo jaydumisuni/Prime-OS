@@ -670,6 +670,11 @@ pub fn validate_guest_definition(
             "base image has a hardlink alias",
         ));
     }
+    // A digest can authenticate zero bytes, but zero bytes cannot form a
+    // guest disk. Reject it before admitting the VM authority.
+    if metadata.len() == 0 {
+        return Err(WindowsVmError::InvalidGuest("base image is empty"));
+    }
     let mut file = fs::File::open(&image)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 1024];

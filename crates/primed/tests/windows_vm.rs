@@ -42,6 +42,17 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
     assert!(error.to_string().contains("digest"));
 }
 
+#[test]
+fn guest_definition_rejects_empty_digest_matching_image() {
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("empty-windows.qcow2");
+    fs::write(&image, b"").unwrap();
+
+    // The SHA-256 of an empty file is valid, but it is not a bootable guest.
+    let error = validate_guest_definition(&definition(&image, b"")).unwrap_err();
+    assert!(error.to_string().contains("empty"));
+}
+
 #[cfg(unix)]
 #[test]
 fn guest_definition_rejects_hardlinked_base_image_alias() {
