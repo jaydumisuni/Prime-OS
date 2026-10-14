@@ -220,6 +220,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && value == value.trim()
         && value.len() <= 128
         && !value.chars().any(char::is_control)
+        && !value.chars().any(|c| matches!(c as u32, 0x200B | 0x200C | 0x200D | 0x2060 | 0xFEFF))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
 
@@ -335,6 +336,10 @@ mod tests {
             "1.0\u{202E}spoof",
             "1.0\u{2028}spoof",
             "1.0\u{2066}spoof",
+            "1.0\u{200B}spoof",
+            "1.0\u{200D}spoof",
+            "1.0\u{2060}spoof",
+            "1.0\u{FEFF}spoof",
         ] {
             let mut item = manifest();
             item.version = invalid.to_owned();
@@ -476,7 +481,11 @@ mod tests {
             Err(ComponentManifestError::CompatibilityRequirement)
         );
 
-        for invalid in ["generation\nspoof", "generation\tspoof"] {
+        for invalid in [
+            "generation\nspoof",
+            "generation\tspoof",
+            "generation\u{200B}spoof",
+        ] {
             let mut item = manifest();
             item.minimum_prime_generation = Some(invalid.to_owned());
             assert_eq!(
@@ -536,6 +545,12 @@ mod tests {
         );
 
         value.limitations = vec!["x".repeat(129)];
+        assert_eq!(
+            validate_component_manifest(&value),
+            Err(ComponentManifestError::Limitation)
+        );
+
+        value.limitations = vec!["requires\u{2060}restart".to_owned()];
         assert_eq!(
             validate_component_manifest(&value),
             Err(ComponentManifestError::Limitation)
