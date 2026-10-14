@@ -1101,3 +1101,39 @@ fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
     assert!(error.to_string().contains("digest"));
     assert!(!root.join("app-001").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+    use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-agent-socket-proof";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    let runtime = root.join("app-001").join("session-a");
+    fs::create_dir_all(&runtime).unwrap();
+    let socket = runtime.join("agent.sock");
+    let outside = dir.path().join("unrelated-host-file");
+    fs::write(&outside, b"must-remain-intact").unwrap();
+
+    symlink(&outside, &socket).unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    fs::remove_file(&socket).unwrap();
+
+    fs::write(&socket, b"occupied").unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    fs::remove_file(&socket).unwrap();
+
+    let listener = UnixListener::bind(&socket).unwrap();
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    drop(listener);
+    fs::remove_file(&socket).unwrap();
+
+    assert_eq!(fs::read(outside).unwrap(), b"must-remain-intact");
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_ok());
+}

@@ -318,6 +318,17 @@ pub fn prepare_runtime_proof_plan(
         ));
     }
     let paths = vm_session_paths(root, application_id, session_id)?;
+    // Proof preparation must not bless a preoccupied guest-agent endpoint.
+    // Use symlink_metadata so even a dangling symlink is rejected.
+    match fs::symlink_metadata(&paths.agent_socket) {
+        Ok(_) => {
+            return Err(WindowsVmError::InvalidPlan(
+                "runtime proof guest agent socket path is already occupied",
+            ))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let required_cases = MANDATORY_RUNTIME_PROOF_CASES.to_vec();
     let proof_id = runtime_proof_id(
         &guest.guest_id,
