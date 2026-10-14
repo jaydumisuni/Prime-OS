@@ -318,6 +318,18 @@ pub fn prepare_runtime_proof_plan(
         ));
     }
     let paths = vm_session_paths(root, application_id, session_id)?;
+    // A fresh proof session must not inherit an existing overlay. Reusing an
+    // untrusted overlay could carry residual guest state into a new proof.
+    // symlink_metadata also rejects dangling aliases without following them.
+    match fs::symlink_metadata(&paths.overlay_image) {
+        Ok(_) => {
+            return Err(WindowsVmError::InvalidPlan(
+                "runtime proof overlay path is already occupied",
+            ))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     // Proof preparation must not bless a preoccupied guest-agent endpoint.
     // Use symlink_metadata so even a dangling symlink is rejected.
     match fs::symlink_metadata(&paths.agent_socket) {

@@ -1102,6 +1102,25 @@ fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
     assert!(!root.join("app-001").exists());
 }
 
+#[test]
+fn runtime_proof_plan_rejects_preoccupied_overlay_image() {
+    use primed::windows_vm::prepare_runtime_proof_plan;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-overlay-preoccupation-proof";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    let runtime = root.join("app-001").join("session-a");
+    fs::create_dir_all(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"stale-overlay").unwrap();
+
+    assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_err());
+    assert_eq!(fs::read(&overlay).unwrap(), b"stale-overlay");
+}
+
 #[cfg(unix)]
 #[test]
 fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
