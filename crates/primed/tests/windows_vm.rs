@@ -970,6 +970,59 @@ fn runtime_proof_rejects_rehashed_plan_with_missing_mandatory_case() {
 }
 
 #[test]
+fn runtime_proof_rejects_rehashed_overlay_path() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+    };
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-forged-overlay-proof-plan";
+    fs::write(&image, bytes).unwrap();
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    let mut plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    // A public plan can be mutated and rehashed; the overlay must still belong
+    // to the canonical application/session runtime directory.
+    plan.paths.overlay_image = root.join("unscoped-overlay.qcow2");
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+        "guest_id": plan.guest_id,
+        "guest_revision": plan.guest_revision,
+        "guest_sha256": plan.guest_sha256,
+        "application_id": plan.application_id,
+        "session_id": plan.session_id,
+        "required_cases": plan.required_cases,
+        "runtime_dir": plan.paths.runtime_dir,
+        "overlay_image": plan.paths.overlay_image,
+        "agent_socket": plan.paths.agent_socket,
+    });
+    plan.proof_id = digest(&serde_json::to_vec(&body).unwrap());
+    let observations: Vec<_> = plan
+        .required_cases
+        .iter()
+        .enumerate()
+        .map(|(index, case)| {
+            create_runtime_proof_observation_from_evidence(
+                &plan,
+                case.clone(),
+                true,
+                true,
+                format!("distinct-case-{index}").as_bytes(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+}
+
+#[test]
 fn runtime_proof_plan_rejects_unvalidated_guest_identity_and_resources() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 

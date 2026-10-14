@@ -443,6 +443,19 @@ pub fn evaluate_runtime_proof(
         &plan.required_cases,
         &plan.paths,
     );
+    // The plan digest is public and can be recomputed after path tampering.
+    // Reconstruct the canonical application/session paths instead of trusting
+    // self-consistent but unscoped overlay or agent socket paths.
+    let Some(root) = plan.paths.runtime_dir.parent().and_then(Path::parent) else {
+        return VmRuntimeProofState::Pending;
+    };
+    let Ok(expected_paths) = vm_session_paths(root, &plan.application_id, &plan.session_id) else {
+        return VmRuntimeProofState::Pending;
+    };
+    if plan.paths != expected_paths {
+        return VmRuntimeProofState::Pending;
+    }
+
     if plan.required_cases.as_slice() != MANDATORY_RUNTIME_PROOF_CASES.as_slice()
         || plan.guest_id.is_empty()
         || plan.guest_id.len() > 128
