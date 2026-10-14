@@ -220,6 +220,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && value == value.trim()
         && value.len() <= 128
         && !value.chars().any(char::is_control)
+        && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
 
 fn validate_unique_identities(
@@ -260,10 +261,7 @@ pub fn valid_component_identifier(value: &str) -> bool {
 }
 
 fn valid_requirement(value: &str) -> bool {
-    !value.is_empty()
-        && value == value.trim()
-        && value.len() <= 128
-        && !value.chars().any(char::is_control)
+    valid_bounded_text(value)
 }
 
 fn valid_ed25519_signature(value: &str) -> bool {
