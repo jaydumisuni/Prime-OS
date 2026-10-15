@@ -107,8 +107,9 @@ impl ComponentTransactionState {
                             )
                             || matches!(
                                 c as u32,
-                                0x00AD | 0x034F | 0x180E | 0x200B | 0x200C | 0x200D
-                                    | 0x2060 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF
+                                0x00AD | 0x034F | 0x115F | 0x1160 | 0x180E | 0x200B | 0x200C
+                                    | 0x200D | 0x2060 | 0x206A..=0x206F | 0x3164
+                                    | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0
                             )
                     })
             }
@@ -1359,6 +1360,29 @@ mod tests {
                 reason: "disk write interrupted".into()
             })
             .is_ok());
+    }
+
+    #[test]
+    fn transaction_reasons_reject_invisible_hangul_fillers() {
+        use ComponentTransactionState as State;
+        for filler in ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'] {
+            for reason in [filler.to_string(), format!("disk{filler}failure")] {
+                for next in [
+                    State::Failed {
+                        reason: reason.clone(),
+                    },
+                    State::RecoveryRequired {
+                        reason: reason.clone(),
+                    },
+                ] {
+                    assert_eq!(
+                        State::Applying.advance(next),
+                        Err(ComponentTransactionTransitionError),
+                        "invisible Hangul filler accepted: {reason:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
