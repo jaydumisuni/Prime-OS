@@ -1,7 +1,7 @@
 use prime_contracts::{
-    valid_component_identifier, validate_component_manifest, ComponentManifestError,
-    PersistentDataPolicy, PrimeComponentManifest, APPLICATIONS_PROJECTION_SCHEMA,
-    CAPABILITY_INTERFACE_VERSION,
+    valid_component_identifier, valid_component_version, validate_component_manifest,
+    ComponentManifestError, PersistentDataPolicy, PrimeComponentManifest,
+    APPLICATIONS_PROJECTION_SCHEMA, CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -202,11 +202,7 @@ pub fn plan_component_transaction(
             ComponentManifestError::PublisherId,
         ));
     }
-    if package.version.trim().is_empty()
-        || package.version != package.version.trim()
-        || package.version.len() > 128
-        || package.version.chars().any(char::is_control)
-    {
+    if !valid_component_version(&package.version) {
         return Err(ComponentAdmissionError::Manifest(
             ComponentManifestError::Version,
         ));
@@ -895,7 +891,14 @@ mod tests {
             ));
         }
         package.publisher_id = "thetechguy.origins".to_owned();
-        for invalid in ["", " 3.0.0", "3.0.0\nspoof"] {
+        for invalid in [
+            "",
+            " 3.0.0",
+            "3.0.0\nspoof",
+            "3.0\u{202E}spoof",
+            "3.0\u{200B}spoof",
+            "3.0\u{034F}spoof",
+        ] {
             package.version = invalid.to_owned();
             assert!(matches!(
                 plan_component_transaction(&package, &[]),
