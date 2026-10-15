@@ -97,6 +97,7 @@ impl ComponentTransactionState {
                 // Invisible format controls, separators, and bidi marks can spoof
                 // durable failure/recovery log evidence.
                 !reason.trim().is_empty()
+                    && reason.trim() == reason
                     && !reason.chars().any(|c| {
                         c.is_control()
                             || matches!(
@@ -1320,6 +1321,10 @@ mod tests {
             "failure\u{200B}forged",
             "failure\u{2060}forged",
             "failure\u{FE0F}forged",
+            " disk failure",
+            "disk failure ",
+            "\u{00A0}disk failure",
+            "disk failure\u{00A0}",
         ] {
             for next in [
                 State::Failed {
