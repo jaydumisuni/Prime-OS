@@ -1222,3 +1222,9 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
     assert!(prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").is_ok());
     assert_eq!(fs::read(&outside).unwrap(), b"do-not-touch");
 }
+#[test]
+fn vm_fallback_rejects_revoked_profiles() {
+    let mut profile = vm_profile(ExecutionBackend::Vm);
+    profile.revoked = true;
+    assert!(validate_vm_profile(&profile).is_err());
+}
