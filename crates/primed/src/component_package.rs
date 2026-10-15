@@ -107,9 +107,10 @@ impl ComponentTransactionState {
                             )
                             || matches!(
                                 c as u32,
-                                0x00AD | 0x034F | 0x115F | 0x1160 | 0x180E | 0x200B | 0x200C
-                                    | 0x200D | 0x2060 | 0x206A..=0x206F | 0x3164
-                                    | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0
+                                0x00AD | 0x034F | 0x115F | 0x1160 | 0x180B..=0x180F | 0x200B
+                                    | 0x200C | 0x200D | 0x2060 | 0x206A..=0x206F | 0x3164
+                                    | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0001
+                                    | 0xE0020..=0xE007F
                             )
                     })
             }
@@ -1379,6 +1380,37 @@ mod tests {
                         State::Applying.advance(next),
                         Err(ComponentTransactionTransitionError),
                         "invisible Hangul filler accepted: {reason:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_invisible_mongolian_and_tag_formatting() {
+        use ComponentTransactionState as State;
+        for mark in [
+            '\u{180B}',
+            '\u{180C}',
+            '\u{180D}',
+            '\u{180F}',
+            '\u{E0001}',
+            '\u{E0061}',
+            '\u{E007F}',
+        ] {
+            for reason in [mark.to_string(), format!("disk{mark}failure")] {
+                for next in [
+                    State::Failed {
+                        reason: reason.clone(),
+                    },
+                    State::RecoveryRequired {
+                        reason: reason.clone(),
+                    },
+                ] {
+                    assert_eq!(
+                        State::Applying.advance(next),
+                        Err(ComponentTransactionTransitionError),
+                        "invisible formatting mark accepted: {reason:?}"
                     );
                 }
             }
