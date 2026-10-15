@@ -94,7 +94,8 @@ impl ComponentTransactionState {
         );
         let reason_valid = |state: &Self| match state {
             Self::Failed { reason } | Self::RecoveryRequired { reason } => {
-                // Unicode separators and bidirectional controls can spoof log evidence.
+                // Invisible format controls, separators, and bidi marks can spoof
+                // durable failure/recovery log evidence.
                 !reason.trim().is_empty()
                     && !reason.chars().any(|c| {
                         c.is_control()
@@ -103,6 +104,11 @@ impl ComponentTransactionState {
                                 '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}'
                                     | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}'
                                     | '\u{061C}'
+                            )
+                            || matches!(
+                                c as u32,
+                                0x00AD | 0x034F | 0x180E | 0x200B | 0x200C | 0x200D
+                                    | 0x2060 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF
                             )
                     })
             }
@@ -1309,6 +1315,9 @@ mod tests {
             "failure\u{2066}forged",
             "failure\u{200F}forged",
             "failure\u{061C}forged",
+            "failure\u{200B}forged",
+            "failure\u{2060}forged",
+            "failure\u{FE0F}forged",
         ] {
             for next in [
                 State::Failed {
