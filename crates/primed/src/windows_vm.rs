@@ -613,7 +613,10 @@ pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVm
     }
     if matches!(
         profile.compatibility.state,
-        MechanicalCompatibilityState::Unknown | MechanicalCompatibilityState::Broken
+        MechanicalCompatibilityState::Unknown
+            | MechanicalCompatibilityState::Broken
+            | MechanicalCompatibilityState::Unsupported
+            | MechanicalCompatibilityState::RequiresRemoteProvider
     ) {
         return Err(WindowsVmError::InvalidProfile(
             "compatibility state is not launchable",

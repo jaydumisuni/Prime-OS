@@ -1223,6 +1223,21 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
     assert_eq!(fs::read(&outside).unwrap(), b"do-not-touch");
 }
 #[test]
+fn vm_fallback_rejects_incompatible_compatibility_states() {
+    for state in [
+        MechanicalCompatibilityState::Unsupported,
+        MechanicalCompatibilityState::RequiresRemoteProvider,
+    ] {
+        let mut profile = vm_profile(ExecutionBackend::Vm);
+        profile.compatibility.state = state;
+        assert!(
+            validate_vm_profile(&profile).is_err(),
+            "incompatible profile must not authorize a VM launch"
+        );
+    }
+}
+
+#[test]
 fn vm_fallback_rejects_revoked_profiles() {
     let mut profile = vm_profile(ExecutionBackend::Vm);
     profile.revoked = true;
