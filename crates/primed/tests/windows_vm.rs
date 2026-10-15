@@ -114,6 +114,26 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
 }
 
 #[test]
+fn qemu_plan_rejects_empty_overlay_image() {
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"").unwrap();
+
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("empty"));
+}
+
+#[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");

@@ -733,6 +733,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if overlay_meta.file_type().is_symlink() || !overlay_meta.file_type().is_file() {
         return Err(WindowsVmError::InvalidPlan("overlay is not a regular file"));
     }
+    // A zero-byte overlay cannot contain a usable qcow2 header.
+    if overlay_meta.len() == 0 {
+        return Err(WindowsVmError::InvalidPlan("overlay image is empty"));
+    }
     // A hardlinked overlay may alias unrelated host data even when its
     // canonical path is confined to the selected VM runtime directory.
     if overlay_meta.nlink() != 1 {
