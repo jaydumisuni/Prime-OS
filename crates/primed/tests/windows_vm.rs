@@ -133,6 +133,43 @@ fn qemu_plan_rejects_empty_overlay_image() {
     assert!(error.to_string().contains("empty"));
 }
 
+#[cfg(unix)]
+#[test]
+fn qemu_plan_rejects_shared_writable_runtime_state() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+
+    for (path, unsafe_mode) in [
+        (&overlay, 0o664),
+        (&overlay, 0o666),
+        (&runtime, 0o775),
+        (&runtime, 0o777),
+    ] {
+        let original = fs::metadata(path).unwrap().permissions();
+        let mut permissions = original.clone();
+        permissions.set_mode(unsafe_mode);
+        fs::set_permissions(path, permissions).unwrap();
+
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("writable"), "{error}");
+
+        fs::set_permissions(path, original).unwrap();
+    }
+}
+
 #[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();

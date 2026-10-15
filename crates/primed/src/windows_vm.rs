@@ -745,10 +745,22 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if overlay_meta.nlink() != 1 {
         return Err(WindowsVmError::InvalidPlan("overlay has a hardlink alias"));
     }
+    // A shared-writable overlay can be replaced between plan validation and
+    // QEMU admission, defeating session-scoped guest state integrity.
+    if overlay_meta.permissions().mode() & 0o022 != 0 {
+        return Err(WindowsVmError::InvalidPlan("overlay is shared-writable"));
+    }
     let runtime_meta = fs::symlink_metadata(&request.runtime_dir)?;
     if runtime_meta.file_type().is_symlink() || !runtime_meta.file_type().is_dir() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime directory is not a regular directory",
+        ));
+    }
+    // Shared-writable session directories permit agent-socket or overlay
+    // substitution by another local principal after the plan is issued.
+    if runtime_meta.permissions().mode() & 0o022 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime directory is shared-writable",
         ));
     }
     // The VM overlay must belong to this session, not an unrelated host file.
