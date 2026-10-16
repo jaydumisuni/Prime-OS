@@ -15,6 +15,25 @@ fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+// Positive VM fixtures must be private regardless of the invoking worker's umask.
+fn private_runtime_dir(path: &std::path::Path) {
+    fs::create_dir(path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+}
+
+fn private_overlay(path: &std::path::Path) {
+    fs::write(path, b"overlay").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 fn definition(image: &std::path::Path, bytes: &[u8]) -> VmGuestDefinition {
     VmGuestDefinition {
         schema: "prime.windows-vm-guest.v1".to_owned(),
@@ -117,7 +136,7 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
 fn qemu_plan_rejects_empty_overlay_image() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
     fs::write(&overlay, b"").unwrap();
 
@@ -140,9 +159,9 @@ fn qemu_plan_rejects_shared_writable_runtime_state() {
 
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     for (path, unsafe_mode) in [
         (&overlay, 0o664),
@@ -179,9 +198,9 @@ fn qemu_plan_rejects_shared_writable_executable() {
     let qemu = dir.path().join("qemu-test-binary");
     fs::write(&qemu, b"#!/bin/sh\n").unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     for unsafe_mode in [0o775, 0o777] {
         fs::set_permissions(&qemu, fs::Permissions::from_mode(unsafe_mode)).unwrap();
@@ -202,9 +221,9 @@ fn qemu_plan_rejects_shared_writable_executable() {
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     let plan = build_qemu_plan(&VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
@@ -249,9 +268,9 @@ fn qemu_plan_pins_executable_before_alias_retarget() {
     symlink(&trusted, &alias).unwrap();
 
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     let plan = build_qemu_plan(&VmPlanRequest {
         qemu_binary: alias.clone(),
@@ -273,9 +292,9 @@ fn qemu_plan_pins_executable_before_alias_retarget() {
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     for unsafe_overlay in [
         runtime.join("overlay,readonly=off.qcow2"),
@@ -310,9 +329,9 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
 fn qemu_plan_rejects_overlong_guest_agent_socket() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("s".repeat(100));
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
     let error = build_qemu_plan(&VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
         overlay_image: overlay,
@@ -333,9 +352,9 @@ fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
 
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
     let agent = runtime.join("agent.sock");
     let outside = dir.path().join("unrelated-host-file");
     fs::write(&outside, b"must-remain-intact").unwrap();
@@ -371,7 +390,7 @@ fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("session-a");
     let other_runtime = dir.path().join("session-b");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     fs::create_dir(&other_runtime).unwrap();
     let other_overlay = other_runtime.join("overlay.qcow2");
     fs::write(&other_overlay, b"other-session").unwrap();
@@ -399,7 +418,7 @@ fn qemu_plan_rejects_hardlinked_overlay_aliasing_host_file() {
     let external = dir.path().join("unrelated-host-file");
     fs::write(&external, b"host-data").unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
     fs::hard_link(&external, &overlay).unwrap();
 
@@ -420,9 +439,9 @@ fn qemu_plan_rejects_hardlinked_overlay_aliasing_host_file() {
 fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
     let dir = tempdir().unwrap();
     let runtime = dir.path().join("runtime");
-    fs::create_dir(&runtime).unwrap();
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
-    fs::write(&overlay, b"overlay").unwrap();
+    private_overlay(&overlay);
 
     let allowed = build_qemu_plan(&VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
