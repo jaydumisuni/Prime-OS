@@ -170,6 +170,34 @@ fn qemu_plan_rejects_shared_writable_runtime_state() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn qemu_plan_rejects_shared_writable_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().unwrap();
+    let qemu = dir.path().join("qemu-test-binary");
+    fs::write(&qemu, b"#!/bin/sh\n").unwrap();
+    let runtime = dir.path().join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let overlay = runtime.join("overlay.qcow2");
+    fs::write(&overlay, b"overlay").unwrap();
+
+    for unsafe_mode in [0o775, 0o777] {
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(unsafe_mode)).unwrap();
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: qemu.clone(),
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("writable"), "{error}");
+    }
+}
+
 #[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
     let dir = tempdir().unwrap();

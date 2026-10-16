@@ -711,6 +711,13 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !qemu_meta.is_file() || qemu_meta.permissions().mode() & 0o111 == 0 {
         return Err(WindowsVmError::InvalidPlan("QEMU is not executable"));
     }
+    // A shared-writable QEMU executable is mutable by another local principal
+    // after its path is canonicalized and before the VM process starts.
+    if qemu_meta.permissions().mode() & 0o022 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable is shared-writable",
+        ));
+    }
     if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime paths are not absolute",
