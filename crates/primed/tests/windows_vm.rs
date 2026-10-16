@@ -1327,3 +1327,19 @@ fn vm_fallback_rejects_revoked_profiles() {
     profile.revoked = true;
     assert!(validate_vm_profile(&profile).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_shared_writable_base_image() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().unwrap();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-mutable-guest";
+    fs::write(&image, bytes).unwrap();
+    for unsafe_mode in [0o664, 0o666] {
+        fs::set_permissions(&image, fs::Permissions::from_mode(unsafe_mode)).unwrap();
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(error.to_string().contains("writable"), "{error}");
+    }
+}

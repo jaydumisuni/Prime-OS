@@ -673,6 +673,13 @@ pub fn validate_guest_definition(
             "base image has a hardlink alias",
         ));
     }
+    // The authenticated base must not be writable by other local principals.
+    // Otherwise its bytes may change between digest verification and VM use.
+    if metadata.permissions().mode() & 0o022 != 0 {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image is shared-writable",
+        ));
+    }
     // A digest can authenticate zero bytes, but zero bytes cannot form a
     // guest disk. Reject it before admitting the VM authority.
     if metadata.len() == 0 {
