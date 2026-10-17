@@ -97,6 +97,23 @@ fn guest_definition_rejects_hardlinked_base_image_alias() {
     assert_eq!(fs::read(&outside).unwrap(), bytes);
 }
 
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_shared_writable_image_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().unwrap();
+    let shared = dir.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    let image = shared.join("windows.qcow2");
+    let bytes = b"prime-w8-shared-parent";
+    private_guest_image(&image, bytes);
+
+    let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+    assert!(error.to_string().contains("directory"), "{error}");
+}
+
 #[test]
 fn guest_definition_rejects_noncanonical_digest_encoding() {
     let dir = tempdir().unwrap();

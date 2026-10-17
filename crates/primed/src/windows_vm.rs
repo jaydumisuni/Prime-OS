@@ -660,6 +660,24 @@ pub fn validate_guest_definition(
             "base image path is not canonical",
         ));
     }
+    // A private image inode is not sufficient if another principal can
+    // replace its pathname through a writable ancestor. The root-owned,
+    // sticky temporary directories (/tmp and /var/tmp) are exceptions:
+    // their sticky bit prevents other users from renaming this user's files.
+    for directory in image.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        if !parent.file_type().is_dir() || parent.file_type().is_symlink() {
+            return Err(WindowsVmError::InvalidGuest(
+                "base image directory is not a real directory",
+            ));
+        }
+        let mode = parent.permissions().mode();
+        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+            return Err(WindowsVmError::InvalidGuest(
+                "base image directory is shared-writable",
+            ));
+        }
+    }
     let metadata = fs::symlink_metadata(&image)?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
         return Err(WindowsVmError::InvalidGuest(
