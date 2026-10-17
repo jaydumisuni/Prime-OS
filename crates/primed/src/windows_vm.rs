@@ -725,6 +725,13 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable is shared-writable",
         ));
     }
+    // Hardlink aliases can expose an otherwise private QEMU inode to
+    // unrelated host paths after executable admission.
+    if qemu_meta.nlink() != 1 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has a hardlink alias",
+        ));
+    }
     if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime paths are not absolute",
