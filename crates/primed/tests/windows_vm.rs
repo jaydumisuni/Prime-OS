@@ -34,6 +34,17 @@ fn private_overlay(path: &std::path::Path) {
     }
 }
 
+// Guest-image fixtures must satisfy the same private-file admission contract
+// under both restrictive and permissive worker umasks.
+fn private_guest_image(path: &std::path::Path, bytes: &[u8]) {
+    fs::write(path, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 fn definition(image: &std::path::Path, bytes: &[u8]) -> VmGuestDefinition {
     VmGuestDefinition {
         schema: "prime.windows-vm-guest.v1".to_owned(),
@@ -51,7 +62,7 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-deterministic-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
 
     let validated = validate_guest_definition(&definition(&image, bytes)).unwrap();
     assert_eq!(validated.base_image, image);
@@ -65,7 +76,7 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
 fn guest_definition_rejects_empty_digest_matching_image() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("empty-windows.qcow2");
-    fs::write(&image, b"").unwrap();
+    private_guest_image(&image, b"");
 
     // The SHA-256 of an empty file is valid, but it is not a bootable guest.
     let error = validate_guest_definition(&definition(&image, b"")).unwrap_err();
@@ -79,7 +90,7 @@ fn guest_definition_rejects_hardlinked_base_image_alias() {
     let image = dir.path().join("windows.qcow2");
     let outside = dir.path().join("unrelated-host-file");
     let bytes = b"prime-w8-guest-hardlink-alias";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     fs::hard_link(&image, &outside).unwrap();
 
     assert!(validate_guest_definition(&definition(&image, bytes)).is_err());
@@ -91,7 +102,7 @@ fn guest_definition_rejects_noncanonical_digest_encoding() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-guest-canonical-digest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
 
     let canonical = definition(&image, bytes);
     assert!(validate_guest_definition(&canonical).is_ok());
@@ -111,7 +122,7 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-guest-identity";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
 
     for guest_id in [
         " leading",
@@ -676,7 +687,7 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
 
     let root = dir.path().join("runtime");
@@ -735,7 +746,7 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -812,7 +823,7 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -866,7 +877,7 @@ fn runtime_proof_plan_rejects_relative_runtime_root() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
 
     assert!(prepare_runtime_proof_plan(
@@ -885,7 +896,7 @@ fn runtime_proof_plan_rejects_parent_traversal_runtime_root() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime").join("..").join("escape");
 
@@ -899,7 +910,7 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -918,7 +929,7 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
 
     let other_image = dir.path().join("other-windows.qcow2");
     let other_bytes = b"prime-w8-runtime-proof-other-guest";
-    fs::write(&other_image, other_bytes).unwrap();
+    private_guest_image(&other_image, other_bytes);
     let other = validate_guest_definition(&definition(&other_image, other_bytes)).unwrap();
     let d = prepare_runtime_proof_plan(&other, &root, "app-001", "session-a").unwrap();
     assert_ne!(a.proof_id, d.proof_id);
@@ -937,7 +948,7 @@ fn runtime_observation_hashes_actual_nonempty_evidence_bytes() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -973,7 +984,7 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -1013,7 +1024,7 @@ fn runtime_proof_plan_rejects_noncanonical_forged_guest_digest() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let mut guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -1031,7 +1042,7 @@ fn guest_definition_rejects_symlinked_image_parent() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("guest.qcow2");
     let bytes = b"w8-parent";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let alias = dir.path().join("alias");
     symlink(dir.path(), &alias).unwrap();
     assert!(validate_guest_definition(&definition(&alias.join("guest.qcow2"), bytes)).is_err());
@@ -1048,7 +1059,7 @@ fn runtime_proof_rejects_rehashed_plan_with_missing_mandatory_case() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-forged-incomplete-proof-plan";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -1094,7 +1105,7 @@ fn runtime_proof_rejects_rehashed_overlay_path() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-forged-overlay-proof-plan";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -1144,7 +1155,7 @@ fn runtime_proof_plan_rejects_unvalidated_guest_identity_and_resources() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     fs::create_dir(&root).unwrap();
@@ -1204,7 +1215,7 @@ fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let original = b"prime-w8-runtime-proof-guest";
-    fs::write(&image, original).unwrap();
+    private_guest_image(&image, original);
     let guest = validate_guest_definition(&definition(&image, original)).unwrap();
 
     // Runtime proof authority must bind the bytes still present after admission.
@@ -1224,7 +1235,7 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_image() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-overlay-preoccupation-proof";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     let runtime = root.join("app-001").join("session-a");
@@ -1246,7 +1257,7 @@ fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-agent-socket-proof";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     let runtime = root.join("app-001").join("session-a");
@@ -1281,7 +1292,7 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-overlay-alias-proof";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     let runtime = root.join("app-001").join("session-a");
@@ -1336,7 +1347,7 @@ fn guest_definition_rejects_shared_writable_base_image() {
     let dir = tempdir().unwrap();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-mutable-guest";
-    fs::write(&image, bytes).unwrap();
+    private_guest_image(&image, bytes);
     for unsafe_mode in [0o664, 0o666] {
         fs::set_permissions(&image, fs::Permissions::from_mode(unsafe_mode)).unwrap();
         let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
