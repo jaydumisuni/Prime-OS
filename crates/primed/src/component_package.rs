@@ -100,6 +100,7 @@ impl ComponentTransactionState {
                     && reason.trim() == reason
                     && !reason.chars().any(|c| {
                         c.is_control()
+                            || (c.is_whitespace() && c != ' ')
                             || matches!(
                                 c,
                                 '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}'
@@ -1366,6 +1367,31 @@ mod tests {
                 reason: "disk write interrupted".into()
             })
             .is_ok());
+    }
+
+    #[test]
+    fn transaction_reasons_reject_noncanonical_internal_whitespace() {
+        use ComponentTransactionState as State;
+        for separator in ['\u{2009}', '\u{205F}', '\u{3000}', '\u{00A0}'] {
+            let reason = format!("disk{separator}failure");
+            assert_eq!(
+                State::Applying.advance(State::Failed {
+                    reason: reason.clone(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "noncanonical failure separator accepted: {reason:?}"
+            );
+            assert_eq!(
+                (State::Failed {
+                    reason: reason.clone(),
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore previous package".into(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "noncanonical prior-state separator accepted: {reason:?}"
+            );
+        }
     }
 
     #[test]
