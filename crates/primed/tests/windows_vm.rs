@@ -11,6 +11,27 @@ use std::fs;
 use tempfile::tempdir;
 use uuid::Uuid;
 
+fn private_tempdir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn private_tempdir_is_private_under_worker_umask() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = private_tempdir();
+    assert_eq!(
+        fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
+
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -59,7 +80,7 @@ fn definition(image: &std::path::Path, bytes: &[u8]) -> VmGuestDefinition {
 
 #[test]
 fn guest_definition_requires_exact_digest_bound_regular_image() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-deterministic-guest";
     private_guest_image(&image, bytes);
@@ -74,7 +95,7 @@ fn guest_definition_requires_exact_digest_bound_regular_image() {
 
 #[test]
 fn guest_definition_rejects_empty_digest_matching_image() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("empty-windows.qcow2");
     private_guest_image(&image, b"");
 
@@ -86,7 +107,7 @@ fn guest_definition_rejects_empty_digest_matching_image() {
 #[cfg(unix)]
 #[test]
 fn guest_definition_rejects_hardlinked_base_image_alias() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let outside = dir.path().join("unrelated-host-file");
     let bytes = b"prime-w8-guest-hardlink-alias";
@@ -102,7 +123,7 @@ fn guest_definition_rejects_hardlinked_base_image_alias() {
 fn guest_definition_rejects_shared_writable_image_directory() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let shared = dir.path().join("shared");
     fs::create_dir(&shared).unwrap();
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
@@ -116,7 +137,7 @@ fn guest_definition_rejects_shared_writable_image_directory() {
 
 #[test]
 fn guest_definition_rejects_noncanonical_digest_encoding() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-guest-canonical-digest";
     private_guest_image(&image, bytes);
@@ -136,7 +157,7 @@ fn guest_definition_rejects_noncanonical_digest_encoding() {
 
 #[test]
 fn guest_definition_rejects_noncanonical_guest_identity() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-guest-identity";
     private_guest_image(&image, bytes);
@@ -162,7 +183,7 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
 
 #[test]
 fn qemu_plan_rejects_empty_overlay_image() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -185,7 +206,7 @@ fn qemu_plan_rejects_empty_overlay_image() {
 fn qemu_plan_rejects_shared_writable_runtime_state() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -222,7 +243,7 @@ fn qemu_plan_rejects_shared_writable_runtime_state() {
 fn qemu_plan_rejects_shared_writable_executable() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let qemu = dir.path().join("qemu-test-binary");
     fs::write(&qemu, b"#!/bin/sh\n").unwrap();
     let runtime = dir.path().join("runtime");
@@ -250,7 +271,7 @@ fn qemu_plan_rejects_shared_writable_executable() {
 fn qemu_plan_rejects_hardlinked_executable_alias() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let qemu = dir.path().join("qemu-test-binary");
     let alias = dir.path().join("unrelated-host-executable");
     fs::write(&qemu, b"#!/bin/sh\n").unwrap();
@@ -276,7 +297,7 @@ fn qemu_plan_rejects_hardlinked_executable_alias() {
 
 #[test]
 fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -312,7 +333,7 @@ fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
 fn qemu_plan_pins_executable_before_alias_retarget() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let trusted = dir.path().join("trusted-qemu");
     let replacement = dir.path().join("replacement-qemu");
     for binary in [&trusted, &replacement] {
@@ -347,7 +368,7 @@ fn qemu_plan_pins_executable_before_alias_retarget() {
 
 #[test]
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -384,7 +405,7 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
 
 #[test]
 fn qemu_plan_rejects_overlong_guest_agent_socket() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("s".repeat(100));
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -407,7 +428,7 @@ fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -444,7 +465,7 @@ fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
 
 #[test]
 fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("session-a");
     let other_runtime = dir.path().join("session-b");
     private_runtime_dir(&runtime);
@@ -471,7 +492,7 @@ fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
 #[cfg(unix)]
 #[test]
 fn qemu_plan_rejects_hardlinked_overlay_aliasing_host_file() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let external = dir.path().join("unrelated-host-file");
     fs::write(&external, b"host-data").unwrap();
     let runtime = dir.path().join("runtime");
@@ -494,7 +515,7 @@ fn qemu_plan_rejects_hardlinked_overlay_aliasing_host_file() {
 
 #[test]
 fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
@@ -639,7 +660,7 @@ fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
 fn vm_session_paths_are_application_scoped_and_reject_escape() {
     use primed::windows_vm::vm_session_paths;
 
-    let root = tempdir().unwrap();
+    let root = private_tempdir();
     let a = vm_session_paths(root.path(), "app-001", "session-a").unwrap();
     let b = vm_session_paths(root.path(), "app-002", "session-b").unwrap();
     assert_ne!(a.runtime_dir, b.runtime_dir);
@@ -672,7 +693,7 @@ fn vm_session_paths_rejects_symlinked_root_alias() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::symlink;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let real_root = dir.path().join("real");
     fs::create_dir(&real_root).unwrap();
     let alias = dir.path().join("alias");
@@ -688,7 +709,7 @@ fn vm_session_paths_rejects_existing_symlinked_application_and_session() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::symlink;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let root = dir.path().join("runtime");
     let outside = dir.path().join("outside");
     fs::create_dir(&root).unwrap();
@@ -715,7 +736,7 @@ fn vm_session_paths_rejects_existing_symlinked_application_and_session() {
 fn vm_session_paths_rejects_regular_file_as_root() {
     use primed::windows_vm::vm_session_paths;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let file_root = dir.path().join("not-a-directory");
     fs::write(&file_root, b"not a VM session directory").unwrap();
 
@@ -730,7 +751,7 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
         prepare_runtime_proof_plan, VmRuntimeAdversarialCase, VmRuntimeProofState,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -789,7 +810,7 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
         prepare_runtime_proof_plan, VmRuntimeProofState,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -866,7 +887,7 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
         prepare_runtime_proof_plan, VmRuntimeProofState,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -920,7 +941,7 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
 fn runtime_proof_plan_rejects_relative_runtime_root() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -939,7 +960,7 @@ fn runtime_proof_plan_rejects_relative_runtime_root() {
 fn runtime_proof_plan_rejects_parent_traversal_runtime_root() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -953,7 +974,7 @@ fn runtime_proof_plan_rejects_parent_traversal_runtime_root() {
 fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -991,7 +1012,7 @@ fn runtime_observation_hashes_actual_nonempty_evidence_bytes() {
         create_runtime_proof_observation_from_evidence, prepare_runtime_proof_plan,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -1027,7 +1048,7 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
         VmRuntimeEvidenceEnvelope, WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -1067,7 +1088,7 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
 fn runtime_proof_plan_rejects_noncanonical_forged_guest_digest() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -1085,7 +1106,7 @@ fn runtime_proof_plan_rejects_noncanonical_forged_guest_digest() {
 #[test]
 fn guest_definition_rejects_symlinked_image_parent() {
     use std::os::unix::fs::symlink;
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("guest.qcow2");
     let bytes = b"w8-parent";
     private_guest_image(&image, bytes);
@@ -1102,7 +1123,7 @@ fn runtime_proof_rejects_rehashed_plan_with_missing_mandatory_case() {
         prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-forged-incomplete-proof-plan";
     private_guest_image(&image, bytes);
@@ -1148,7 +1169,7 @@ fn runtime_proof_rejects_rehashed_overlay_path() {
         prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
     };
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-forged-overlay-proof-plan";
     private_guest_image(&image, bytes);
@@ -1198,7 +1219,7 @@ fn runtime_proof_rejects_rehashed_overlay_path() {
 fn runtime_proof_plan_rejects_unvalidated_guest_identity_and_resources() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, bytes);
@@ -1258,7 +1279,7 @@ fn guest_agent_handshake_rejects_noncanonical_expected_identity() {
 fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let original = b"prime-w8-runtime-proof-guest";
     private_guest_image(&image, original);
@@ -1278,7 +1299,7 @@ fn runtime_proof_plan_rejects_guest_image_mutation_after_admission() {
 fn runtime_proof_plan_rejects_preoccupied_overlay_image() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-overlay-preoccupation-proof";
     private_guest_image(&image, bytes);
@@ -1300,7 +1321,7 @@ fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-agent-socket-proof";
     private_guest_image(&image, bytes);
@@ -1335,7 +1356,7 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
     use primed::windows_vm::prepare_runtime_proof_plan;
     use std::os::unix::fs::symlink;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-overlay-alias-proof";
     private_guest_image(&image, bytes);
@@ -1390,7 +1411,7 @@ fn vm_fallback_rejects_revoked_profiles() {
 fn guest_definition_rejects_shared_writable_base_image() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
     let bytes = b"prime-w8-mutable-guest";
     private_guest_image(&image, bytes);
