@@ -110,7 +110,7 @@ impl ComponentTransactionState {
                             || matches!(
                                 c as u32,
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x180B..=0x180F | 0x200B
-                                    | 0x200C | 0x200D | 0x2060 | 0x206A..=0x206F | 0x3164
+                                    | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0001
                                     | 0xE0020..=0xE007F
                             )
@@ -1413,6 +1413,39 @@ mod tests {
                         "invisible Hangul filler accepted: {reason:?}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_invisible_math_operators_and_braille_blank() {
+        use ComponentTransactionState as State;
+        for mark in ['\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}', '\u{2800}'] {
+            for reason in [mark.to_string(), format!("disk{mark}failure")] {
+                for next in [
+                    State::Failed {
+                        reason: reason.clone(),
+                    },
+                    State::RecoveryRequired {
+                        reason: reason.clone(),
+                    },
+                ] {
+                    assert_eq!(
+                        State::Applying.advance(next),
+                        Err(ComponentTransactionTransitionError),
+                        "invisible failure/recovery reason accepted: {reason:?}"
+                    );
+                }
+                assert_eq!(
+                    (State::Failed {
+                        reason: reason.clone()
+                    })
+                    .advance(State::RecoveryRequired {
+                        reason: "restore previous package".into(),
+                    }),
+                    Err(ComponentTransactionTransitionError),
+                    "invisible prior failure reason accepted: {reason:?}"
+                );
             }
         }
     }
