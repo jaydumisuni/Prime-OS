@@ -813,6 +813,20 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime directory is shared-writable",
         ));
     }
+    // A private session directory is insufficient when another principal can
+    // rename it through a shared-writable ancestor. Root-owned sticky temp
+    // directories retain their standard protected-entry exception.
+    for directory in request.runtime_dir.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        let mode = parent.permissions().mode();
+        if !parent.file_type().is_dir()
+            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "runtime directory ancestor is shared-writable or invalid",
+            ));
+        }
+    }
     // The VM overlay must belong to this session, not an unrelated host file.
     // Canonical equality also rejects traversal and symlinked parent directories.
     let runtime = fs::canonicalize(&request.runtime_dir)?;

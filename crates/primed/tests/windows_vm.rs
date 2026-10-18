@@ -240,6 +240,32 @@ fn qemu_plan_rejects_shared_writable_runtime_state() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_shared_writable_runtime_ancestor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let shared = dir.path().join("shared-parent");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    let runtime = shared.join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("directory"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_rejects_shared_writable_executable() {
     use std::os::unix::fs::PermissionsExt;
 
