@@ -284,6 +284,11 @@ pub fn vm_session_paths(
                         "session directory is not a canonical directory",
                     ));
                 }
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(WindowsVmError::InvalidPlan(
+                        "session directory is shared-writable",
+                    ));
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
