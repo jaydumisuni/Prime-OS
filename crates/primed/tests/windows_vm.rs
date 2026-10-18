@@ -268,6 +268,35 @@ fn qemu_plan_rejects_shared_writable_executable() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_shared_writable_executable_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let shared = dir.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    let qemu = shared.join("qemu-test-binary");
+    fs::write(&qemu, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: qemu,
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("directory"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_rejects_hardlinked_executable_alias() {
     use std::os::unix::fs::PermissionsExt;
 

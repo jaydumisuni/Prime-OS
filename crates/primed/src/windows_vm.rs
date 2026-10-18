@@ -750,6 +750,17 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable has a hardlink alias",
         ));
     }
+    for directory in qemu.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        let mode = parent.permissions().mode();
+        if !parent.file_type().is_dir()
+            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "QEMU executable directory is shared-writable or invalid",
+            ));
+        }
+    }
     if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime paths are not absolute",
