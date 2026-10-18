@@ -221,7 +221,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && value.len() <= 128
         && !value.chars().any(char::is_control)
         && !value.chars().any(|c| c.is_whitespace() && c != ' ')
-        && !value.chars().any(|c| matches!(c as u32, 0x00A0 | 0x00AD | 0x034F | 0x180B..=0x180E | 0x2007 | 0x200B | 0x202F | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF))
+        && !value.chars().any(|c| matches!(c as u32, 0x00A0 | 0x00AD | 0x034F | 0x180B..=0x180F | 0x2007 | 0x200B | 0x202F | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF))
         && !value.chars().any(|c| matches!(c as u32, 0x115F | 0x1160 | 0x3164 | 0xFFA0 | 0x2800 | 0xE0000..=0xE007F))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn mongolian_variation_selectors_cannot_spoof_component_text() {
-        for hidden in ['\u{180B}', '\u{180C}', '\u{180D}'] {
+        for hidden in ['\u{180B}', '\u{180C}', '\u{180D}', '\u{180F}'] {
             let mut item = manifest();
             item.version = format!("1.0{hidden}.0");
             assert_eq!(
