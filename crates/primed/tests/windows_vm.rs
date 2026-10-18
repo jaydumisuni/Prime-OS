@@ -799,6 +799,31 @@ fn vm_session_paths_rejects_regular_file_as_root() {
     assert_eq!(fs::read(&file_root).unwrap(), b"not a VM session directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn vm_session_paths_rejects_shared_writable_root_and_ancestor() {
+    use primed::windows_vm::vm_session_paths;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let root = dir.path().join("runtime");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
+
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let parent = dir.path().join("shared");
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+    let nested = parent.join("runtime");
+    fs::create_dir(&nested).unwrap();
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(vm_session_paths(&nested, "app-001", "session-a").is_err());
+
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(vm_session_paths(&nested, "app-001", "session-a").is_ok());
+}
+
 #[test]
 fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     use primed::windows_vm::{

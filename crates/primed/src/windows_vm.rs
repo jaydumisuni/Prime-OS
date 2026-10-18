@@ -243,10 +243,31 @@ pub fn vm_session_paths(
             "session root is a symlink alias",
         ));
     }
-    if !fs::symlink_metadata(root)?.file_type().is_dir() {
+    let root_meta = fs::symlink_metadata(root)?;
+    if !root_meta.file_type().is_dir() {
         return Err(WindowsVmError::InvalidPlan(
             "session root is not a directory",
         ));
+    }
+    // The session root itself must be private. An unrelated local principal
+    // must not be able to substitute its application/session entries.
+    if root_meta.permissions().mode() & 0o022 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root is shared-writable",
+        ));
+    }
+    // A private root is not sufficient when a shared-writable parent can
+    // rename it. Root-owned sticky temp directories protect foreign entries.
+    for directory in root.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        let mode = parent.permissions().mode();
+        if !parent.file_type().is_dir()
+            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "session root ancestor is shared-writable or invalid",
+            ));
+        }
     }
     if !safe_component(application_id) || !safe_component(session_id) {
         return Err(WindowsVmError::InvalidPlan("invalid session identity"));
