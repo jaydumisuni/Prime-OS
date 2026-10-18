@@ -750,7 +750,7 @@ fn vm_session_paths_rejects_symlinked_root_alias() {
 
     let dir = private_tempdir();
     let real_root = dir.path().join("real");
-    fs::create_dir(&real_root).unwrap();
+    private_runtime_dir(&real_root);
     let alias = dir.path().join("alias");
     symlink(&real_root, &alias).unwrap();
 
@@ -767,7 +767,7 @@ fn vm_session_paths_rejects_existing_symlinked_application_and_session() {
     let dir = private_tempdir();
     let root = dir.path().join("runtime");
     let outside = dir.path().join("outside");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     fs::create_dir(&outside).unwrap();
 
     symlink(&outside, root.join("app-001")).unwrap();
@@ -775,7 +775,7 @@ fn vm_session_paths_rejects_existing_symlinked_application_and_session() {
     fs::remove_file(root.join("app-001")).unwrap();
 
     let app = root.join("app-001");
-    fs::create_dir(&app).unwrap();
+    private_runtime_dir(&app);
     symlink(&outside, app.join("session-a")).unwrap();
     assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
     fs::remove_file(app.join("session-a")).unwrap();
@@ -838,7 +838,7 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
 
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     assert_eq!(plan.proof_id.len(), 64);
@@ -896,7 +896,7 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     let make = || {
@@ -973,7 +973,7 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     assert!(create_runtime_proof_observation_from_evidence(
@@ -1060,7 +1060,7 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
 
     let a = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
     let b = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-b").unwrap();
@@ -1069,7 +1069,7 @@ fn runtime_proof_plan_identity_changes_with_guest_application_or_session_scope()
     assert_ne!(a.proof_id, c.proof_id);
 
     let alternate_root = dir.path().join("alternate-runtime");
-    fs::create_dir(&alternate_root).unwrap();
+    private_runtime_dir(&alternate_root);
     let path_scoped =
         prepare_runtime_proof_plan(&guest, &alternate_root, "app-001", "session-a").unwrap();
     assert_ne!(a.proof_id, path_scoped.proof_id);
@@ -1098,7 +1098,7 @@ fn runtime_observation_hashes_actual_nonempty_evidence_bytes() {
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
     let evidence = b"forced-termination:zero-qemu-processes";
 
@@ -1134,7 +1134,7 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     let envelope = VmRuntimeEvidenceEnvelope {
@@ -1209,7 +1209,7 @@ fn runtime_proof_rejects_rehashed_plan_with_missing_mandatory_case() {
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let mut plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     // A consumer can serialize the public plan fields and recompute its SHA-256.
@@ -1255,7 +1255,7 @@ fn runtime_proof_rejects_rehashed_overlay_path() {
     private_guest_image(&image, bytes);
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
-    fs::create_dir(&root).unwrap();
+    private_runtime_dir(&root);
     let mut plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
 
     // A public plan can be mutated and rehashed; the overlay must still belong
@@ -1408,7 +1408,9 @@ fn runtime_proof_plan_rejects_preoccupied_agent_socket() {
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     let runtime = root.join("app-001").join("session-a");
-    fs::create_dir_all(&runtime).unwrap();
+    private_runtime_dir(&root);
+    private_runtime_dir(&root.join("app-001"));
+    private_runtime_dir(&runtime);
     let socket = runtime.join("agent.sock");
     let outside = dir.path().join("unrelated-host-file");
     fs::write(&outside, b"must-remain-intact").unwrap();
@@ -1443,7 +1445,9 @@ fn runtime_proof_plan_rejects_preoccupied_overlay_aliases() {
     let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
     let root = dir.path().join("runtime");
     let runtime = root.join("app-001").join("session-a");
-    fs::create_dir_all(&runtime).unwrap();
+    private_runtime_dir(&root);
+    private_runtime_dir(&root.join("app-001"));
+    private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
     let outside = dir.path().join("outside-host-file");
     fs::write(&outside, b"do-not-touch").unwrap();
