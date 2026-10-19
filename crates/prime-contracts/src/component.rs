@@ -223,7 +223,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && !value.chars().any(|c| c.is_whitespace() && c != ' ')
         && !value.chars().any(|c| matches!(c as u32, 0x00A0 | 0x00AD | 0x034F | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x2007 | 0x200B | 0x202F | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF))
         && !value.chars().any(|c| matches!(c as u32, 0x115F | 0x1160 | 0x3164 | 0xFFA0 | 0x2800 | 0xE0000..=0xE007F))
-        && !value.chars().any(|c| matches!(c as u32, 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A))
+        && !value.chars().any(|c| matches!(c as u32, 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
 }
 
@@ -569,6 +569,40 @@ mod tests {
             assert_eq!(
                 validate_component_manifest(&item),
                 Err(ComponentManifestError::BaseSystemRequirement)
+            );
+        }
+    }
+
+    #[test]
+    fn musical_combining_marks_cannot_spoof_component_text() {
+        for point in (0x1D185..=0x1D18B).chain(0x1D1AA..=0x1D1AD) {
+            let hidden = char::from_u32(point).unwrap();
+            let mut item = manifest();
+            item.version = format!("1.0{hidden}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version)
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{hidden}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{hidden}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement)
+            );
+
+            let mut item = manifest();
+            item.limitations = vec![format!("requires{hidden}restart")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation)
             );
         }
     }
