@@ -1541,3 +1541,41 @@ fn guest_definition_rejects_shared_writable_base_image() {
         assert!(error.to_string().contains("writable"), "{error}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn w8_runtime_directory_requires_private_traversal() {
+    use primed::windows_vm::vm_session_paths;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = private_tempdir();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_ok());
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(vm_session_paths(&root, "app-001", "session-a").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn w8_qemu_plan_rejects_public_guest_state_paths() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    assert!(build_qemu_plan(&request).is_ok());
+    fs::set_permissions(&overlay, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(build_qemu_plan(&request).is_err());
+    fs::set_permissions(&overlay, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(build_qemu_plan(&request).is_err());
+}

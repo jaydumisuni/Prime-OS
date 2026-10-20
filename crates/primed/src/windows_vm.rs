@@ -251,7 +251,7 @@ pub fn vm_session_paths(
     }
     // The session root itself must be private. An unrelated local principal
     // must not be able to substitute its application/session entries.
-    if root_meta.permissions().mode() & 0o022 != 0 {
+    if root_meta.permissions().mode() & 0o077 != 0 {
         return Err(WindowsVmError::InvalidPlan(
             "session root is shared-writable",
         ));
@@ -284,7 +284,7 @@ pub fn vm_session_paths(
                         "session directory is not a canonical directory",
                     ));
                 }
-                if metadata.permissions().mode() & 0o022 != 0 {
+                if metadata.permissions().mode() & 0o077 != 0 {
                     return Err(WindowsVmError::InvalidPlan(
                         "session directory is shared-writable",
                     ));
@@ -823,7 +823,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
-    if overlay_meta.permissions().mode() & 0o022 != 0 {
+    if overlay_meta.permissions().mode() & 0o077 != 0 {
         return Err(WindowsVmError::InvalidPlan("overlay is shared-writable"));
     }
     let runtime_meta = fs::symlink_metadata(&request.runtime_dir)?;
@@ -834,7 +834,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     // Shared-writable session directories permit agent-socket or overlay
     // substitution by another local principal after the plan is issued.
-    if runtime_meta.permissions().mode() & 0o022 != 0 {
+    if runtime_meta.permissions().mode() & 0o077 != 0 {
         return Err(WindowsVmError::InvalidPlan(
             "runtime directory is shared-writable",
         ));
