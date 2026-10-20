@@ -1029,6 +1029,15 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
         })
         .collect();
 
+    // A substituted canonical evidence digest must invalidate the observation
+    // identity, even if the other three case digests remain unique.
+    let mut substituted = observations.clone();
+    substituted[0].evidence_sha256 = digest(b"unrelated-substituted-evidence");
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &substituted),
+        VmRuntimeProofState::Pending
+    );
+
     observations[1].evidence_schema = "prime.windows-vm-runtime-evidence.v0".to_owned();
     assert_eq!(
         evaluate_runtime_proof(&plan, &observations),
