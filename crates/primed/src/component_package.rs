@@ -112,7 +112,7 @@ impl ComponentTransactionState {
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x180B..=0x180F | 0x200B
                                     | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0001
-                                    | 0xE0020..=0xE007F
+                                    | 0xE0020..=0xE007F | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
                     })
             }
@@ -1447,6 +1447,29 @@ mod tests {
                     "invisible prior failure reason accepted: {reason:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_musical_combining_marks() {
+        use ComponentTransactionState as State;
+        for point in (0x1D185..=0x1D18B).chain(0x1D1AA..=0x1D1AD) {
+            let hidden = char::from_u32(point).unwrap();
+            let reason = format!("disk{hidden}failure");
+            assert_eq!(
+                State::Applying.advance(State::Failed {
+                    reason: reason.clone(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "musical combining mark accepted in failure reason: {point:x}"
+            );
+            assert_eq!(
+                (State::Failed { reason }).advance(State::RecoveryRequired {
+                    reason: "restore previous package".into(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "musical combining mark accepted in prior failure reason: {point:x}"
+            );
         }
     }
 
