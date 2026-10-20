@@ -219,6 +219,18 @@ pub fn vm_session_paths(
             "session root is filesystem root",
         ));
     }
+    // The proof plan must never authorize a session root that QEMU would
+    // later parse as extra -drive/-chardev options or cannot represent.
+    // Reject these before producing a proof identity, not only at VM launch.
+    if root.to_str().is_none_or(|value| {
+        value
+            .bytes()
+            .any(|byte| byte == b',' || byte.is_ascii_control())
+    }) {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root contains QEMU option delimiters",
+        ));
+    }
     let root_text = root.as_os_str().to_string_lossy();
     if root_text.ends_with('/') || root_text.contains("//") {
         return Err(WindowsVmError::InvalidPlan("session root is not canonical"));

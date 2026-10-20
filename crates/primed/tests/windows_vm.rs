@@ -1544,6 +1544,22 @@ fn guest_definition_rejects_shared_writable_base_image() {
 
 #[cfg(unix)]
 #[test]
+fn w8_proof_session_root_rejects_qemu_option_delimiters() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = private_tempdir();
+    for unsafe_name in ["runtime,alias", "runtime\nspoof", "runtime\tspoof"] {
+        let root = dir.path().join(unsafe_name);
+        private_runtime_dir(&root);
+        assert!(
+            vm_session_paths(&root, "app-001", "session-a").is_err(),
+            "QEMU option delimiter accepted in root: {unsafe_name:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn w8_runtime_directory_requires_private_traversal() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::PermissionsExt;
