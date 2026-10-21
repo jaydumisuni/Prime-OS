@@ -109,7 +109,7 @@ impl ComponentTransactionState {
                             )
                             || matches!(
                                 c as u32,
-                                0x00AD | 0x034F | 0x115F | 0x1160 | 0x180B..=0x180F | 0x200B
+                                0x00AD | 0x034F | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B
                                     | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0001
                                     | 0xE0020..=0xE007F | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
@@ -1493,6 +1493,35 @@ mod tests {
                 }),
                 Err(ComponentTransactionTransitionError),
                 "musical combining mark accepted in prior failure reason: {point:x}"
+            );
+        }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_khmer_inherent_vowels() {
+        use ComponentTransactionState as State;
+        for hidden in ['\u{17B4}', '\u{17B5}'] {
+            let reason = format!("disk{hidden}failure");
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "Khmer inherent vowel accepted in transaction reason: {reason:?}"
+                );
+            }
+            assert_eq!(
+                (State::Failed { reason }).advance(State::RecoveryRequired {
+                    reason: "restore previous package".into(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "Khmer inherent vowel accepted in prior failure reason"
             );
         }
     }
