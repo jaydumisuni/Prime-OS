@@ -1595,3 +1595,17 @@ fn w8_qemu_plan_rejects_public_guest_state_paths() {
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(build_qemu_plan(&request).is_err());
 }
+
+#[test]
+fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
+    // A digest-valid image path must not be able to introduce QEMU options
+    // or control-character ambiguity into later guest preparation.
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-guest-path-negative";
+    for name in ["guest,if=none.qcow2", "guest\nimage.qcow2"] {
+        let image = dir.path().join(name);
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(error.to_string().contains("delimiter"));
+    }
+}

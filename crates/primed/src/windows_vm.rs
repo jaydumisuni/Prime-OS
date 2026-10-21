@@ -693,6 +693,17 @@ pub fn validate_guest_definition(
     if !image.is_absolute() {
         return Err(WindowsVmError::InvalidGuest("base image is not absolute"));
     }
+    // The guest definition is a later VM-preparation input. Do not admit
+    // QEMU option separators or control characters into its path authority.
+    if definition
+        .base_image
+        .bytes()
+        .any(|byte| byte == b',' || byte.is_ascii_control())
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path contains QEMU option delimiters",
+        ));
+    }
     if fs::canonicalize(&image)? != image {
         return Err(WindowsVmError::InvalidGuest(
             "base image path is not canonical",
