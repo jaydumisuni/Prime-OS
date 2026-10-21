@@ -23,6 +23,7 @@ pub enum PersistentDataPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ComponentDependency {
     pub component_id: String,
     pub minimum_revision: u64,
@@ -30,6 +31,7 @@ pub struct ComponentDependency {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PrimeComponentManifest {
     pub schema: String,
     pub component_id: String,
@@ -807,6 +809,25 @@ mod tests {
             validate_component_manifest(&item),
             Err(ComponentManifestError::Limitation)
         );
+    }
+
+    #[test]
+    fn component_manifest_rejects_undeclared_root_and_dependency_fields() {
+        let exact = serde_json::to_value(manifest()).unwrap();
+        assert!(serde_json::from_value::<PrimeComponentManifest>(exact.clone()).is_ok());
+
+        let mut root = exact.clone();
+        root["undeclared_authority"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<PrimeComponentManifest>(root).is_err());
+
+        let mut nested = exact;
+        nested["dependencies"] = serde_json::json!([{
+            "component_id": "prime.tools",
+            "minimum_revision": 1,
+            "exact_package_digest": null,
+            "undeclared_authority": true
+        }]);
+        assert!(serde_json::from_value::<PrimeComponentManifest>(nested).is_err());
     }
 
     #[test]
