@@ -18,6 +18,7 @@ pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtim
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct GuestAgentHello {
     pub schema: String,
     pub protocol_revision: u64,

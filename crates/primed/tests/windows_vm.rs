@@ -728,6 +728,26 @@ fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
 }
 
 #[test]
+fn guest_agent_handshake_rejects_undeclared_protocol_fields() {
+    use primed::windows_vm::{GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA};
+
+    let mut hello = serde_json::json!({
+        "schema": WINDOWS_VM_AGENT_SCHEMA,
+        "protocol_revision": 1,
+        "guest_id": "windows-fallback-test",
+        "guest_revision": 7,
+        "guest_sha256": "a".repeat(64),
+        "workload_arch": "x86_64"
+    });
+    assert!(serde_json::from_value::<GuestAgentHello>(hello.clone()).is_ok());
+    hello["host_override"] = serde_json::json!({"allow_host_network": true});
+    assert!(
+        serde_json::from_value::<GuestAgentHello>(hello).is_err(),
+        "unknown guest-agent protocol fields must fail closed"
+    );
+}
+
+#[test]
 fn vm_session_paths_are_application_scoped_and_reject_escape() {
     use primed::windows_vm::vm_session_paths;
 
