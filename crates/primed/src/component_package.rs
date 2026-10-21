@@ -188,6 +188,8 @@ pub enum ComponentAdmissionError {
     DependencyDigest(String),
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
+    #[error("rollback for {0} reuses the current package digest across distinct revisions")]
+    RollbackDigestUnchanged(String),
     #[error("component {0} requires explicit persistent-data migration before removal")]
     PersistentDataMigrationRequired(String),
 }
@@ -325,6 +327,11 @@ pub fn plan_component_rollback(
                 component.component_id.clone(),
             ));
         }
+    }
+    if current.package_digest == retained.package_digest {
+        return Err(ComponentAdmissionError::RollbackDigestUnchanged(
+            current.component_id.clone(),
+        ));
     }
 
     Ok(ComponentTransactionPlan {
@@ -1053,6 +1060,24 @@ mod tests {
                 previous_revision: 3,
                 previous_package_digest: DIGEST_B.to_owned(),
             }
+        );
+    }
+
+    #[test]
+    fn rollback_rejects_same_digest_across_distinct_revisions() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: current.package_digest.clone(),
+        };
+        assert!(
+            plan_component_rollback(&current, &retained).is_err(),
+            "distinct package revisions must not share an identical content digest"
         );
     }
 
