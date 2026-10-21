@@ -79,6 +79,22 @@ fn definition(image: &std::path::Path, bytes: &[u8]) -> VmGuestDefinition {
 }
 
 #[test]
+fn guest_definition_rejects_unrecognized_json_fields() {
+    let mut value = serde_json::to_value(VmGuestDefinition {
+        schema: "prime.windows-vm-guest.v1".to_owned(),
+        guest_id: "windows-fallback-test".to_owned(),
+        revision: 1,
+        base_image: "/tmp/guest.qcow2".to_owned(),
+        base_sha256: "0".repeat(64),
+        memory_mib: 2048,
+        vcpus: 2,
+    })
+    .unwrap();
+    value["future_extension"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<VmGuestDefinition>(value).is_err());
+}
+
+#[test]
 fn guest_definition_requires_exact_digest_bound_regular_image() {
     let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");

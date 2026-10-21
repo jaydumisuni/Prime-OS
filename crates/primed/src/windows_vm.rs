@@ -35,6 +35,7 @@ pub struct VmSessionPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct VmGuestDefinition {
     pub schema: String,
     pub guest_id: String,
