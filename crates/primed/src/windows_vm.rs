@@ -16,6 +16,7 @@ pub const WINDOWS_VM_AGENT_SCHEMA: &str = "prime.windows-vm-agent.v1";
 pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proof.v1";
 pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
+pub const WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -410,6 +411,11 @@ pub fn create_runtime_proof_observation_from_evidence(
     zero_residual_state: bool,
     evidence: &[u8],
 ) -> Result<VmRuntimeProofObservation, WindowsVmError> {
+    if evidence.len() > WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof evidence exceeds size limit",
+        ));
+    }
     let envelope = VmRuntimeEvidenceEnvelope {
         schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
         proof_id: plan.proof_id.clone(),
@@ -446,6 +452,11 @@ pub fn create_runtime_proof_observation_from_envelope(
     if envelope.evidence.is_empty() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence is empty",
+        ));
+    }
+    if envelope.evidence.len() > WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime proof evidence exceeds size limit",
         ));
     }
     let evidence_sha256 = format!("{:x}", Sha256::digest(&envelope.evidence));

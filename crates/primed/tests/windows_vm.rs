@@ -1645,3 +1645,57 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
         assert!(error.to_string().contains("delimiter"));
     }
 }
+
+#[test]
+fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_envelope,
+        create_runtime_proof_observation_from_evidence, prepare_runtime_proof_plan,
+        VmRuntimeEvidenceEnvelope, WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA,
+    };
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let guest_bytes = b"prime-w8-evidence-limit-guest";
+    private_guest_image(&image, guest_bytes);
+    let guest = validate_guest_definition(&definition(&image, guest_bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+    let case = plan.required_cases[0].clone();
+    let evidence = vec![b'x'; 1024 * 1024];
+
+    assert!(create_runtime_proof_observation_from_evidence(
+        &plan,
+        case.clone(),
+        true,
+        true,
+        &evidence
+    )
+    .is_ok());
+    let mut oversized = evidence.clone();
+    oversized.push(b'x');
+    assert!(create_runtime_proof_observation_from_evidence(
+        &plan,
+        case.clone(),
+        true,
+        true,
+        &oversized
+    )
+    .is_err());
+
+    let mut envelope = VmRuntimeEvidenceEnvelope {
+        schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
+        proof_id: plan.proof_id.clone(),
+        case,
+        guest_id: plan.guest_id.clone(),
+        guest_revision: plan.guest_revision,
+        guest_sha256: plan.guest_sha256.clone(),
+        application_id: plan.application_id.clone(),
+        session_id: plan.session_id.clone(),
+        evidence,
+    };
+    assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_ok());
+    envelope.evidence.push(b'x');
+    assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err());
+}
