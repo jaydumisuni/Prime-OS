@@ -550,12 +550,28 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    before.is_file()
+        && after.is_file()
+        && before.nlink() == 1
+        && after.nlink() == 1
+        && before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.len() == after.len()
+        && before.mtime() == after.mtime()
+        && before.mtime_nsec() == after.mtime_nsec()
+        && before.ctime() == after.ctime()
+        && before.ctime_nsec() == after.ctime_nsec()
+}
+
 fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
     // Pin a regular, unaliased inode for hashing. A pathname checked by
     // validate_package_path can be swapped before File::open; O_NOFOLLOW
     // and O_NONBLOCK prevent a symlink escape or blocking FIFO substitution.
     #[cfg(unix)]
-    let mut file = {
+    let (mut file, opened_metadata) = {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let file = fs::OpenOptions::new()
             .read(true)
@@ -578,7 +594,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         {
             return Err(ComponentAdmissionError::UnsafePackagePath);
         }
-        file
+        (file, opened)
     };
     #[cfg(not(unix))]
     let mut file = fs::File::open(path)?;
@@ -590,6 +606,22 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
             break;
         }
         hasher.update(&buffer[..read]);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // A pinned descriptor prevents path redirection, but does not stop
+        // another writer mutating the same inode while it is being hashed.
+        // Reject such reads rather than admitting a mixed-time digest.
+        let after = file.metadata()?;
+        let named = fs::symlink_metadata(path)?;
+        if !stable_package_metadata(&opened_metadata, &after)
+            || named.dev() != opened_metadata.dev()
+            || named.ino() != opened_metadata.ino()
+            || fs::canonicalize(path)? != path
+        {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
     }
     let digest = hasher.finalize();
     let mut encoded = String::with_capacity(7 + digest.len() * 2);
@@ -1893,6 +1925,23 @@ mod tests {
             sha256_file(&package).unwrap(),
             package_digest(b"p2-package-hasher")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_hash_metadata_guard_detects_in_place_mutation() {
+        let (_dir, package) = write_package(b"p2-stable-inode");
+        let before = fs::metadata(&package).unwrap();
+        assert!(stable_package_metadata(
+            &before,
+            &fs::metadata(&package).unwrap()
+        ));
+        // Same inode and canonical path do not imply stable bytes.
+        fs::write(&package, b"p2-mutated-in-place-with-a-different-length").unwrap();
+        let after = fs::metadata(&package).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(before.ino(), after.ino());
+        assert!(!stable_package_metadata(&before, &after));
     }
 
     #[test]
