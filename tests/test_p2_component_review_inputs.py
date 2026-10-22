@@ -66,6 +66,23 @@ def test_rejects_modified_input_without_changing_git(tmp_path: Path) -> None:
     assert git(root, "rev-parse", "HEAD") == head
 
 
+def test_rejects_staged_input_even_when_worktree_bytes_match_head(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    file = root / relative
+    committed = file.read_bytes()
+    file.write_bytes(b"staged alternate component review input\n")
+    git(root, "add", "--", relative)
+    file.write_bytes(committed)
+    assert file.read_bytes() == committed
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "local changes" in str(error)
+    else:
+        raise AssertionError("staged index substitution admitted as committed review input")
+
+
 def test_rejects_symlink_substitution(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     file = root / module.INPUTS[-1]
