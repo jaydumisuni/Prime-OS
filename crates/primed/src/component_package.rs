@@ -551,6 +551,36 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
+    // Pin a regular, unaliased inode for hashing. A pathname checked by
+    // validate_package_path can be swapped before File::open; O_NOFOLLOW
+    // and O_NONBLOCK prevent a symlink escape or blocking FIFO substitution.
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|error| {
+                if error.raw_os_error() == Some(libc::ELOOP) {
+                    ComponentAdmissionError::UnsafePackagePath
+                } else {
+                    ComponentAdmissionError::Io(error)
+                }
+            })?;
+        let opened = file.metadata()?;
+        let named = fs::symlink_metadata(path)?;
+        if !opened.is_file()
+            || opened.nlink() != 1
+            || opened.dev() != named.dev()
+            || opened.ino() != named.ino()
+            || fs::canonicalize(path)? != path
+        {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
+        file
+    };
+    #[cfg(not(unix))]
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -1833,6 +1863,36 @@ mod tests {
             ),
             Ok(ComponentAdmissionOutcome::Ready(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_hasher_rejects_symlink_and_directory_aliases() {
+        use std::os::unix::fs::symlink;
+        let (dir, package) = write_package(b"p2-package-hasher");
+        let alias = dir.path().join("alias.primepkg");
+        symlink(&package, &alias).unwrap();
+        assert!(matches!(
+            sha256_file(&alias),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        assert!(matches!(
+            sha256_file(dir.path()),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        // A substituted FIFO must be rejected without blocking on a writer.
+        use std::os::unix::ffi::OsStrExt;
+        let fifo = dir.path().join("blocking-alias.primepkg");
+        let fifo_name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+        assert!(matches!(
+            sha256_file(&fifo),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        assert_eq!(
+            sha256_file(&package).unwrap(),
+            package_digest(b"p2-package-hasher")
+        );
     }
 
     #[test]
