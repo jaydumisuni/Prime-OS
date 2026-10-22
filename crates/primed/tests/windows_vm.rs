@@ -1221,6 +1221,9 @@ fn runtime_evidence_envelope_rejects_cross_case_and_cross_session_replay() {
         evidence: b"concurrent-session-isolation:clean".to_vec(),
     };
     create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).unwrap();
+    let mut unexpected = serde_json::to_value(&envelope).unwrap();
+    unexpected["authority"] = serde_json::json!("guest-attested");
+    assert!(serde_json::from_value::<VmRuntimeEvidenceEnvelope>(unexpected).is_err());
 
     let mut wrong_session = envelope.clone();
     wrong_session.session_id = "session-b".to_owned();
