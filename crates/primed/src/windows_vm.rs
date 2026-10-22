@@ -96,6 +96,7 @@ pub struct VmRuntimeProofPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VmRuntimeProofObservation {
     pub proof_id: String,
     pub case: VmRuntimeAdversarialCase,

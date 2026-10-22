@@ -1702,3 +1702,31 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     envelope.evidence.push(b'x');
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err());
 }
+
+#[test]
+fn runtime_observation_rejects_unrecognized_authority_fields() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, prepare_runtime_proof_plan,
+        VmRuntimeProofObservation,
+    };
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-observation-admission";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+    let observation = create_runtime_proof_observation_from_evidence(
+        &plan,
+        plan.required_cases[0].clone(),
+        true,
+        true,
+        b"host-observed-case",
+    )
+    .unwrap();
+    let mut serialized = serde_json::to_value(&observation).unwrap();
+    serialized["authority"] = serde_json::json!("guest-attested");
+    assert!(serde_json::from_value::<VmRuntimeProofObservation>(serialized).is_err());
+}
