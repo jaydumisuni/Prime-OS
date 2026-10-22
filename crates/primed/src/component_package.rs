@@ -188,6 +188,8 @@ pub enum ComponentAdmissionError {
     DependencyDigest(String),
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
+    #[error("update for {0} reuses the installed package digest across distinct revisions")]
+    UpdateDigestUnchanged(String),
     #[error("rollback for {0} reuses the current package digest across distinct revisions")]
     RollbackDigestUnchanged(String),
     #[error("component {0} requires explicit persistent-data migration before removal")]
@@ -230,10 +232,17 @@ pub fn plan_component_transaction(
 
     let kind = match current {
         None => ComponentTransactionKind::Install,
-        Some(current) if package.revision > current.revision => ComponentTransactionKind::Update {
-            previous_revision: current.revision,
-            previous_package_digest: current.package_digest.clone(),
-        },
+        Some(current) if package.revision > current.revision => {
+            if package.package_digest == current.package_digest {
+                return Err(ComponentAdmissionError::UpdateDigestUnchanged(
+                    package.component_id.clone(),
+                ));
+            }
+            ComponentTransactionKind::Update {
+                previous_revision: current.revision,
+                previous_package_digest: current.package_digest.clone(),
+            }
+        }
         Some(_) => {
             return Err(ComponentAdmissionError::RevisionNotAdvanced(
                 package.component_id.clone(),
@@ -1002,6 +1011,27 @@ mod tests {
                 previous_package_digest: DIGEST_B.to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn update_rejects_same_package_digest_across_distinct_revisions() {
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/component.primepkg"),
+            package_digest: DIGEST_A.to_owned(),
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let current = [InstalledComponent {
+            component_id: package.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        }];
+        assert!(matches!(
+            plan_component_transaction(&package, &current),
+            Err(ComponentAdmissionError::UpdateDigestUnchanged(id)) if id == package.component_id
+        ));
     }
 
     #[test]
