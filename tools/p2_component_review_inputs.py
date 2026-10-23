@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -43,6 +44,24 @@ def require_private_directory(directory: Path) -> None:
         raise ReviewInputError(f"non-directory or shared-writable review path: {directory}")
 
 
+
+def require_protected_ancestors(repo: Path) -> None:
+    """Reject replaceable worktree ancestors; permit owner-protected sticky /tmp."""
+    child = repo
+    for parent in repo.parents:
+        child_mode = child.lstat()
+        parent_mode = parent.lstat()
+        if not stat.S_ISDIR(parent_mode.st_mode):
+            raise ReviewInputError(f"non-directory review ancestor: {parent}")
+        if parent_mode.st_mode & 0o022:
+            sticky = bool(parent_mode.st_mode & stat.S_ISVTX)
+            trusted_parent = parent_mode.st_uid in (0, os.geteuid())
+            protected_child = child_mode.st_uid == os.geteuid()
+            if not (sticky and trusted_parent and protected_child):
+                raise ReviewInputError(f"shared-writable review ancestor: {parent}")
+        child = parent
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -51,6 +70,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if not repo.is_absolute() or repo.resolve() != repo:
         raise ReviewInputError("review workspace must be a canonical absolute worktree root")
     require_private_directory(repo)
+    require_protected_ancestors(repo)
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")

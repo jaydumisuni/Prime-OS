@@ -195,3 +195,21 @@ def test_rejects_world_writable_input_parent(tmp_path: Path) -> None:
         assert "writable" in str(error)
     else:
         raise AssertionError("world-writable review input parent admitted")
+
+
+def test_rejects_shared_writable_ancestor_above_review_root(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = tmp_path / "shared-parent"
+    parent.mkdir()
+    moved = parent / "p2"
+    root.rename(moved)
+    parent.chmod(0o777)
+    try:
+        try:
+            module.build_manifest(moved, head)
+        except module.ReviewInputError as error:
+            assert "writable" in str(error)
+        else:
+            raise AssertionError("shared-writable ancestor admitted as review authority")
+    finally:
+        parent.chmod(0o755)
