@@ -1046,7 +1046,9 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
     let device = device
         .parse::<u16>()
         .map_err(|_| WindowsVmError::InvalidUsb(raw.to_owned()))?;
-    if bus == 0 || device == 0 {
+    // USB device addresses are seven-bit (1..=127). Do not produce a QEMU
+    // hostaddr plan for a syntactically valid but impossible device address.
+    if bus == 0 || !(1..=127).contains(&device) {
         return Err(WindowsVmError::InvalidUsb(raw.to_owned()));
     }
     Ok((bus, device))
@@ -1055,6 +1057,23 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
 #[cfg(test)]
 mod guest_image_identity_tests {
     use super::*;
+
+    #[test]
+    fn usb_node_rejects_impossible_device_addresses() {
+        assert_eq!(
+            parse_usb_node(Path::new("/dev/bus/usb/001/127")).unwrap(),
+            (1, 127)
+        );
+        for invalid in [
+            "/dev/bus/usb/001/000",
+            "/dev/bus/usb/001/128",
+            "/dev/bus/usb/001/255",
+            "/dev/bus/usb/001/999",
+        ] {
+            assert!(parse_usb_node(Path::new(invalid)).is_err(), "{invalid}");
+        }
+    }
+
     use std::os::unix::fs::PermissionsExt;
 
     #[test]

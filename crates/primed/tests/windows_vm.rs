@@ -618,6 +618,30 @@ fn qemu_plan_accepts_only_strict_w7_usb_nodes() {
     assert!(denied.to_string().contains("USB"));
 }
 
+#[test]
+fn qemu_plan_rejects_out_of_range_usb_device_addresses() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    // USB device addresses are seven-bit values (1..=127). A syntactically
+    // valid three-digit path is not proof that QEMU can address that device.
+    for device in [128, 255, 999] {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![format!("/dev/bus/usb/001/{device:03}").into()],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("USB"), "{error}");
+    }
+}
+
 fn vm_profile(backend: ExecutionBackend) -> ApplicationProfile {
     ApplicationProfile {
         schema: APPLICATION_PROFILE_SCHEMA.to_owned(),
