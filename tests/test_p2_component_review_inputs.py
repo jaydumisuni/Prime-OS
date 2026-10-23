@@ -213,3 +213,26 @@ def test_rejects_shared_writable_ancestor_above_review_root(tmp_path: Path) -> N
             raise AssertionError("shared-writable ancestor admitted as review authority")
     finally:
         parent.chmod(0o755)
+
+
+def test_ambient_git_index_override_cannot_hide_staged_review_input(tmp_path: Path) -> None:
+    import os
+
+    root, head = sample_repo(tmp_path)
+    clean_index = tmp_path / "clean-index"
+    clean_index.write_bytes((root / ".git" / "index").read_bytes())
+    relative = module.INPUTS[0]
+    file = root / relative
+    committed = file.read_bytes()
+    file.write_bytes(b"staged hostile component input\n")
+    git(root, "add", "--", relative)
+    file.write_bytes(committed)
+
+    env = os.environ.copy()
+    env["GIT_INDEX_FILE"] = str(clean_index)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(root), "--expected-head", head],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode != 0
+    assert "local changes" in result.stderr

@@ -29,8 +29,14 @@ class ReviewInputError(Exception):
 
 
 def git(repo: Path, *args: str) -> bytes:
+    # Ambient Git overrides may substitute the index, object database, or
+    # worktree and falsely certify a different candidate as this exact HEAD.
+    # Trust only the repository resolved from the explicit -C path.
+    trusted_env = {key: value for key, value in os.environ.items()
+                   if not key.startswith("GIT_")}
     result = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, check=False
+        ["git", "-C", str(repo), *args], capture_output=True, check=False,
+        env=trusted_env,
     )
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
