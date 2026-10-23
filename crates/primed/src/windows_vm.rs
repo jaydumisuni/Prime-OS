@@ -681,6 +681,35 @@ pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVm
     Ok(())
 }
 
+// The digest must describe the same inode that was admitted and is still
+// reachable at the declared guest-image pathname after the final read.
+fn verify_guest_image_stable(
+    image: &Path,
+    opened: &fs::File,
+    admitted: &fs::Metadata,
+) -> Result<(), WindowsVmError> {
+    let after_read = opened.metadata()?;
+    let after_path = fs::symlink_metadata(image)?;
+    let same_identity = |current: &fs::Metadata| {
+        current.file_type().is_file()
+            && current.dev() == admitted.dev()
+            && current.ino() == admitted.ino()
+            && current.nlink() == 1
+            && current.len() == admitted.len()
+            && current.mtime() == admitted.mtime()
+            && current.mtime_nsec() == admitted.mtime_nsec()
+            && current.ctime() == admitted.ctime()
+            && current.ctime_nsec() == admitted.ctime_nsec()
+            && current.mode() == admitted.mode()
+    };
+    if !same_identity(&after_read) || !same_identity(&after_path) {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image changed during digest verification",
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_guest_definition(
     definition: &VmGuestDefinition,
 ) -> Result<ValidatedVmGuest, WindowsVmError> {
@@ -777,6 +806,7 @@ pub fn validate_guest_definition(
         }
         hasher.update(&buffer[..read]);
     }
+    verify_guest_image_stable(&image, &file, &metadata)?;
     let actual = format!("{:x}", hasher.finalize());
     if actual != definition.base_sha256 {
         return Err(WindowsVmError::GuestDigestMismatch);
@@ -999,4 +1029,36 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
         return Err(WindowsVmError::InvalidUsb(raw.to_owned()));
     }
     Ok((bus, device))
+}
+
+#[cfg(test)]
+mod guest_image_identity_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn image_path_replacement_is_not_admitted_after_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("guest.qcow2");
+        let replaced = dir.path().join("original.qcow2");
+        fs::write(&image, b"identical-guest-bytes").unwrap();
+        fs::set_permissions(&image, fs::Permissions::from_mode(0o600)).unwrap();
+        let opened = fs::File::open(&image).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::rename(&image, &replaced).unwrap();
+        fs::write(&image, b"identical-guest-bytes").unwrap();
+        fs::set_permissions(&image, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(verify_guest_image_stable(&image, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn image_in_place_change_is_not_admitted_after_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("guest.qcow2");
+        fs::write(&image, b"original-guest").unwrap();
+        let opened = fs::File::open(&image).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::write(&image, b"changed-guest-with-new-length").unwrap();
+        assert!(verify_guest_image_stable(&image, &opened, &admitted).is_err());
+    }
 }
