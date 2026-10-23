@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import stat
 import sys
 
 INPUTS = (
@@ -52,7 +53,18 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if git(root, "status", "--porcelain", "--", relative).strip():
             raise ReviewInputError(f"review input has local changes: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
+        before = file.lstat()
         working = file.read_bytes()
+        after = file.lstat()
+        identity = lambda state: (
+            state.st_dev, state.st_ino, state.st_size,
+            state.st_mtime_ns, state.st_ctime_ns,
+        )
+        if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
+                or identity(before) != identity(after)):
+            raise ReviewInputError(f"review input changed during read: {relative}")
+        if git(root, "status", "--porcelain", "--", relative).strip():
+            raise ReviewInputError(f"review input changed during read: {relative}")
         if committed != working:
             raise ReviewInputError(f"review input differs from HEAD: {relative}")
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()

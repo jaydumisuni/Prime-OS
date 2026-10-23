@@ -108,3 +108,40 @@ def test_cli_fails_closed_and_emits_no_manifest_on_head_mismatch(tmp_path: Path)
     assert run.returncode != 0
     assert not run.stdout.strip()
     assert "HEAD changed" in run.stderr
+
+
+def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    def replaced_read(file: Path) -> bytes:
+        content = original_read(file)
+        if file == target:
+            file.unlink()
+            file.write_bytes(content)
+        return content
+    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed during read" in str(error)
+    else:
+        raise AssertionError("same-byte inode replacement admitted")
+
+
+def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    def rewritten_read(file: Path) -> bytes:
+        content = original_read(file)
+        if file == target:
+            file.write_bytes(content)
+        return content
+    monkeypatch.setattr(Path, "read_bytes", rewritten_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed during read" in str(error)
+    else:
+        raise AssertionError("same-byte in-place rewrite admitted")
