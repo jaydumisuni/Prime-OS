@@ -1046,9 +1046,9 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
     let device = device
         .parse::<u16>()
         .map_err(|_| WindowsVmError::InvalidUsb(raw.to_owned()))?;
-    // USB device addresses are seven-bit (1..=127). Do not produce a QEMU
-    // hostaddr plan for a syntactically valid but impossible device address.
-    if bus == 0 || !(1..=127).contains(&device) {
+    // Linux USB bus numbers are allocated in 1..=255; device addresses are
+    // seven-bit (1..=127). Reject impossible QEMU hostbus/hostaddr pairs.
+    if !(1..=255).contains(&bus) || !(1..=127).contains(&device) {
         return Err(WindowsVmError::InvalidUsb(raw.to_owned()));
     }
     Ok((bus, device))
@@ -1069,6 +1069,22 @@ mod guest_image_identity_tests {
             "/dev/bus/usb/001/128",
             "/dev/bus/usb/001/255",
             "/dev/bus/usb/001/999",
+        ] {
+            assert!(parse_usb_node(Path::new(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn usb_node_rejects_impossible_bus_numbers() {
+        // Linux USB bus IDs are allocated in the 1..=255 range.
+        assert_eq!(
+            parse_usb_node(Path::new("/dev/bus/usb/255/001")).unwrap(),
+            (255, 1)
+        );
+        for invalid in [
+            "/dev/bus/usb/000/001",
+            "/dev/bus/usb/256/001",
+            "/dev/bus/usb/999/001",
         ] {
             assert!(parse_usb_node(Path::new(invalid)).is_err(), "{invalid}");
         }
