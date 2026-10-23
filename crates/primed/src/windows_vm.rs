@@ -689,6 +689,27 @@ fn verify_guest_image_stable(
     admitted: &fs::Metadata,
 ) -> Result<(), WindowsVmError> {
     let after_read = opened.metadata()?;
+    // A parent may be replaced with a symlink to the same inode while the
+    // digest is being read. Recheck pathname and ancestor admission.
+    if fs::canonicalize(image)? != image {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image parent changed during digest verification",
+        ));
+    }
+    for directory in image.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        if !parent.file_type().is_dir() || parent.file_type().is_symlink() {
+            return Err(WindowsVmError::InvalidGuest(
+                "base image parent changed during digest verification",
+            ));
+        }
+        let mode = parent.permissions().mode();
+        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+            return Err(WindowsVmError::InvalidGuest(
+                "base image parent became shared-writable during digest verification",
+            ));
+        }
+    }
     let after_path = fs::symlink_metadata(image)?;
     let same_identity = |current: &fs::Metadata| {
         current.file_type().is_file()
@@ -1048,6 +1069,24 @@ mod guest_image_identity_tests {
         fs::rename(&image, &replaced).unwrap();
         fs::write(&image, b"identical-guest-bytes").unwrap();
         fs::set_permissions(&image, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(verify_guest_image_stable(&image, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn image_parent_symlink_swap_is_not_admitted_after_open() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("images");
+        let relocated = dir.path().join("relocated");
+        fs::create_dir(&parent).unwrap();
+        let image = parent.join("guest.qcow2");
+        fs::write(&image, b"identical-guest-bytes").unwrap();
+        let opened = fs::File::open(&image).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::rename(&parent, &relocated).unwrap();
+        symlink(&relocated, &parent).unwrap();
+        // The pathname still resolves to the original inode and bytes,
+        // but its admitted real-directory ancestry has been replaced.
         assert!(verify_guest_image_stable(&image, &opened, &admitted).is_err());
     }
 
