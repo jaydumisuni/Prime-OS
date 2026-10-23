@@ -843,6 +843,17 @@ pub fn validate_guest_definition(
     })
 }
 
+// A private mode is not ownership: a different local principal can modify
+// its own 0600 file or 0700 directory after this worker has inspected it.
+fn validate_runtime_owner(owner_uid: u32, worker_uid: u32) -> Result<(), WindowsVmError> {
+    if owner_uid != worker_uid {
+        return Err(WindowsVmError::InvalidPlan(
+            "VM runtime state has a foreign owner",
+        ));
+    }
+    Ok(())
+}
+
 pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmError> {
     if !request.qemu_binary.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
@@ -898,10 +909,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime path contains QEMU option delimiters",
         ));
     }
+    // Query the effective identity that will own the session, not the
+    // environment's spoofable UID text. No privilege or identity is changed.
+    let worker_uid = unsafe { libc::geteuid() };
     let overlay_meta = fs::symlink_metadata(&request.overlay_image)?;
     if overlay_meta.file_type().is_symlink() || !overlay_meta.file_type().is_file() {
         return Err(WindowsVmError::InvalidPlan("overlay is not a regular file"));
     }
+    validate_runtime_owner(overlay_meta.uid(), worker_uid)?;
     // A zero-byte overlay cannot contain a usable qcow2 header.
     if overlay_meta.len() == 0 {
         return Err(WindowsVmError::InvalidPlan("overlay image is empty"));
@@ -952,6 +967,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime directory is not a regular directory",
         ));
     }
+    validate_runtime_owner(runtime_meta.uid(), worker_uid)?;
     // Shared-writable session directories permit agent-socket or overlay
     // substitution by another local principal after the plan is issued.
     if runtime_meta.permissions().mode() & 0o077 != 0 {
@@ -1090,6 +1106,25 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
         return Err(WindowsVmError::InvalidUsb(raw.to_owned()));
     }
     Ok((bus, device))
+}
+
+#[cfg(test)]
+mod vm_runtime_owner_tests {
+    use super::*;
+
+    #[test]
+    fn foreign_owned_runtime_state_is_not_admitted_by_private_mode_alone() {
+        // The adversarial owner can set 0700/0600 on its own inode; modes
+        // alone therefore cannot establish this worker's session custody.
+        let worker_uid = 1000;
+        assert!(validate_runtime_owner(worker_uid, worker_uid).is_ok());
+        for foreign_uid in [0, 1001, 65534] {
+            assert!(
+                validate_runtime_owner(foreign_uid, worker_uid).is_err(),
+                "foreign owner {foreign_uid} was admitted"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

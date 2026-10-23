@@ -726,6 +726,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "prime-contracts",
  "prime-hardware",
  "prime-storage",
