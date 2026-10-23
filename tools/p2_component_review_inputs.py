@@ -39,6 +39,10 @@ def git(repo: Path, *args: str) -> bytes:
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
+    # The caller's path itself is review authority: resolving an alias and
+    # comparing only resolved paths would silently accept symlinked roots.
+    if not repo.is_absolute() or repo.resolve() != repo:
+        raise ReviewInputError("review workspace must be a canonical absolute worktree root")
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
@@ -54,8 +58,12 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"review input has local changes: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
         before = file.lstat()
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         working = file.read_bytes()
         after = file.lstat()
+        if after.st_nlink != 1:
+            raise ReviewInputError(f"hardlinked review input changed during read: {relative}")
         identity = lambda state: (
             state.st_dev, state.st_ino, state.st_size,
             state.st_mtime_ns, state.st_ctime_ns,

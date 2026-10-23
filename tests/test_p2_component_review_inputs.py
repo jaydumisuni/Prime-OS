@@ -99,6 +99,33 @@ def test_rejects_symlink_substitution(tmp_path: Path) -> None:
         raise AssertionError("symlink substitution admitted")
 
 
+def test_rejects_symlinked_worktree_root_even_when_git_head_matches(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    alias = tmp_path / "aliased-worktree"
+    alias.symlink_to(root, target_is_directory=True)
+    try:
+        module.build_manifest(alias, head)
+    except module.ReviewInputError as error:
+        assert "canonical" in str(error)
+    else:
+        raise AssertionError("symlinked worktree root admitted as review authority")
+
+
+def test_rejects_hardlinked_review_input_with_identical_bytes(tmp_path: Path) -> None:
+    import os
+    root, head = sample_repo(tmp_path)
+    file = root / module.INPUTS[-1]
+    outside = tmp_path / "outside-review-input"
+    os.link(file, outside)
+    assert outside.read_bytes() == file.read_bytes()
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "hardlink" in str(error)
+    else:
+        raise AssertionError("hardlinked review input admitted as isolated authority")
+
+
 def test_cli_fails_closed_and_emits_no_manifest_on_head_mismatch(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     run = subprocess.run(
