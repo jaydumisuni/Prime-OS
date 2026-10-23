@@ -236,3 +236,61 @@ def test_ambient_git_index_override_cannot_hide_staged_review_input(tmp_path: Pa
     )
     assert result.returncode != 0
     assert "local changes" in result.stderr
+
+
+def test_rejects_group_writable_review_input_file(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    file = root / module.INPUTS[-1]
+    file.chmod(0o664)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "writable" in str(error)
+    else:
+        raise AssertionError("group-writable review input admitted")
+
+
+def test_rejects_foreign_owned_input_parent_even_if_not_shared_writable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    root, head = sample_repo(tmp_path)
+    target = root / "crates/primed/src"
+    original_lstat = Path.lstat
+
+    def foreign_lstat(path: Path, *args, **kwargs):
+        state = original_lstat(path, *args, **kwargs)
+        if path == target:
+            return SimpleNamespace(st_mode=state.st_mode, st_uid=module.os.geteuid() + 1000)
+        return state
+
+    monkeypatch.setattr(Path, "lstat", foreign_lstat)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "owner" in str(error)
+    else:
+        raise AssertionError("foreign-owned input parent admitted")
+
+
+def test_rejects_foreign_owned_nonwritable_ancestor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    root, head = sample_repo(tmp_path)
+    target = root.parent
+    original_lstat = Path.lstat
+
+    def foreign_lstat(path: Path, *args, **kwargs):
+        state = original_lstat(path, *args, **kwargs)
+        if path == target:
+            return SimpleNamespace(st_mode=state.st_mode, st_uid=module.os.geteuid() + 1000)
+        return state
+
+    monkeypatch.setattr(Path, "lstat", foreign_lstat)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "owner" in str(error)
+    else:
+        raise AssertionError("foreign-owned ancestor admitted")

@@ -45,9 +45,11 @@ def git(repo: Path, *args: str) -> bytes:
 
 def require_private_directory(directory: Path) -> None:
     """A review input cannot derive authority through a shared-writable parent."""
-    mode = directory.lstat().st_mode
-    if not stat.S_ISDIR(mode) or mode & 0o022:
+    state = directory.lstat()
+    if not stat.S_ISDIR(state.st_mode) or state.st_mode & 0o022:
         raise ReviewInputError(f"non-directory or shared-writable review path: {directory}")
+    if state.st_uid not in (0, os.geteuid()):
+        raise ReviewInputError(f"untrusted review directory owner: {directory}")
 
 
 
@@ -59,6 +61,8 @@ def require_protected_ancestors(repo: Path) -> None:
         parent_mode = parent.lstat()
         if not stat.S_ISDIR(parent_mode.st_mode):
             raise ReviewInputError(f"non-directory review ancestor: {parent}")
+        if parent_mode.st_uid not in (0, os.geteuid()):
+            raise ReviewInputError(f"untrusted review ancestor owner: {parent}")
         if parent_mode.st_mode & 0o022:
             sticky = bool(parent_mode.st_mode & stat.S_ISVTX)
             trusted_parent = parent_mode.st_uid in (0, os.geteuid())
@@ -98,6 +102,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         before = file.lstat()
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
+        if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
+            raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
         working = file.read_bytes()
         directory = root
         require_private_directory(directory)
@@ -107,6 +113,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         after = file.lstat()
         if after.st_nlink != 1:
             raise ReviewInputError(f"hardlinked review input changed during read: {relative}")
+        if after.st_uid not in (0, os.geteuid()) or after.st_mode & 0o022:
+            raise ReviewInputError(f"review input owner or permissions changed during read: {relative}")
         identity = lambda state: (
             state.st_dev, state.st_ino, state.st_size,
             state.st_mtime_ns, state.st_ctime_ns,
