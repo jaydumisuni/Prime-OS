@@ -921,14 +921,25 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         ));
     }
     let mut overlay_file = fs::File::open(&request.overlay_image)?;
-    let mut qcow2_prefix = [0u8; 8];
-    overlay_file.read_exact(&mut qcow2_prefix)?;
+    let mut qcow2_prefix = [0u8; 104];
+    overlay_file.read_exact(&mut qcow2_prefix[..8])?;
     let qcow2_version = u32::from_be_bytes(qcow2_prefix[4..8].try_into().unwrap());
     if &qcow2_prefix[..4] != b"QFI\xfb"
         || !matches!(qcow2_version, 2 | 3)
         || (qcow2_version == 3 && overlay_meta.len() < 104)
     {
         return Err(WindowsVmError::InvalidPlan("invalid qcow2 overlay header"));
+    }
+    if qcow2_version == 3 {
+        overlay_file.read_exact(&mut qcow2_prefix[8..])?;
+        // qcow2 v3 declares its header length at byte 100. A zero, short or
+        // beyond-EOF declaration cannot describe the admitted on-disk header.
+        let header_length = u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64;
+        if header_length < 104 || header_length > overlay_meta.len() {
+            return Err(WindowsVmError::InvalidPlan(
+                "invalid qcow2 v3 declared header length",
+            ));
+        }
     }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
