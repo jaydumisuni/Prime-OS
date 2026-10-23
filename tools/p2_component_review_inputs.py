@@ -36,6 +36,13 @@ def git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def require_private_directory(directory: Path) -> None:
+    """A review input cannot derive authority through a shared-writable parent."""
+    mode = directory.lstat().st_mode
+    if not stat.S_ISDIR(mode) or mode & 0o022:
+        raise ReviewInputError(f"non-directory or shared-writable review path: {directory}")
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -43,6 +50,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # comparing only resolved paths would silently accept symlinked roots.
     if not repo.is_absolute() or repo.resolve() != repo:
         raise ReviewInputError("review workspace must be a canonical absolute worktree root")
+    require_private_directory(repo)
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
@@ -51,6 +59,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         raise ReviewInputError("review candidate HEAD changed")
     entries = []
     for relative in INPUTS:
+        directory = root
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
         file = root / relative
         if file.is_symlink() or not file.is_file() or file.resolve() != file:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
@@ -61,6 +73,11 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         working = file.read_bytes()
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
         after = file.lstat()
         if after.st_nlink != 1:
             raise ReviewInputError(f"hardlinked review input changed during read: {relative}")

@@ -172,3 +172,26 @@ def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypa
         assert "changed during read" in str(error)
     else:
         raise AssertionError("same-byte in-place rewrite admitted")
+
+
+def test_rejects_group_writable_review_root(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    root.chmod(0o770)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "writable" in str(error)
+    else:
+        raise AssertionError("group-writable review root admitted")
+
+
+def test_rejects_world_writable_input_parent(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = root / "crates/primed/src"
+    parent.chmod(0o777)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "writable" in str(error)
+    else:
+        raise AssertionError("world-writable review input parent admitted")
