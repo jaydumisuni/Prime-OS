@@ -642,6 +642,37 @@ fn qemu_plan_rejects_out_of_range_usb_device_addresses() {
     }
 }
 
+#[test]
+fn qemu_plan_rejects_oversized_usb_allowlist_before_qemu_launch() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    let request = |count: usize, duplicate: bool| VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: (1..=count)
+            .map(|index| {
+                let address = if duplicate { 1 } else { index };
+                format!("/dev/bus/usb/001/{address:03}").into()
+            })
+            .collect(),
+    };
+
+    // A bounded W7 allowlist remains usable. Excess entries, including
+    // duplicates, must not produce an unbounded QEMU device plan.
+    assert!(build_qemu_plan(&request(15, false)).is_ok());
+    for duplicate in [false, true] {
+        let error = build_qemu_plan(&request(16, duplicate)).unwrap_err();
+        assert!(error.to_string().contains("USB"), "{error}");
+    }
+}
+
 fn vm_profile(backend: ExecutionBackend) -> ApplicationProfile {
     ApplicationProfile {
         schema: APPLICATION_PROFILE_SCHEMA.to_owned(),

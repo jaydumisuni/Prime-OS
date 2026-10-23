@@ -17,6 +17,7 @@ pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proo
 pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES: usize = 1024 * 1024;
+const WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES: usize = 15;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -958,6 +959,13 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         return Err(WindowsVmError::InvalidPlan("resource bounds exceeded"));
     }
 
+    // The single qemu-xhci controller has bounded port capacity. Do not
+    // silently deduplicate an oversized caller allowlist into apparent authority.
+    if request.usb_nodes.len() > WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES {
+        return Err(WindowsVmError::InvalidPlan(
+            "USB passthrough allowlist exceeds controller capacity",
+        ));
+    }
     let mut usb = Vec::new();
     for node in &request.usb_nodes {
         usb.push(parse_usb_node(node)?);
