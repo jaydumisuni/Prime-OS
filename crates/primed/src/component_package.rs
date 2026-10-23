@@ -186,6 +186,17 @@ pub enum ComponentAdmissionError {
     },
     #[error("component dependency {0} package digest does not match exact pin")]
     DependencyDigest(String),
+    #[error("installed component {0} has no pinned manifest for dependency-safe removal")]
+    MissingInstalledManifest(String),
+    #[error("installed component {0} manifest disagrees with its inventory identity")]
+    InstalledManifestMismatch(String),
+    #[error("installed component {0} has duplicate manifest evidence")]
+    DuplicateInstalledManifest(String),
+    #[error("removing {component_id} would strand installed dependent {dependent_id}")]
+    DependentComponentInstalled {
+        component_id: String,
+        dependent_id: String,
+    },
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
     #[error("update for {0} reuses the installed package digest across distinct revisions")]
@@ -258,6 +269,8 @@ pub fn plan_component_transaction(
     })
 }
 
+/// Structural removal plan only. Does not inspect reverse dependencies or
+/// authorize execution; use the checked preflight with trusted manifests.
 pub fn plan_component_removal(
     component_id: &str,
     installed: &[InstalledComponent],
@@ -282,6 +295,66 @@ pub fn plan_component_removal(
             previous_package_digest: current.package_digest.clone(),
         },
     })
+}
+
+/// Dependency-aware P2 removal preflight over a complete installed inventory.
+///
+/// Callers must separately authenticate and pin installed manifest evidence.
+/// Matching identity/digest here is not signature verification. This is
+/// construction-only planning, not removal, deletion, or activation authority.
+/// The primitive removal planner cannot establish reverse-dependency safety.
+pub fn plan_component_removal_checked(
+    component_id: &str,
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let plan = plan_component_removal(component_id, installed)?;
+    let inventory = index_installed(installed)?;
+    let mut manifests = BTreeMap::new();
+    for manifest in installed_manifests {
+        validate_component_manifest(manifest)?;
+        let Some(current) = inventory.get(manifest.component_id.as_str()) else {
+            return Err(ComponentAdmissionError::InstalledManifestMismatch(
+                manifest.component_id.clone(),
+            ));
+        };
+        if manifest.revision != current.revision
+            || manifest.package_digest != current.package_digest
+        {
+            return Err(ComponentAdmissionError::InstalledManifestMismatch(
+                manifest.component_id.clone(),
+            ));
+        }
+        if manifests
+            .insert(manifest.component_id.as_str(), manifest)
+            .is_some()
+        {
+            return Err(ComponentAdmissionError::DuplicateInstalledManifest(
+                manifest.component_id.clone(),
+            ));
+        }
+    }
+    for current in installed {
+        if !manifests.contains_key(current.component_id.as_str()) {
+            return Err(ComponentAdmissionError::MissingInstalledManifest(
+                current.component_id.clone(),
+            ));
+        }
+    }
+    for manifest in manifests.values() {
+        if manifest.component_id != component_id
+            && manifest
+                .dependencies
+                .iter()
+                .any(|dep| dep.component_id == component_id)
+        {
+            return Err(ComponentAdmissionError::DependentComponentInstalled {
+                component_id: component_id.to_owned(),
+                dependent_id: manifest.component_id.clone(),
+            });
+        }
+    }
+    Ok(plan)
 }
 
 pub fn plan_component_data_removal(
@@ -1962,6 +2035,78 @@ mod tests {
         assert!(matches!(
             result,
             Err(ComponentAdmissionError::ApplicationProfileSchemaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn checked_removal_rejects_stranded_installed_dependents() {
+        let target = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut target_manifest = manifest(b"origins");
+        target_manifest.package_digest = DIGEST_A.to_owned();
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: target.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let installed = [target.clone(), consumer.clone()];
+        assert!(matches!(
+            plan_component_removal_checked(&target.component_id, &installed, &[target_manifest, consumer_manifest]),
+            Err(ComponentAdmissionError::DependentComponentInstalled { dependent_id, component_id })
+                if dependent_id == consumer.component_id && component_id == target.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_removal_requires_complete_exact_manifest_inventory() {
+        let target = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let installed = [target.clone(), consumer.clone()];
+        let mut target_manifest = manifest(b"origins");
+        target_manifest.package_digest = target.package_digest.clone();
+        assert!(matches!(
+            plan_component_removal_checked(&target.component_id, &installed, &[target_manifest.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = DIGEST_A.to_owned();
+        assert!(matches!(
+            plan_component_removal_checked(&target.component_id, &installed, &[target_manifest.clone(), consumer_manifest.clone()]),
+            Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
+        ));
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        let plan = plan_component_removal_checked(
+            &target.component_id,
+            &installed,
+            &[target_manifest.clone(), consumer_manifest.clone()],
+        )
+        .unwrap();
+        assert!(matches!(plan.kind, ComponentTransactionKind::Remove { .. }));
+        assert!(matches!(
+            plan_component_removal_checked(&target.component_id, &installed, &[target_manifest.clone(), target_manifest, consumer_manifest]),
+            Err(ComponentAdmissionError::DuplicateInstalledManifest(id)) if id == target.component_id
         ));
     }
 }
