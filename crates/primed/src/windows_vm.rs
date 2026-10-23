@@ -911,6 +911,25 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if overlay_meta.nlink() != 1 {
         return Err(WindowsVmError::InvalidPlan("overlay has a hardlink alias"));
     }
+    // A nonempty file is not necessarily a qcow2 overlay. Reject malformed
+    // magic, unsupported versions and truncated fixed headers before QEMU
+    // receives a disk path. This is a header preflight, not a substitute for
+    // qemu-img integrity checks or authorized guest-runtime qualification.
+    if overlay_meta.len() < 72 {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 overlay header is truncated",
+        ));
+    }
+    let mut overlay_file = fs::File::open(&request.overlay_image)?;
+    let mut qcow2_prefix = [0u8; 8];
+    overlay_file.read_exact(&mut qcow2_prefix)?;
+    let qcow2_version = u32::from_be_bytes(qcow2_prefix[4..8].try_into().unwrap());
+    if &qcow2_prefix[..4] != b"QFI\xfb"
+        || !matches!(qcow2_version, 2 | 3)
+        || (qcow2_version == 3 && overlay_meta.len() < 104)
+    {
+        return Err(WindowsVmError::InvalidPlan("invalid qcow2 overlay header"));
+    }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
     if overlay_meta.permissions().mode() & 0o077 != 0 {

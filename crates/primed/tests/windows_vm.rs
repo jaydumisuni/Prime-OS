@@ -47,7 +47,11 @@ fn private_runtime_dir(path: &std::path::Path) {
 }
 
 fn private_overlay(path: &std::path::Path) {
-    fs::write(path, b"overlay").unwrap();
+    // Header-only fixture for plan admission; not a bootable guest disk.
+    let mut header = vec![0u8; 104];
+    header[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+    header[100..104].copy_from_slice(&104u32.to_be_bytes());
+    fs::write(path, header).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -195,6 +199,40 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
     let mut oversized = definition(&image, bytes);
     oversized.guest_id = "g".repeat(129);
     assert!(validate_guest_definition(&oversized).is_err());
+}
+
+#[test]
+fn qemu_plan_rejects_invalid_qcow2_header_before_launch() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+
+    let mut invalid_magic = vec![0u8; 104];
+    invalid_magic[..8].copy_from_slice(b"BAD!\x00\x00\x00\x03");
+    let mut invalid_version = vec![0u8; 104];
+    invalid_version[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x01");
+    let truncated_v3 = {
+        let mut bytes = vec![0u8; 72];
+        bytes[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+        bytes
+    };
+
+    // Reject both malformed full-length headers and truncated v3 headers.
+    for bytes in [invalid_magic, invalid_version, truncated_v3] {
+        private_overlay(&overlay);
+        fs::write(&overlay, bytes).unwrap();
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("qcow2"), "{error}");
+    }
 }
 
 #[test]
