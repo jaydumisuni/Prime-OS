@@ -739,6 +739,54 @@ fn verify_guest_image_stable(
     Ok(())
 }
 
+// A qcow2 header read is not authority if the overlay pathname is swapped
+// while it is being inspected. This is a preflight snapshot, not a guarantee
+// about later QEMU execution (which needs its own admission boundary).
+fn verify_overlay_stable(
+    overlay: &Path,
+    opened: &fs::File,
+    admitted: &fs::Metadata,
+) -> Result<(), WindowsVmError> {
+    if fs::canonicalize(overlay)? != overlay {
+        return Err(WindowsVmError::InvalidPlan(
+            "overlay path changed during header verification",
+        ));
+    }
+    let worker_uid = unsafe { libc::geteuid() };
+    for directory in overlay.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        if !parent.file_type().is_dir()
+            || !trusted_runtime_ancestor(parent.uid(), parent.permissions().mode(), worker_uid)
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "overlay parent changed during header verification",
+            ));
+        }
+    }
+    let after_open = opened.metadata()?;
+    let after_path = fs::symlink_metadata(overlay)?;
+    let unchanged = |current: &fs::Metadata| {
+        current.file_type().is_file()
+            && current.dev() == admitted.dev()
+            && current.ino() == admitted.ino()
+            && current.uid() == admitted.uid()
+            && current.gid() == admitted.gid()
+            && current.nlink() == 1
+            && current.len() == admitted.len()
+            && current.mtime() == admitted.mtime()
+            && current.mtime_nsec() == admitted.mtime_nsec()
+            && current.ctime() == admitted.ctime()
+            && current.ctime_nsec() == admitted.ctime_nsec()
+            && current.mode() == admitted.mode()
+    };
+    if !unchanged(&after_open) || !unchanged(&after_path) {
+        return Err(WindowsVmError::InvalidPlan(
+            "overlay changed during header verification",
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_guest_definition(
     definition: &VmGuestDefinition,
 ) -> Result<ValidatedVmGuest, WindowsVmError> {
@@ -810,7 +858,9 @@ pub fn validate_guest_definition(
     // A foreign owner can chmod and rewrite its own read-only image after
     // digest admission; the worker or root must own the guest inode.
     if !trusted_guest_image_owner(metadata.uid(), worker_uid) {
-        return Err(WindowsVmError::InvalidGuest("base image has an untrusted owner"));
+        return Err(WindowsVmError::InvalidGuest(
+            "base image has an untrusted owner",
+        ));
     }
     // A hardlinked guest image can alias unrelated host data despite a
     // canonical path and matching digest; reject shared inode ownership.
@@ -1035,6 +1085,9 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "overlay escapes the selected VM runtime directory",
         ));
     }
+    // Rebind the validated header to its original inode and pathname before
+    // any VM arguments are constructed.
+    verify_overlay_stable(&request.overlay_image, &overlay_file, &overlay_meta)?;
     if !(512..=32768).contains(&request.memory_mib) || !(1..=16).contains(&request.vcpus) {
         return Err(WindowsVmError::InvalidPlan("resource bounds exceeded"));
     }
@@ -1105,6 +1158,9 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             ]);
         }
     }
+    // Reject a replacement after argument construction as well; QEMU launch
+    // must still independently revalidate this admission snapshot.
+    verify_overlay_stable(&request.overlay_image, &overlay_file, &overlay_meta)?;
     Ok(QemuPlan {
         program: qemu,
         args,
@@ -1234,6 +1290,31 @@ mod guest_image_identity_tests {
     }
 
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn overlay_header_path_replacement_is_not_admitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let overlay = dir.path().join("overlay.qcow2");
+        let moved = dir.path().join("old.qcow2");
+        fs::write(&overlay, b"QFI\xfb\0\0\0\x03").unwrap();
+        let opened = fs::File::open(&overlay).unwrap();
+        let admitted = opened.metadata().unwrap();
+        assert!(verify_overlay_stable(&overlay, &opened, &admitted).is_ok());
+        fs::rename(&overlay, &moved).unwrap();
+        fs::write(&overlay, b"QFI\xfb\0\0\0\x03").unwrap();
+        assert!(verify_overlay_stable(&overlay, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn overlay_header_in_place_mutation_is_not_admitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let overlay = dir.path().join("overlay.qcow2");
+        fs::write(&overlay, b"QFI\xfb\0\0\0\x03").unwrap();
+        let opened = fs::File::open(&overlay).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::write(&overlay, b"QFI\xfb\0\0\0\x02-new").unwrap();
+        assert!(verify_overlay_stable(&overlay, &opened, &admitted).is_err());
+    }
 
     #[test]
     fn image_path_replacement_is_not_admitted_after_open() {
