@@ -15,6 +15,8 @@ import subprocess
 import stat
 import sys
 
+MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
+
 INPUTS = (
     "Cargo.lock",
     "crates/prime-contracts/Cargo.toml",
@@ -98,6 +100,32 @@ def require_protected_ancestors(repo: Path) -> None:
         child = parent
 
 
+def stat_identity(state: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (state.st_dev, state.st_ino, state.st_size,
+            state.st_mtime_ns, state.st_ctime_ns)
+
+
+def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
+    """Bind bounded input bytes to the checked inode, never a later path target."""
+    fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                or stat_identity(opened) != stat_identity(before)):
+            raise ReviewInputError(f"review input changed before descriptor open: {file}")
+        if opened.st_uid not in (0, os.geteuid()) or opened.st_mode & 0o022:
+            raise ReviewInputError(f"untrusted opened review input: {file}")
+        if opened.st_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"review input exceeds size limit: {file}")
+        working = stream.read(MAX_REVIEW_INPUT_BYTES + 1)
+        after_fd = os.fstat(stream.fileno())
+        if len(working) > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"review input exceeds size limit during read: {file}")
+        if stat_identity(opened) != stat_identity(after_fd):
+            raise ReviewInputError(f"review input changed during descriptor read: {file}")
+        return working
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -123,13 +151,24 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if file.is_symlink() or not file.is_file() or file.resolve() != file:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
         require_clean_index(root, head, relative)
+        blob_size_text = git(root, "cat-file", "-s", f"{head}:{relative}")
+        try:
+            blob_size = int(blob_size_text.strip())
+        except ValueError:
+            raise ReviewInputError(f"invalid committed review input size: {relative}") from None
+        if blob_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"committed review input exceeds size limit: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
+        if len(committed) != blob_size:
+            raise ReviewInputError(f"committed review input size changed: {relative}")
         before = file.lstat()
+        if before.st_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"working review input exceeds size limit: {relative}")
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
             raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
-        working = file.read_bytes()
+        working = read_bounded_working_input(file, before)
         directory = root
         require_private_directory(directory)
         for component in Path(relative).parts[:-1]:
@@ -140,12 +179,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"hardlinked review input changed during read: {relative}")
         if after.st_uid not in (0, os.geteuid()) or after.st_mode & 0o022:
             raise ReviewInputError(f"review input owner or permissions changed during read: {relative}")
-        identity = lambda state: (
-            state.st_dev, state.st_ino, state.st_size,
-            state.st_mtime_ns, state.st_ctime_ns,
-        )
         if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
-                or identity(before) != identity(after)):
+                or stat_identity(before) != stat_identity(after)):
             raise ReviewInputError(f"review input changed during read: {relative}")
         require_clean_index(root, head, relative)
         if committed != working:

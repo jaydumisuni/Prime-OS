@@ -141,14 +141,14 @@ def test_cli_fails_closed_and_emits_no_manifest_on_head_mismatch(tmp_path: Path)
 def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
-    def replaced_read(file: Path) -> bytes:
-        content = original_read(file)
+    original_read = module.read_bounded_working_input
+    def replaced_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
         if file == target:
             file.unlink()
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    monkeypatch.setattr(module, "read_bounded_working_input", replaced_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -160,13 +160,13 @@ def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeyp
 def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
-    def rewritten_read(file: Path) -> bytes:
-        content = original_read(file)
+    original_read = module.read_bounded_working_input
+    def rewritten_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
         if file == target:
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", rewritten_read)
+    monkeypatch.setattr(module, "read_bounded_working_input", rewritten_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -392,3 +392,46 @@ def test_promisor_missing_blob_never_executes_repository_uploadpack(tmp_path: Pa
     assert result.returncode == 2, result.stderr
     assert not marker.exists(), "review inspection launched repository-selected upload-pack"
     assert "FAIL:" in result.stderr
+
+
+def test_rejects_oversized_committed_review_blob(tmp_path: Path) -> None:
+    """Review evidence must not materialize arbitrarily large committed blobs."""
+    root, _ = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    (root / relative).write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    git(root, "add", "--", relative)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: oversized review input")
+    head = git(root, "rev-parse", "HEAD")
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "size" in str(error) or "large" in str(error)
+    else:
+        raise AssertionError("oversized committed blob admitted as bounded review evidence")
+
+
+def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) -> None:
+    """The verified input pathname cannot redirect the actual file open."""
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    saved = tmp_path / "same-bytes-external-input"
+    real_open = module.os.open
+    opened = []
+
+    def substitute(path, flags, *args, **kwargs):
+        if Path(path) == target:
+            opened.append(True)
+            saved.write_bytes(target.read_bytes())
+            target.unlink()
+            target.symlink_to(saved)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", substitute)
+    try:
+        module.build_manifest(root, head)
+    except (module.ReviewInputError, OSError):
+        pass
+    else:
+        raise AssertionError("review input path substitution admitted")
+    assert opened, "review input was not opened through descriptor-bound custody"
