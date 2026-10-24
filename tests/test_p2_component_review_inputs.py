@@ -363,3 +363,32 @@ def test_review_input_status_never_executes_repository_clean_filter(
     except module.ReviewInputError:
         pass  # Rejecting untrusted filter authority is permitted.
     assert not marker.exists(), "review preflight executed repository clean filter"
+
+
+def test_promisor_missing_blob_never_executes_repository_uploadpack(tmp_path: Path) -> None:
+    """Pinned review evidence must fail closed rather than fetch missing objects."""
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "untrusted-uploadpack-invoked"
+    uploadpack = tmp_path / "untrusted-uploadpack.sh"
+    uploadpack.write_text(
+        "#!/bin/sh\nprintf invoked >> " + shlex.quote(str(marker)) + "\nexit 1\n",
+        encoding="utf-8",
+    )
+    uploadpack.chmod(0o700)
+    git(root, "config", "remote.origin.url", str(tmp_path / "missing-remote"))
+    git(root, "config", "remote.origin.promisor", "true")
+    git(root, "config", "remote.origin.uploadpack", str(uploadpack))
+    git(root, "config", "extensions.partialClone", "origin")
+
+    blob = git(root, "rev-parse", f"HEAD:{module.INPUTS[0]}")
+    loose = root / ".git" / "objects" / blob[:2] / blob[2:]
+    assert loose.is_file(), "disposable fixture must have a loose committed blob"
+    loose.unlink()
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(root), "--expected-head", head],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert not marker.exists(), "review inspection launched repository-selected upload-pack"
+    assert "FAIL:" in result.stderr

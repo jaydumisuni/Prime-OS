@@ -39,6 +39,9 @@ def git(repo: Path, *args: str) -> bytes:
     # refs/replace can substitute Git object bytes without changing HEAD.
     # Disable local replacement refs before reading pinned review evidence.
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    # Missing partial-clone objects are not permission to run a repository-
+    # configured remote upload-pack helper during read-only review custody.
+    trusted_env["GIT_NO_LAZY_FETCH"] = "1"
     result = subprocess.run(
         ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
         capture_output=True, check=False, env=trusted_env,
