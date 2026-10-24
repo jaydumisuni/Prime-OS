@@ -1089,6 +1089,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 overlay references an unbound external backing file",
         ));
     }
+    // The W8 header-only admission has no key/secret authority. Even a
+    // structurally valid encrypted qcow2 image cannot be handed to QEMU.
+    let crypt_method = u32::from_be_bytes(qcow2_prefix[32..36].try_into().unwrap());
+    if crypt_method != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 overlay requires unsupported encryption authority",
+        ));
+    }
     if qcow2_version == 3 {
         overlay_file.read_exact(&mut qcow2_prefix[72..])?;
         // qcow2 incompatible feature bit 2 enables a separate data file.
@@ -1097,6 +1105,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         if incompatible & (1 << 2) != 0 {
             return Err(WindowsVmError::InvalidPlan(
                 "qcow2 overlay references an unbound external data file",
+            ));
+        }
+        // This bounded host preflight does not qualify dirty/corrupt images,
+        // extended L2, alternate compression or unknown incompatible bits.
+        // Keep these out of QEMU until an explicit feature admission exists.
+        if incompatible != 0 {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 overlay has unsupported incompatible features",
             ));
         }
         // qcow2 v3 declares its header length at byte 100. A zero, short or

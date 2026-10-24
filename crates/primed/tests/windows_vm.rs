@@ -319,6 +319,40 @@ fn qemu_plan_rejects_unbound_qcow2_backing_and_external_data_files() {
 }
 
 #[test]
+fn qemu_plan_rejects_unsupported_qcow2_crypto_and_incompatible_features() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // An encrypted overlay requires unbound key authority. Incompatible
+    // features can require QEMU behavior outside this minimal W8 contract.
+    for (version, crypt_method, incompatible_features) in [
+        (2u32, 1u32, 0u64),
+        (3, 2, 0),
+        (3, 0, 1u64 << 1),  // corrupt image
+        (3, 0, 1u64 << 63), // unknown incompatible feature
+    ] {
+        private_overlay(&overlay);
+        let mut header = fs::read(&overlay).unwrap();
+        header[4..8].copy_from_slice(&version.to_be_bytes());
+        header[32..36].copy_from_slice(&crypt_method.to_be_bytes());
+        header[72..80].copy_from_slice(&incompatible_features.to_be_bytes());
+        fs::write(&overlay, header).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(error.to_string().contains("qcow2"), "{error}");
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_empty_overlay_image() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
