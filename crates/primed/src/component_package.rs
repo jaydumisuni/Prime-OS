@@ -197,6 +197,11 @@ pub enum ComponentAdmissionError {
         component_id: String,
         dependent_id: String,
     },
+    #[error("updating {component_id} would invalidate the exact package digest pinned by {dependent_id}")]
+    DependentDigestPinned {
+        component_id: String,
+        dependent_id: String,
+    },
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
     #[error("update for {0} reuses the installed package digest across distinct revisions")]
@@ -269,6 +274,35 @@ pub fn plan_component_transaction(
     })
 }
 
+/// Dependency-aware P2 install/update preflight over a complete installed inventory.
+///
+/// Installed manifests must be independently authenticated and pinned by the
+/// caller. This only checks structural reverse dependencies; it does not
+/// authorize package installation, update, activation, or promotion.
+pub fn plan_component_transaction_checked(
+    package: &VerifiedComponentPackage,
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let plan = plan_component_transaction(package, installed)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    if matches!(plan.kind, ComponentTransactionKind::Update { .. }) {
+        for manifest in manifests.values() {
+            if manifest.component_id != package.component_id
+                && manifest.dependencies.iter().any(|dep| {
+                    dep.component_id == package.component_id && dep.exact_package_digest.is_some()
+                })
+            {
+                return Err(ComponentAdmissionError::DependentDigestPinned {
+                    component_id: package.component_id.clone(),
+                    dependent_id: manifest.component_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(plan)
+}
+
 /// Structural removal plan only. Does not inspect reverse dependencies or
 /// authorize execution; use the checked preflight with trusted manifests.
 pub fn plan_component_removal(
@@ -297,18 +331,11 @@ pub fn plan_component_removal(
     })
 }
 
-/// Dependency-aware P2 removal preflight over a complete installed inventory.
-///
-/// Callers must separately authenticate and pin installed manifest evidence.
-/// Matching identity/digest here is not signature verification. This is
-/// construction-only planning, not removal, deletion, or activation authority.
-/// The primitive removal planner cannot establish reverse-dependency safety.
-pub fn plan_component_removal_checked(
-    component_id: &str,
+/// Validate a complete exact inventory before planning dependent-sensitive work.
+fn index_installed_manifests<'a>(
     installed: &[InstalledComponent],
-    installed_manifests: &[PrimeComponentManifest],
-) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
-    let plan = plan_component_removal(component_id, installed)?;
+    installed_manifests: &'a [PrimeComponentManifest],
+) -> Result<BTreeMap<&'a str, &'a PrimeComponentManifest>, ComponentAdmissionError> {
     let inventory = index_installed(installed)?;
     let mut manifests = BTreeMap::new();
     for manifest in installed_manifests {
@@ -341,6 +368,22 @@ pub fn plan_component_removal_checked(
             ));
         }
     }
+    Ok(manifests)
+}
+
+/// Dependency-aware P2 removal preflight over a complete installed inventory.
+///
+/// Callers must separately authenticate and pin installed manifest evidence.
+/// Matching identity/digest here is not signature verification. This is
+/// construction-only planning, not removal, deletion, or activation authority.
+/// The primitive removal planner cannot establish reverse-dependency safety.
+pub fn plan_component_removal_checked(
+    component_id: &str,
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let plan = plan_component_removal(component_id, installed)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
     for manifest in manifests.values() {
         if manifest.component_id != component_id
             && manifest
@@ -2107,6 +2150,75 @@ mod tests {
         assert!(matches!(
             plan_component_removal_checked(&target.component_id, &installed, &[target_manifest.clone(), target_manifest, consumer_manifest]),
             Err(ComponentAdmissionError::DuplicateInstalledManifest(id)) if id == target.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_update_rejects_pinned_installed_dependents() {
+        let target = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut target_manifest = manifest(b"target");
+        target_manifest.package_digest = target.package_digest.clone();
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: target.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: Some(target.package_digest.clone()),
+        }];
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/new-component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: target.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let installed = [target.clone(), consumer.clone()];
+        assert!(matches!(
+            plan_component_transaction(&package, &installed)
+                .unwrap()
+                .kind,
+            ComponentTransactionKind::Update { .. }
+        ));
+        assert!(matches!(
+            plan_component_transaction_checked(
+                &package, &installed, &[target_manifest.clone(), consumer_manifest.clone()]
+            ),
+            Err(ComponentAdmissionError::DependentDigestPinned { component_id, dependent_id })
+                if component_id == target.component_id && dependent_id == consumer.component_id
+        ));
+        consumer_manifest.dependencies[0].exact_package_digest = None;
+        assert!(matches!(
+            plan_component_transaction_checked(
+                &package,
+                &installed,
+                &[target_manifest.clone(), consumer_manifest.clone()]
+            )
+            .unwrap()
+            .kind,
+            ComponentTransactionKind::Update { .. }
+        ));
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &installed, &[target_manifest.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        consumer_manifest.package_digest = DIGEST_A.to_owned();
+        assert!(matches!(
+            plan_component_transaction_checked(
+                &package, &installed, &[target_manifest, consumer_manifest]
+            ),
+            Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
         ));
     }
 }
