@@ -339,3 +339,27 @@ def test_git_replace_refs_cannot_substitute_pinned_commit_inputs(
         assert "local changes" in str(error) or "differs from HEAD" in str(error)
     else:
         raise AssertionError("Git replace ref substituted exact-head review authority")
+
+
+def test_review_input_status_never_executes_repository_clean_filter(
+    tmp_path: Path
+) -> None:
+    # Git status can run a repository-configured clean filter to compare a
+    # tracked file; review evidence must not execute checkout-supplied code.
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "filter-executed"
+    script = tmp_path / "hostile-clean-filter.sh"
+    script.write_text(
+        "#!/bin/sh\ncat\nprintf executed > " + shlex.quote(str(marker)) + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    git(root, "config", "filter.reviewtest.clean", str(script))
+    relative = module.INPUTS[-1]
+    (root / ".gitattributes").write_text(relative + " filter=reviewtest\n", encoding="utf-8")
+    (root / relative).touch()
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass  # Rejecting untrusted filter authority is permitted.
+    assert not marker.exists(), "review preflight executed repository clean filter"
