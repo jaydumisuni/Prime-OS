@@ -851,8 +851,14 @@ pub fn validate_guest_definition(
 // can replace descendants even when its directory is mode 0755; only root's
 // sticky shared directories are an exception to the writable-parent rule.
 fn trusted_runtime_ancestor(owner_uid: u32, mode: u32, worker_uid: u32) -> bool {
-    (owner_uid == worker_uid || owner_uid == 0)
+    trusted_qemu_executable_owner(owner_uid, worker_uid)
         && (mode & 0o022 == 0 || (mode & 0o1000 != 0 && owner_uid == 0))
+}
+
+// QEMU is an executable authority boundary: an unrelated owner can replace
+// its own mode-0755 binary or parent directory after preflight.
+fn trusted_qemu_executable_owner(owner_uid: u32, worker_uid: u32) -> bool {
+    owner_uid == worker_uid || owner_uid == 0
 }
 
 // A private mode is not ownership: a different local principal can modify
@@ -872,6 +878,12 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     let qemu = fs::canonicalize(&request.qemu_binary)?;
     let qemu_meta = fs::metadata(&qemu)?;
+    let worker_uid = unsafe { libc::geteuid() };
+    if !trusted_qemu_executable_owner(qemu_meta.uid(), worker_uid) {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has an untrusted owner",
+        ));
+    }
     if !qemu_meta.is_file() || qemu_meta.permissions().mode() & 0o111 == 0 {
         return Err(WindowsVmError::InvalidPlan("QEMU is not executable"));
     }
@@ -892,11 +904,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     for directory in qemu.ancestors().skip(1) {
         let parent = fs::symlink_metadata(directory)?;
         let mode = parent.permissions().mode();
-        if !parent.file_type().is_dir()
-            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        if !parent.file_type().is_dir() || !trusted_runtime_ancestor(parent.uid(), mode, worker_uid)
         {
             return Err(WindowsVmError::InvalidPlan(
-                "QEMU executable directory is shared-writable or invalid",
+                "QEMU executable directory is untrusted or invalid",
             ));
         }
     }
@@ -923,7 +934,6 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     // Query the effective identity that will own the session, not the
     // environment's spoofable UID text. No privilege or identity is changed.
-    let worker_uid = unsafe { libc::geteuid() };
     let overlay_meta = fs::symlink_metadata(&request.overlay_image)?;
     if overlay_meta.file_type().is_symlink() || !overlay_meta.file_type().is_file() {
         return Err(WindowsVmError::InvalidPlan("overlay is not a regular file"));
@@ -1122,6 +1132,17 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
 #[cfg(test)]
 mod vm_runtime_owner_tests {
     use super::*;
+
+    #[test]
+    fn foreign_owned_qemu_executable_is_not_trusted_by_mode_alone() {
+        let worker_uid = 1000;
+        assert!(trusted_qemu_executable_owner(worker_uid, worker_uid));
+        assert!(trusted_qemu_executable_owner(0, worker_uid));
+        for foreign_uid in [1001, 65534] {
+            assert!(!trusted_qemu_executable_owner(foreign_uid, worker_uid));
+            assert!(!trusted_runtime_ancestor(foreign_uid, 0o755, worker_uid));
+        }
+    }
 
     #[test]
     fn foreign_owned_runtime_ancestor_is_not_trusted_by_private_mode_alone() {
