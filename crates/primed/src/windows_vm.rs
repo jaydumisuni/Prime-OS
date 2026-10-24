@@ -739,6 +739,42 @@ fn verify_guest_image_stable(
     Ok(())
 }
 
+// Do not let a pathname swap from a regular overlay to a FIFO stall W8
+// preflight while waiting for an attacker-controlled writer. A no-follow,
+// nonblocking descriptor must still match the admitted regular inode before
+// any header bytes are consumed. This is not QEMU launch-time authority.
+fn open_admitted_overlay_header(
+    overlay: &Path,
+    admitted: &fs::Metadata,
+) -> Result<fs::File, WindowsVmError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(overlay)?;
+    // Check the opened descriptor before reading; preserve the established
+    // runtime-ancestor validation order in build_qemu_plan below.
+    let actual = opened.metadata()?;
+    if !actual.file_type().is_file()
+        || actual.dev() != admitted.dev()
+        || actual.ino() != admitted.ino()
+        || actual.uid() != admitted.uid()
+        || actual.gid() != admitted.gid()
+        || actual.nlink() != admitted.nlink()
+        || actual.len() != admitted.len()
+        || actual.mode() != admitted.mode()
+        || actual.mtime() != admitted.mtime()
+        || actual.mtime_nsec() != admitted.mtime_nsec()
+        || actual.ctime() != admitted.ctime()
+        || actual.ctime_nsec() != admitted.ctime_nsec()
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "overlay changed before header read",
+        ));
+    }
+    Ok(opened)
+}
+
 // A qcow2 header read is not authority if the overlay pathname is swapped
 // while it is being inspected. This is a preflight snapshot, not a guarantee
 // about later QEMU execution (which needs its own admission boundary).
@@ -1069,7 +1105,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 overlay header is truncated",
         ));
     }
-    let mut overlay_file = fs::File::open(&request.overlay_image)?;
+    let mut overlay_file = open_admitted_overlay_header(&request.overlay_image, &overlay_meta)?;
     let mut qcow2_prefix = [0u8; 104];
     // Both qcow2 versions carry the backing-file pointer in their fixed
     // 72-byte header. A referenced backing image would let QEMU open host
@@ -1418,6 +1454,22 @@ mod guest_image_identity_tests {
         fs::rename(&parent, &relocated).unwrap();
         symlink(&relocated, &parent).unwrap();
         assert!(verify_qemu_stable(&qemu, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn overlay_header_open_rejects_fifo_swap_without_waiting_for_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let overlay = dir.path().join("overlay.qcow2");
+        fs::write(&overlay, b"QFI\xfb\0\0\0\x03").unwrap();
+        let admitted = fs::symlink_metadata(&overlay).unwrap();
+        fs::remove_file(&overlay).unwrap();
+        let name = CString::new(overlay.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        // Opening a substituted FIFO with blocking read-only open would
+        // hang waiting for an attacker-controlled writer.
+        assert!(open_admitted_overlay_header(&overlay, &admitted).is_err());
     }
 
     #[test]
