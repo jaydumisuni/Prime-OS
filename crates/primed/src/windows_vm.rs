@@ -694,6 +694,7 @@ fn verify_guest_image_stable(
     admitted: &fs::Metadata,
 ) -> Result<(), WindowsVmError> {
     let after_read = opened.metadata()?;
+    let worker_uid = unsafe { libc::geteuid() };
     // A parent may be replaced with a symlink to the same inode while the
     // digest is being read. Recheck pathname and ancestor admission.
     if fs::canonicalize(image)? != image {
@@ -709,9 +710,9 @@ fn verify_guest_image_stable(
             ));
         }
         let mode = parent.permissions().mode();
-        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+        if !trusted_runtime_ancestor(parent.uid(), mode, worker_uid) {
             return Err(WindowsVmError::InvalidGuest(
-                "base image parent became shared-writable during digest verification",
+                "base image parent became untrusted during digest verification",
             ));
         }
     }
@@ -720,6 +721,8 @@ fn verify_guest_image_stable(
         current.file_type().is_file()
             && current.dev() == admitted.dev()
             && current.ino() == admitted.ino()
+            && current.uid() == admitted.uid()
+            && current.gid() == admitted.gid()
             && current.nlink() == 1
             && current.len() == admitted.len()
             && current.mtime() == admitted.mtime()
@@ -760,6 +763,7 @@ pub fn validate_guest_definition(
         return Err(WindowsVmError::InvalidGuest("invalid canonical sha256"));
     }
     let image = PathBuf::from(&definition.base_image);
+    let worker_uid = unsafe { libc::geteuid() };
     if !image.is_absolute() {
         return Err(WindowsVmError::InvalidGuest("base image is not absolute"));
     }
@@ -793,7 +797,7 @@ pub fn validate_guest_definition(
         let mode = parent.permissions().mode();
         if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
             return Err(WindowsVmError::InvalidGuest(
-                "base image directory is shared-writable",
+                "base image directory is untrusted",
             ));
         }
     }
@@ -802,6 +806,11 @@ pub fn validate_guest_definition(
         return Err(WindowsVmError::InvalidGuest(
             "base image is not a regular non-symlink file",
         ));
+    }
+    // A foreign owner can chmod and rewrite its own read-only image after
+    // digest admission; the worker or root must own the guest inode.
+    if !trusted_guest_image_owner(metadata.uid(), worker_uid) {
+        return Err(WindowsVmError::InvalidGuest("base image has an untrusted owner"));
     }
     // A hardlinked guest image can alias unrelated host data despite a
     // canonical path and matching digest; reject shared inode ownership.
@@ -850,6 +859,10 @@ pub fn validate_guest_definition(
 // Runtime ancestors may be owned by the worker or by root. A foreign owner
 // can replace descendants even when its directory is mode 0755; only root's
 // sticky shared directories are an exception to the writable-parent rule.
+fn trusted_guest_image_owner(owner_uid: u32, worker_uid: u32) -> bool {
+    owner_uid == worker_uid || owner_uid == 0
+}
+
 fn trusted_runtime_ancestor(owner_uid: u32, mode: u32, worker_uid: u32) -> bool {
     trusted_qemu_executable_owner(owner_uid, worker_uid)
         && (mode & 0o022 == 0 || (mode & 0o1000 != 0 && owner_uid == 0))
@@ -1132,6 +1145,17 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
 #[cfg(test)]
 mod vm_runtime_owner_tests {
     use super::*;
+
+    #[test]
+    fn foreign_owned_guest_image_inode_is_not_trusted_by_readonly_mode() {
+        let worker_uid = 1000;
+        assert!(trusted_guest_image_owner(worker_uid, worker_uid));
+        assert!(trusted_guest_image_owner(0, worker_uid));
+        for foreign_uid in [1001, 65534] {
+            assert!(!trusted_guest_image_owner(foreign_uid, worker_uid));
+            assert!(!trusted_runtime_ancestor(foreign_uid, 0o755, worker_uid));
+        }
+    }
 
     #[test]
     fn foreign_owned_qemu_executable_is_not_trusted_by_mode_alone() {
