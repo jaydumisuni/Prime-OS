@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -294,3 +295,19 @@ def test_rejects_foreign_owned_nonwritable_ancestor(
         assert "owner" in str(error)
     else:
         raise AssertionError("foreign-owned ancestor admitted")
+
+
+def test_repository_fsmonitor_is_never_executed_by_review_git(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "fsmonitor-invoked"
+    hook = tmp_path / "hostile-fsmonitor.sh"
+    hook.write_text(
+        "#!/bin/sh\nprintf invoked > " + shlex.quote(str(marker)) + "\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o700)
+    git(root, "config", "core.fsmonitor", str(hook))
+
+    result = module.build_manifest(root, head)
+    assert result["candidate_head"] == head
+    assert not marker.exists(), "review inspection executed repository-configured fsmonitor"
