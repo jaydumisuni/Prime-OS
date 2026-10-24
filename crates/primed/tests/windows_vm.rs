@@ -272,6 +272,53 @@ fn qemu_plan_rejects_inconsistent_qcow2_v3_header_length() {
 }
 
 #[test]
+fn qemu_plan_rejects_unbound_qcow2_backing_and_external_data_files() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // Version 2 and 3 can both reference a host backing file through the
+    // fixed header. A nonzero size without an offset must fail closed too.
+    for (version, backing_offset, backing_size, external_data) in [
+        (2u32, 104u64, 12u32, false),
+        (2, 0, 12, false),
+        (3, 104, 12, false),
+        (3, 0, 0, true),
+    ] {
+        private_overlay(&overlay);
+        let mut header = fs::read(&overlay).unwrap();
+        header[4..8].copy_from_slice(&version.to_be_bytes());
+        header[8..16].copy_from_slice(&backing_offset.to_be_bytes());
+        header[16..20].copy_from_slice(&backing_size.to_be_bytes());
+        if external_data {
+            header[72..80].copy_from_slice(&(1u64 << 2).to_be_bytes());
+        }
+        fs::write(&overlay, header).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("unbound external"),
+            "version {version}: {error}"
+        );
+    }
+
+    // An ordinary self-contained v2 header remains admissible to preflight.
+    private_overlay(&overlay);
+    let mut header = fs::read(&overlay).unwrap();
+    header[4..8].copy_from_slice(&2u32.to_be_bytes());
+    fs::write(&overlay, header).unwrap();
+    assert!(build_qemu_plan(&request).is_ok());
+}
+
+#[test]
 fn qemu_plan_rejects_empty_overlay_image() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

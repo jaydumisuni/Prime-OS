@@ -1071,7 +1071,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     let mut overlay_file = fs::File::open(&request.overlay_image)?;
     let mut qcow2_prefix = [0u8; 104];
-    overlay_file.read_exact(&mut qcow2_prefix[..8])?;
+    // Both qcow2 versions carry the backing-file pointer in their fixed
+    // 72-byte header. A referenced backing image would let QEMU open host
+    // storage that this plan never admitted or digest-bound.
+    overlay_file.read_exact(&mut qcow2_prefix[..72])?;
     let qcow2_version = u32::from_be_bytes(qcow2_prefix[4..8].try_into().unwrap());
     if &qcow2_prefix[..4] != b"QFI\xfb"
         || !matches!(qcow2_version, 2 | 3)
@@ -1079,8 +1082,23 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     {
         return Err(WindowsVmError::InvalidPlan("invalid qcow2 overlay header"));
     }
+    let backing_offset = u64::from_be_bytes(qcow2_prefix[8..16].try_into().unwrap());
+    let backing_size = u32::from_be_bytes(qcow2_prefix[16..20].try_into().unwrap());
+    if backing_offset != 0 || backing_size != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 overlay references an unbound external backing file",
+        ));
+    }
     if qcow2_version == 3 {
-        overlay_file.read_exact(&mut qcow2_prefix[8..])?;
+        overlay_file.read_exact(&mut qcow2_prefix[72..])?;
+        // qcow2 incompatible feature bit 2 enables a separate data file.
+        // Its pathname is not part of this VM plan's admitted authority.
+        let incompatible = u64::from_be_bytes(qcow2_prefix[72..80].try_into().unwrap());
+        if incompatible & (1 << 2) != 0 {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 overlay references an unbound external data file",
+            ));
+        }
         // qcow2 v3 declares its header length at byte 100. A zero, short or
         // beyond-EOF declaration cannot describe the admitted on-disk header.
         let header_length = u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64;
