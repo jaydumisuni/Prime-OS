@@ -227,6 +227,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && !value.chars().any(|c| matches!(c as u32, 0x115F | 0x1160 | 0x3164 | 0xFFA0 | 0x2800 | 0xE0000..=0xE007F))
         && !value.chars().any(|c| matches!(c as u32, 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
+        && !value.chars().any(|c| matches!(c as u32, 0xE0100..=0xE01EF))
 }
 
 fn validate_unique_identities(
@@ -972,5 +973,40 @@ mod tests {
             validate_component_manifest(&value),
             Err(ComponentManifestError::BaseSystemRequirement)
         );
+    }
+
+    #[test]
+    fn supplementary_variation_selectors_cannot_spoof_component_text() {
+        for codepoint in [0xE0100, 0xE01EF] {
+            let hidden = char::from_u32(codepoint).unwrap();
+
+            let mut item = manifest();
+            item.version = format!("1.0{hidden}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version)
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{hidden}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{hidden}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement)
+            );
+
+            let mut item = manifest();
+            item.limitations = vec![format!("requires{hidden}restart")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation)
+            );
+        }
     }
 }
