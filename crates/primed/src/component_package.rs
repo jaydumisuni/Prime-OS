@@ -208,6 +208,11 @@ pub enum ComponentAdmissionError {
         dependent_id: String,
         minimum_revision: u64,
     },
+    #[error("rolling back {component_id} would invalidate the package digest pinned by {dependent_id}")]
+    DependentRollbackDigestPinned {
+        component_id: String,
+        dependent_id: String,
+    },
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
     #[error("update for {0} reuses the installed package digest across distinct revisions")]
@@ -520,7 +525,7 @@ pub fn plan_component_rollback_checked(
                 .as_deref()
                 .is_some_and(|digest| digest != retained.package_digest.as_str())
             {
-                return Err(ComponentAdmissionError::DependentDigestPinned {
+                return Err(ComponentAdmissionError::DependentRollbackDigestPinned {
                     component_id: current.component_id.clone(),
                     dependent_id: manifest.component_id.clone(),
                 });
@@ -2281,6 +2286,7 @@ mod tests {
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
         ));
     }
+
     #[test]
     fn checked_rollback_preserves_installed_dependents_and_exact_inventory() {
         let current = InstalledComponent {
@@ -2335,7 +2341,7 @@ mod tests {
                 &current, &retained, &installed,
                 &[target_manifest.clone(), consumer_manifest.clone()]
             ),
-            Err(ComponentAdmissionError::DependentDigestPinned {
+            Err(ComponentAdmissionError::DependentRollbackDigestPinned {
                 component_id, dependent_id
             }) if component_id == current.component_id && dependent_id == consumer.component_id
         ));
@@ -2380,6 +2386,4 @@ mod tests {
                 if id == current.component_id
         ));
     }
-
-
 }
