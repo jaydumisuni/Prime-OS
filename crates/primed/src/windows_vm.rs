@@ -267,6 +267,10 @@ pub fn vm_session_paths(
             "session root is not a directory",
         ));
     }
+    // A foreign owner can replace a 0700 session root even when its mode
+    // excludes group and other writes. Require custody before proof binding.
+    let worker_uid = unsafe { libc::geteuid() };
+    validate_runtime_owner(root_meta.uid(), worker_uid)?;
     // The session root itself must be private. An unrelated local principal
     // must not be able to substitute its application/session entries.
     if root_meta.permissions().mode() & 0o077 != 0 {
@@ -279,11 +283,10 @@ pub fn vm_session_paths(
     for directory in root.ancestors().skip(1) {
         let parent = fs::symlink_metadata(directory)?;
         let mode = parent.permissions().mode();
-        if !parent.file_type().is_dir()
-            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        if !parent.file_type().is_dir() || !trusted_runtime_ancestor(parent.uid(), mode, worker_uid)
         {
             return Err(WindowsVmError::InvalidPlan(
-                "session root ancestor is shared-writable or invalid",
+                "session root ancestor is untrusted or invalid",
             ));
         }
     }
@@ -302,6 +305,7 @@ pub fn vm_session_paths(
                         "session directory is not a canonical directory",
                     ));
                 }
+                validate_runtime_owner(metadata.uid(), worker_uid)?;
                 if metadata.permissions().mode() & 0o077 != 0 {
                     return Err(WindowsVmError::InvalidPlan(
                         "session directory is shared-writable",
@@ -843,6 +847,14 @@ pub fn validate_guest_definition(
     })
 }
 
+// Runtime ancestors may be owned by the worker or by root. A foreign owner
+// can replace descendants even when its directory is mode 0755; only root's
+// sticky shared directories are an exception to the writable-parent rule.
+fn trusted_runtime_ancestor(owner_uid: u32, mode: u32, worker_uid: u32) -> bool {
+    (owner_uid == worker_uid || owner_uid == 0)
+        && (mode & 0o022 == 0 || (mode & 0o1000 != 0 && owner_uid == 0))
+}
+
 // A private mode is not ownership: a different local principal can modify
 // its own 0600 file or 0700 directory after this worker has inspected it.
 fn validate_runtime_owner(owner_uid: u32, worker_uid: u32) -> Result<(), WindowsVmError> {
@@ -981,11 +993,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     for directory in request.runtime_dir.ancestors().skip(1) {
         let parent = fs::symlink_metadata(directory)?;
         let mode = parent.permissions().mode();
-        if !parent.file_type().is_dir()
-            || (mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0))
+        if !parent.file_type().is_dir() || !trusted_runtime_ancestor(parent.uid(), mode, worker_uid)
         {
             return Err(WindowsVmError::InvalidPlan(
-                "runtime directory ancestor is shared-writable or invalid",
+                "runtime directory ancestor is untrusted or invalid",
             ));
         }
     }
@@ -1111,6 +1122,20 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
 #[cfg(test)]
 mod vm_runtime_owner_tests {
     use super::*;
+
+    #[test]
+    fn foreign_owned_runtime_ancestor_is_not_trusted_by_private_mode_alone() {
+        let worker_uid = 1000;
+        assert!(trusted_runtime_ancestor(worker_uid, 0o755, worker_uid));
+        assert!(trusted_runtime_ancestor(0, 0o755, worker_uid));
+        assert!(trusted_runtime_ancestor(0, 0o1777, worker_uid));
+        for foreign_uid in [1001, 65534] {
+            assert!(!trusted_runtime_ancestor(foreign_uid, 0o755, worker_uid));
+            assert!(!trusted_runtime_ancestor(foreign_uid, 0o700, worker_uid));
+            assert!(!trusted_runtime_ancestor(foreign_uid, 0o1777, worker_uid));
+        }
+        assert!(!trusted_runtime_ancestor(0, 0o777, worker_uid));
+    }
 
     #[test]
     fn foreign_owned_runtime_state_is_not_admitted_by_private_mode_alone() {
