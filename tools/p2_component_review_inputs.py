@@ -15,6 +15,8 @@ import subprocess
 import stat
 import sys
 
+MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
+
 INPUTS = (
     "Cargo.lock",
     "crates/prime-contracts/Cargo.toml",
@@ -35,10 +37,13 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env = {key: value for key, value in os.environ.items()
                    if not key.startswith("GIT_")}
     # Repository or inherited Git config may name an executable fsmonitor.
-    # `git status` must never invoke it while constructing review evidence.
+    # Git metadata reads must not invoke checkout-controlled monitors.
     # refs/replace can substitute Git object bytes without changing HEAD.
     # Disable local replacement refs before reading pinned review evidence.
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    # Missing partial-clone objects are not permission to run a repository-
+    # configured remote upload-pack helper during read-only review custody.
+    trusted_env["GIT_NO_LAZY_FETCH"] = "1"
     result = subprocess.run(
         ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
         capture_output=True, check=False, env=trusted_env,
@@ -46,6 +51,24 @@ def git(repo: Path, *args: str) -> bytes:
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout
+
+
+def require_clean_index(repo: Path, head: str, relative: str) -> None:
+    """Check staged identity against HEAD without invoking clean filters."""
+    try:
+        tree = git(repo, "ls-tree", head, "--", relative).decode().splitlines()
+        index = git(repo, "ls-files", "--stage", "--", relative).decode().splitlines()
+        if len(tree) != 1 or len(index) != 1:
+            raise ValueError("missing or unmerged index entry")
+        tree_fields, tree_path = tree[0].split("\t", 1)
+        index_fields, index_path = index[0].split("\t", 1)
+        tree_mode, kind, tree_blob = tree_fields.split()
+        index_mode, index_blob, stage = index_fields.split()
+        if (kind != "blob" or tree_path != relative or index_path != relative
+                or stage != "0" or tree_mode != index_mode or tree_blob != index_blob):
+            raise ValueError("index differs from committed tree")
+    except (ValueError, UnicodeDecodeError):
+        raise ReviewInputError(f"review input has local changes: {relative}") from None
 
 
 def require_private_directory(directory: Path) -> None:
@@ -77,6 +100,32 @@ def require_protected_ancestors(repo: Path) -> None:
         child = parent
 
 
+def stat_identity(state: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (state.st_dev, state.st_ino, state.st_size,
+            state.st_mtime_ns, state.st_ctime_ns)
+
+
+def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
+    """Bind bounded input bytes to the checked inode, never a later path target."""
+    fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                or stat_identity(opened) != stat_identity(before)):
+            raise ReviewInputError(f"review input changed before descriptor open: {file}")
+        if opened.st_uid not in (0, os.geteuid()) or opened.st_mode & 0o022:
+            raise ReviewInputError(f"untrusted opened review input: {file}")
+        if opened.st_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"review input exceeds size limit: {file}")
+        working = stream.read(MAX_REVIEW_INPUT_BYTES + 1)
+        after_fd = os.fstat(stream.fileno())
+        if len(working) > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"review input exceeds size limit during read: {file}")
+        if stat_identity(opened) != stat_identity(after_fd):
+            raise ReviewInputError(f"review input changed during descriptor read: {file}")
+        return working
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -101,15 +150,25 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         file = root / relative
         if file.is_symlink() or not file.is_file() or file.resolve() != file:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
-        if git(root, "status", "--porcelain", "--", relative).strip():
-            raise ReviewInputError(f"review input has local changes: {relative}")
+        require_clean_index(root, head, relative)
+        blob_size_text = git(root, "cat-file", "-s", f"{head}:{relative}")
+        try:
+            blob_size = int(blob_size_text.strip())
+        except ValueError:
+            raise ReviewInputError(f"invalid committed review input size: {relative}") from None
+        if blob_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"committed review input exceeds size limit: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
+        if len(committed) != blob_size:
+            raise ReviewInputError(f"committed review input size changed: {relative}")
         before = file.lstat()
+        if before.st_size > MAX_REVIEW_INPUT_BYTES:
+            raise ReviewInputError(f"working review input exceeds size limit: {relative}")
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
             raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
-        working = file.read_bytes()
+        working = read_bounded_working_input(file, before)
         directory = root
         require_private_directory(directory)
         for component in Path(relative).parts[:-1]:
@@ -120,17 +179,12 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"hardlinked review input changed during read: {relative}")
         if after.st_uid not in (0, os.geteuid()) or after.st_mode & 0o022:
             raise ReviewInputError(f"review input owner or permissions changed during read: {relative}")
-        identity = lambda state: (
-            state.st_dev, state.st_ino, state.st_size,
-            state.st_mtime_ns, state.st_ctime_ns,
-        )
         if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
-                or identity(before) != identity(after)):
+                or stat_identity(before) != stat_identity(after)):
             raise ReviewInputError(f"review input changed during read: {relative}")
-        if git(root, "status", "--porcelain", "--", relative).strip():
-            raise ReviewInputError(f"review input changed during read: {relative}")
+        require_clean_index(root, head, relative)
         if committed != working:
-            raise ReviewInputError(f"review input differs from HEAD: {relative}")
+            raise ReviewInputError(f"review input has local changes: {relative}")
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
         entries.append({
             "path": relative,

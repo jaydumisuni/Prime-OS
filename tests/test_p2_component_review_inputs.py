@@ -141,14 +141,14 @@ def test_cli_fails_closed_and_emits_no_manifest_on_head_mismatch(tmp_path: Path)
 def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
-    def replaced_read(file: Path) -> bytes:
-        content = original_read(file)
+    original_read = module.read_bounded_working_input
+    def replaced_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
         if file == target:
             file.unlink()
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    monkeypatch.setattr(module, "read_bounded_working_input", replaced_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -160,13 +160,13 @@ def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeyp
 def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
-    def rewritten_read(file: Path) -> bytes:
-        content = original_read(file)
+    original_read = module.read_bounded_working_input
+    def rewritten_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
         if file == target:
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", rewritten_read)
+    monkeypatch.setattr(module, "read_bounded_working_input", rewritten_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -339,3 +339,99 @@ def test_git_replace_refs_cannot_substitute_pinned_commit_inputs(
         assert "local changes" in str(error) or "differs from HEAD" in str(error)
     else:
         raise AssertionError("Git replace ref substituted exact-head review authority")
+
+
+def test_review_input_status_never_executes_repository_clean_filter(
+    tmp_path: Path
+) -> None:
+    # Git status can run a repository-configured clean filter to compare a
+    # tracked file; review evidence must not execute checkout-supplied code.
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "filter-executed"
+    script = tmp_path / "hostile-clean-filter.sh"
+    script.write_text(
+        "#!/bin/sh\ncat\nprintf executed > " + shlex.quote(str(marker)) + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o700)
+    git(root, "config", "filter.reviewtest.clean", str(script))
+    relative = module.INPUTS[-1]
+    (root / ".gitattributes").write_text(relative + " filter=reviewtest\n", encoding="utf-8")
+    (root / relative).touch()
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass  # Rejecting untrusted filter authority is permitted.
+    assert not marker.exists(), "review preflight executed repository clean filter"
+
+
+def test_promisor_missing_blob_never_executes_repository_uploadpack(tmp_path: Path) -> None:
+    """Pinned review evidence must fail closed rather than fetch missing objects."""
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "untrusted-uploadpack-invoked"
+    uploadpack = tmp_path / "untrusted-uploadpack.sh"
+    uploadpack.write_text(
+        "#!/bin/sh\nprintf invoked >> " + shlex.quote(str(marker)) + "\nexit 1\n",
+        encoding="utf-8",
+    )
+    uploadpack.chmod(0o700)
+    git(root, "config", "remote.origin.url", str(tmp_path / "missing-remote"))
+    git(root, "config", "remote.origin.promisor", "true")
+    git(root, "config", "remote.origin.uploadpack", str(uploadpack))
+    git(root, "config", "extensions.partialClone", "origin")
+
+    blob = git(root, "rev-parse", f"HEAD:{module.INPUTS[0]}")
+    loose = root / ".git" / "objects" / blob[:2] / blob[2:]
+    assert loose.is_file(), "disposable fixture must have a loose committed blob"
+    loose.unlink()
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(root), "--expected-head", head],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert not marker.exists(), "review inspection launched repository-selected upload-pack"
+    assert "FAIL:" in result.stderr
+
+
+def test_rejects_oversized_committed_review_blob(tmp_path: Path) -> None:
+    """Review evidence must not materialize arbitrarily large committed blobs."""
+    root, _ = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    (root / relative).write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    git(root, "add", "--", relative)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: oversized review input")
+    head = git(root, "rev-parse", "HEAD")
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "size" in str(error) or "large" in str(error)
+    else:
+        raise AssertionError("oversized committed blob admitted as bounded review evidence")
+
+
+def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) -> None:
+    """The verified input pathname cannot redirect the actual file open."""
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    saved = tmp_path / "same-bytes-external-input"
+    real_open = module.os.open
+    opened = []
+
+    def substitute(path, flags, *args, **kwargs):
+        if Path(path) == target:
+            opened.append(True)
+            saved.write_bytes(target.read_bytes())
+            target.unlink()
+            target.symlink_to(saved)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", substitute)
+    try:
+        module.build_manifest(root, head)
+    except (module.ReviewInputError, OSError):
+        pass
+    else:
+        raise AssertionError("review input path substitution admitted")
+    assert opened, "review input was not opened through descriptor-bound custody"
