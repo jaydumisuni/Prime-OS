@@ -924,6 +924,54 @@ fn trusted_qemu_executable_owner(owner_uid: u32, worker_uid: u32) -> bool {
     owner_uid == worker_uid || owner_uid == 0
 }
 
+// A QEMU pathname admitted before plan construction must still refer to the
+// same executable inode afterwards. This is a preflight snapshot only;
+// the process launcher must separately enforce its own admission boundary.
+fn verify_qemu_stable(
+    qemu: &Path,
+    opened: &fs::File,
+    admitted: &fs::Metadata,
+) -> Result<(), WindowsVmError> {
+    if fs::canonicalize(qemu)? != qemu {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU path changed during plan construction",
+        ));
+    }
+    let worker_uid = unsafe { libc::geteuid() };
+    for directory in qemu.ancestors().skip(1) {
+        let parent = fs::symlink_metadata(directory)?;
+        if !parent.file_type().is_dir()
+            || !trusted_runtime_ancestor(parent.uid(), parent.permissions().mode(), worker_uid)
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "QEMU ancestor changed during plan construction",
+            ));
+        }
+    }
+    let after_open = opened.metadata()?;
+    let after_path = fs::symlink_metadata(qemu)?;
+    let unchanged = |current: &fs::Metadata| {
+        current.file_type().is_file()
+            && current.dev() == admitted.dev()
+            && current.ino() == admitted.ino()
+            && current.uid() == admitted.uid()
+            && current.gid() == admitted.gid()
+            && current.nlink() == 1
+            && current.len() == admitted.len()
+            && current.mtime() == admitted.mtime()
+            && current.mtime_nsec() == admitted.mtime_nsec()
+            && current.ctime() == admitted.ctime()
+            && current.ctime_nsec() == admitted.ctime_nsec()
+            && current.mode() == admitted.mode()
+    };
+    if !unchanged(&after_open) || !unchanged(&after_path) {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable changed during plan construction",
+        ));
+    }
+    Ok(())
+}
+
 // A private mode is not ownership: a different local principal can modify
 // its own 0600 file or 0700 directory after this worker has inspected it.
 fn validate_runtime_owner(owner_uid: u32, worker_uid: u32) -> Result<(), WindowsVmError> {
@@ -940,7 +988,8 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
     }
     let qemu = fs::canonicalize(&request.qemu_binary)?;
-    let qemu_meta = fs::metadata(&qemu)?;
+    let qemu_file = fs::File::open(&qemu)?;
+    let qemu_meta = qemu_file.metadata()?;
     let worker_uid = unsafe { libc::geteuid() };
     if !trusted_qemu_executable_owner(qemu_meta.uid(), worker_uid) {
         return Err(WindowsVmError::InvalidPlan(
@@ -1161,6 +1210,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     // Reject a replacement after argument construction as well; QEMU launch
     // must still independently revalidate this admission snapshot.
     verify_overlay_stable(&request.overlay_image, &overlay_file, &overlay_meta)?;
+    verify_qemu_stable(&qemu, &qemu_file, &qemu_meta)?;
     Ok(QemuPlan {
         program: qemu,
         args,
@@ -1290,6 +1340,51 @@ mod guest_image_identity_tests {
     }
 
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn qemu_executable_path_replacement_is_not_admitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let qemu = dir.path().join("qemu");
+        let moved = dir.path().join("qemu-original");
+        fs::write(&qemu, b"executable-fixture").unwrap();
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+        let opened = fs::File::open(&qemu).unwrap();
+        let admitted = opened.metadata().unwrap();
+        assert!(verify_qemu_stable(&qemu, &opened, &admitted).is_ok());
+        fs::rename(&qemu, &moved).unwrap();
+        fs::write(&qemu, b"executable-fixture").unwrap();
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(verify_qemu_stable(&qemu, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn qemu_executable_in_place_change_is_not_admitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let qemu = dir.path().join("qemu");
+        fs::write(&qemu, b"executable-fixture").unwrap();
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+        let opened = fs::File::open(&qemu).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::write(&qemu, b"changed-executable-fixture").unwrap();
+        assert!(verify_qemu_stable(&qemu, &opened, &admitted).is_err());
+    }
+
+    #[test]
+    fn qemu_executable_parent_symlink_swap_is_not_admitted() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("bin");
+        let relocated = dir.path().join("relocated");
+        fs::create_dir(&parent).unwrap();
+        let qemu = parent.join("qemu");
+        fs::write(&qemu, b"executable-fixture").unwrap();
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+        let opened = fs::File::open(&qemu).unwrap();
+        let admitted = opened.metadata().unwrap();
+        fs::rename(&parent, &relocated).unwrap();
+        symlink(&relocated, &parent).unwrap();
+        assert!(verify_qemu_stable(&qemu, &opened, &admitted).is_err());
+    }
 
     #[test]
     fn overlay_header_path_replacement_is_not_admitted() {
