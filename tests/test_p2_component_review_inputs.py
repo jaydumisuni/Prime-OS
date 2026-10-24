@@ -311,3 +311,31 @@ def test_repository_fsmonitor_is_never_executed_by_review_git(tmp_path: Path) ->
     result = module.build_manifest(root, head)
     assert result["candidate_head"] == head
     assert not marker.exists(), "review inspection executed repository-configured fsmonitor"
+
+def test_git_replace_refs_cannot_substitute_pinned_commit_inputs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Git replacement refs can report clean status and the expected HEAD
+    # while returning bytes from a different commit for HEAD:path.
+    monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
+    root, head = sample_repo(tmp_path)
+    for relative in module.INPUTS:
+        (root / relative).write_text(f"substituted input: {relative}\n", encoding="utf-8")
+    git(root, "add", "--", *module.INPUTS)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "untrusted substitute commit")
+    alternate = git(root, "rev-parse", "HEAD")
+    git(root, "checkout", "-q", head)
+    git(root, "replace", head, alternate)
+    for relative in module.INPUTS:
+        (root / relative).write_text(f"substituted input: {relative}\n", encoding="utf-8")
+    git(root, "add", "--", *module.INPUTS)
+    assert git(root, "rev-parse", "HEAD") == head
+    assert not git(root, "status", "--porcelain", "--", *module.INPUTS)
+    assert git(root, "show", f"{head}:{module.INPUTS[0]}").startswith("substituted input")
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "local changes" in str(error) or "differs from HEAD" in str(error)
+    else:
+        raise AssertionError("Git replace ref substituted exact-head review authority")

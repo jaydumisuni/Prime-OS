@@ -36,6 +36,9 @@ def git(repo: Path, *args: str) -> bytes:
                    if not key.startswith("GIT_")}
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
+    # refs/replace can substitute Git object bytes without changing HEAD.
+    # Disable local replacement refs before reading pinned review evidence.
+    trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
     result = subprocess.run(
         ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
         capture_output=True, check=False, env=trusted_env,
