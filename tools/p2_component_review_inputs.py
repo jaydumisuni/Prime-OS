@@ -107,7 +107,12 @@ def stat_identity(state: os.stat_result) -> tuple[int, int, int, int, int]:
 
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
-    fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    # The checked regular pathname can be replaced by a FIFO before open.
+    # O_NONBLOCK prevents a read-only review from hanging before fstat rejects it.
+    fd = os.open(
+        file,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+    )
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
         if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1

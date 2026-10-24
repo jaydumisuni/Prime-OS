@@ -411,6 +411,36 @@ def test_rejects_oversized_committed_review_blob(tmp_path: Path) -> None:
         raise AssertionError("oversized committed blob admitted as bounded review evidence")
 
 
+def test_fifo_swap_at_descriptor_open_is_nonblocking_and_rejected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An attacker must not stall read-only evidence by swapping in a FIFO."""
+    import os
+
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    real_open = os.open
+    swapped = False
+
+    def swap_to_fifo(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if Path(path) == target and not swapped:
+            assert flags & os.O_NONBLOCK, "review input open could block on a FIFO"
+            target.unlink()
+            os.mkfifo(target, 0o600)
+            swapped = True
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", swap_to_fifo)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed before descriptor open" in str(error)
+    else:
+        raise AssertionError("FIFO substitution admitted as regular review input")
+    assert swapped, "adversarial FIFO replacement was not exercised"
+
+
 def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) -> None:
     """The verified input pathname cannot redirect the actual file open."""
     root, head = sample_repo(tmp_path)
