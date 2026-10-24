@@ -35,7 +35,7 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env = {key: value for key, value in os.environ.items()
                    if not key.startswith("GIT_")}
     # Repository or inherited Git config may name an executable fsmonitor.
-    # `git status` must never invoke it while constructing review evidence.
+    # Git metadata reads must not invoke checkout-controlled monitors.
     # refs/replace can substitute Git object bytes without changing HEAD.
     # Disable local replacement refs before reading pinned review evidence.
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
@@ -46,6 +46,24 @@ def git(repo: Path, *args: str) -> bytes:
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout
+
+
+def require_clean_index(repo: Path, head: str, relative: str) -> None:
+    """Check staged identity against HEAD without invoking clean filters."""
+    try:
+        tree = git(repo, "ls-tree", head, "--", relative).decode().splitlines()
+        index = git(repo, "ls-files", "--stage", "--", relative).decode().splitlines()
+        if len(tree) != 1 or len(index) != 1:
+            raise ValueError("missing or unmerged index entry")
+        tree_fields, tree_path = tree[0].split("\t", 1)
+        index_fields, index_path = index[0].split("\t", 1)
+        tree_mode, kind, tree_blob = tree_fields.split()
+        index_mode, index_blob, stage = index_fields.split()
+        if (kind != "blob" or tree_path != relative or index_path != relative
+                or stage != "0" or tree_mode != index_mode or tree_blob != index_blob):
+            raise ValueError("index differs from committed tree")
+    except (ValueError, UnicodeDecodeError):
+        raise ReviewInputError(f"review input has local changes: {relative}") from None
 
 
 def require_private_directory(directory: Path) -> None:
@@ -101,8 +119,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         file = root / relative
         if file.is_symlink() or not file.is_file() or file.resolve() != file:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
-        if git(root, "status", "--porcelain", "--", relative).strip():
-            raise ReviewInputError(f"review input has local changes: {relative}")
+        require_clean_index(root, head, relative)
         committed = git(root, "show", f"{head}:{relative}")
         before = file.lstat()
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
@@ -127,10 +144,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
                 or identity(before) != identity(after)):
             raise ReviewInputError(f"review input changed during read: {relative}")
-        if git(root, "status", "--porcelain", "--", relative).strip():
-            raise ReviewInputError(f"review input changed during read: {relative}")
+        require_clean_index(root, head, relative)
         if committed != working:
-            raise ReviewInputError(f"review input differs from HEAD: {relative}")
+            raise ReviewInputError(f"review input has local changes: {relative}")
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
         entries.append({
             "path": relative,
