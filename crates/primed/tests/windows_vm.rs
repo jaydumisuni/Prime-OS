@@ -348,6 +348,50 @@ fn qemu_plan_rejects_qcow2_v3_header_spilling_past_first_cluster() {
 }
 
 #[test]
+fn qemu_plan_rejects_nonzero_unadmitted_qcow2_v3_extended_header() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // The fixed v3 header is 104 bytes. Unknown nonzero fields in a longer
+    // declared header are not part of the admitted W8 VM state contract.
+    // All cases fit inside the first cluster and the on-disk file.
+    for (header_len, changed_byte) in [(112u32, 104usize), (112, 111), (520, 519)] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes.resize(header_len as usize, 0);
+        bytes[100..104].copy_from_slice(&header_len.to_be_bytes());
+        bytes[changed_byte] = 0x80;
+        fs::write(&overlay, bytes).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("extended header"),
+            "length {header_len}, byte {changed_byte}: {error}"
+        );
+    }
+
+    // Zero-filled extended header space remains admissible to this narrow
+    // preflight. No test here establishes guest boot or qcow2 integrity.
+    for header_len in [104u32, 112, 520] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes.resize(header_len as usize, 0);
+        bytes[100..104].copy_from_slice(&header_len.to_be_bytes());
+        fs::write(&overlay, bytes).unwrap();
+        assert!(build_qemu_plan(&request).is_ok(), "length {header_len}");
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_oversized_qcow2_v3_refcount_order() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

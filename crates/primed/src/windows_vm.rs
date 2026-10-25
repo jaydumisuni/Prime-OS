@@ -1263,6 +1263,19 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
                 "qcow2 v3 declared header exceeds first cluster",
             ));
         }
+        // The fixed v3 header ends at byte 104. A longer declared header
+        // introduces fields that W8 does not yet interpret or authorize.
+        // Permit zero-filled future space, but reject nonzero extended fields
+        // before handing the overlay to QEMU. The geometry bound above caps
+        // this read to one qcow2 cluster (at most 2 MiB).
+        let extra_header_len = (declared_header_length - 104) as usize;
+        let mut extra_header = vec![0u8; extra_header_len];
+        overlay_file.read_exact(&mut extra_header)?;
+        if extra_header.iter().any(|byte| *byte != 0) {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 v3 extended header contains unadmitted fields",
+            ));
+        }
     }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
