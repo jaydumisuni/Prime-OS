@@ -535,10 +535,23 @@ pub fn plan_component_rollback(
 pub fn plan_component_rollback_checked(
     current: &InstalledComponent,
     retained: &InstalledComponent,
+    retained_manifest: &PrimeComponentManifest,
     installed: &[InstalledComponent],
     installed_manifests: &[PrimeComponentManifest],
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
     let plan = plan_component_rollback(current, retained)?;
+    // The retained manifest is separately authenticated by the caller. A
+    // digest-only rollback target cannot prove the post-rollback dependency
+    // graph, so bind its exact identity before issuing a checked plan.
+    validate_component_manifest(retained_manifest)?;
+    if retained_manifest.component_id != retained.component_id
+        || retained_manifest.revision != retained.revision
+        || retained_manifest.package_digest != retained.package_digest
+    {
+        return Err(ComponentAdmissionError::InstalledManifestMismatch(
+            retained.component_id.clone(),
+        ));
+    }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     let observed = manifests
         .get(current.component_id.as_str())
@@ -578,6 +591,27 @@ pub fn plan_component_rollback_checked(
             }
         }
     }
+
+    // Check the resulting inventory, not just the currently installed one.
+    // An authenticated retained package can introduce a new dependency on an
+    // installed dependent, creating a cycle that the old inventory lacks.
+    let mut resulting_installed = installed.to_vec();
+    for component in &mut resulting_installed {
+        if component.component_id == current.component_id {
+            *component = retained.clone();
+        }
+    }
+    let resulting_manifests: Vec<_> = installed_manifests
+        .iter()
+        .map(|manifest| {
+            if manifest.component_id == current.component_id {
+                retained_manifest.clone()
+            } else {
+                manifest.clone()
+            }
+        })
+        .collect();
+    index_installed_manifests(&resulting_installed, &resulting_manifests)?;
     Ok(plan)
 }
 
@@ -2376,6 +2410,78 @@ mod tests {
     }
 
     #[test]
+    fn checked_rollback_rejects_cycle_introduced_by_retained_manifest() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut current_manifest = manifest(b"current");
+        current_manifest.revision = current.revision;
+        current_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = current_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.dependencies = vec![ComponentDependency {
+            component_id: consumer.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: current.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let installed = [current.clone(), consumer.clone()];
+        let manifests = [current_manifest, consumer_manifest];
+        assert!(index_installed_manifests(&installed, &manifests).is_ok());
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+        retained_manifest.dependencies.clear();
+        assert!(plan_component_rollback_checked(
+            &current,
+            &retained,
+            &retained_manifest,
+            &installed,
+            &manifests
+        )
+        .is_ok());
+        retained_manifest.package_digest = current.package_digest.clone();
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::InstalledManifestMismatch(_))
+        ));
+    }
+
+    #[test]
     fn checked_rollback_rejects_cyclic_installed_dependency_inventory() {
         let current = InstalledComponent {
             component_id: "origins.runtime".to_owned(),
@@ -2400,6 +2506,9 @@ mod tests {
             minimum_revision: 1,
             exact_package_digest: None,
         }];
+        let mut retained_manifest = target_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
         consumer_manifest.revision = consumer.revision;
@@ -2413,6 +2522,7 @@ mod tests {
             plan_component_rollback_checked(
                 &current,
                 &retained,
+                &retained_manifest,
                 &[current.clone(), consumer],
                 &[target_manifest, consumer_manifest],
             ),
@@ -2441,6 +2551,9 @@ mod tests {
         let mut target_manifest = manifest(b"target");
         target_manifest.revision = current.revision;
         target_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = target_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
         consumer_manifest.revision = consumer.revision;
@@ -2454,6 +2567,7 @@ mod tests {
             plan_component_rollback_checked(
                 &current,
                 &retained,
+                &retained_manifest,
                 &installed,
                 &[target_manifest.clone(), consumer_manifest.clone()],
             )
@@ -2503,6 +2617,9 @@ mod tests {
         let mut target_manifest = manifest(b"target");
         target_manifest.revision = current.revision;
         target_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = target_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
         consumer_manifest.revision = consumer.revision;
@@ -2514,7 +2631,7 @@ mod tests {
         }];
         let manifests = [target_manifest.clone(), consumer_manifest.clone()];
         assert!(matches!(
-            plan_component_rollback_checked(&current, &retained, &installed, &manifests),
+            plan_component_rollback_checked(&current, &retained, &retained_manifest, &installed, &manifests),
             Err(ComponentAdmissionError::DependentRevisionFloor {
                 component_id, dependent_id, minimum_revision: 3
             }) if component_id == current.component_id && dependent_id == consumer.component_id
@@ -2525,7 +2642,7 @@ mod tests {
             Some(current.package_digest.clone());
         assert!(matches!(
             plan_component_rollback_checked(
-                &current, &retained, &installed, &[target_manifest.clone(), consumer_manifest.clone()]
+                &current, &retained, &retained_manifest, &installed, &[target_manifest.clone(), consumer_manifest.clone()]
             ),
             Err(ComponentAdmissionError::DependentDigestPinned { component_id, dependent_id })
                 if component_id == current.component_id && dependent_id == consumer.component_id
@@ -2535,6 +2652,7 @@ mod tests {
         let plan = plan_component_rollback_checked(
             &current,
             &retained,
+            &retained_manifest,
             &installed,
             &[target_manifest.clone(), consumer_manifest.clone()],
         )
@@ -2547,14 +2665,14 @@ mod tests {
         assert_eq!(plan.target_package_digest, DIGEST_A);
 
         assert!(matches!(
-            plan_component_rollback_checked(&current, &retained, &installed, &[target_manifest.clone()]),
+            plan_component_rollback_checked(&current, &retained, &retained_manifest, &installed, &[target_manifest.clone()]),
             Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
         ));
         let mut forged_current = current.clone();
         forged_current.package_digest = format!("sha256:{}", "c".repeat(64));
         assert!(matches!(
             plan_component_rollback_checked(
-                &forged_current, &retained, &installed, &[target_manifest, consumer_manifest]
+                &forged_current, &retained, &retained_manifest, &installed, &[target_manifest, consumer_manifest]
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == current.component_id
         ));
