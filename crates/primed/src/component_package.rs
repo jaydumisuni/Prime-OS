@@ -829,6 +829,17 @@ fn validate_dependencies(
     Ok(())
 }
 
+#[cfg(unix)]
+fn private_package_inode(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // A path can be canonical and singly linked yet writable by a different
+    // account. Never admit an inode that a peer can alter during verification.
+    metadata.is_file()
+        && metadata.nlink() == 1
+        && (metadata.uid() == 0 || metadata.uid() == unsafe { libc::geteuid() })
+        && metadata.mode() & 0o022 == 0
+}
+
 fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     if !path.is_absolute() {
         return Err(ComponentAdmissionError::UnsafePackagePath);
@@ -838,11 +849,8 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 {
-            return Err(ComponentAdmissionError::UnsafePackagePath);
-        }
+    if !private_package_inode(&metadata) {
+        return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     // A regular final file can still be reached through a symlinked parent.
     // Reject aliases and traversal so the admitted package path is canonical.
@@ -855,10 +863,10 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
 #[cfg(unix)]
 fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
-    before.is_file()
-        && after.is_file()
-        && before.nlink() == 1
-        && after.nlink() == 1
+    private_package_inode(before)
+        && private_package_inode(after)
+        && before.uid() == after.uid()
+        && before.mode() == after.mode()
         && before.dev() == after.dev()
         && before.ino() == after.ino()
         && before.len() == after.len()
@@ -888,8 +896,8 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
             })?;
         let opened = file.metadata()?;
         let named = fs::symlink_metadata(path)?;
-        if !opened.is_file()
-            || opened.nlink() != 1
+        if !private_package_inode(&opened)
+            || !private_package_inode(&named)
             || opened.dev() != named.dev()
             || opened.ino() != named.ino()
             || fs::canonicalize(path)? != path
@@ -918,6 +926,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         let after = file.metadata()?;
         let named = fs::symlink_metadata(path)?;
         if !stable_package_metadata(&opened_metadata, &after)
+            || !private_package_inode(&named)
             || named.dev() != opened_metadata.dev()
             || named.ino() != opened_metadata.ino()
             || fs::canonicalize(path)? != path
@@ -2156,6 +2165,44 @@ mod tests {
             ));
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_peer_writable_inode() {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = b"p2-private-package-custody";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        for mode in [0o620, 0o602] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &manifest,
+                &context(&[]),
+                |_| true,
+                |_, _| true,
+            ),
+            Ok(ComponentAdmissionOutcome::Ready(_))
+        ));
+        assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
+    }
+
     #[cfg(unix)]
     #[test]
     fn offline_package_rejects_hardlinked_external_alias() {
