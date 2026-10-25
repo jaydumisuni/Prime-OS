@@ -348,6 +348,47 @@ fn qemu_plan_rejects_qcow2_v3_header_spilling_past_first_cluster() {
 }
 
 #[test]
+fn qemu_plan_rejects_oversized_qcow2_v3_refcount_order() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // QEMU's qcow2 format contract: refcount_bits = 1 << refcount_order;
+    // a v3 order greater than 6 cannot describe a supported refcount.
+    // Header-only preflight must reject it before producing a QEMU plan.
+    for invalid_order in [7u32, u32::MAX] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes[96..100].copy_from_slice(&invalid_order.to_be_bytes());
+        fs::write(&overlay, bytes).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("qcow2"),
+            "{invalid_order}: {error}"
+        );
+    }
+
+    // Both a zero order and the documented maximum remain admitted at
+    // this narrow header boundary, without claiming guest bootability.
+    for valid_order in [0u32, 4, 6] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes[96..100].copy_from_slice(&valid_order.to_be_bytes());
+        fs::write(&overlay, bytes).unwrap();
+        assert!(build_qemu_plan(&request).is_ok(), "{valid_order}");
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_invalid_qcow2_cluster_geometry() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

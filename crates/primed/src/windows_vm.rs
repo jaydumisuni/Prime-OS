@@ -1177,6 +1177,15 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     }
     if qcow2_version == 3 {
         overlay_file.read_exact(&mut qcow2_prefix[72..])?;
+        // The qcow2 v3 refcount width is 1 << refcount_order bits. QEMU's
+        // documented format bounds the order at 6 (64-bit refcounts).
+        // Reject impossible metadata before emitting an executable VM plan.
+        let refcount_order = u32::from_be_bytes(qcow2_prefix[96..100].try_into().unwrap());
+        if refcount_order > 6 {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 v3 refcount order exceeds supported width",
+            ));
+        }
         // qcow2 incompatible feature bit 2 enables a separate data file.
         // Its pathname is not part of this VM plan's admitted authority.
         let incompatible = u64::from_be_bytes(qcow2_prefix[72..80].try_into().unwrap());
