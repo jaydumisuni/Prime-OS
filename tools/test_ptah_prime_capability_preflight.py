@@ -106,6 +106,20 @@ class PrimePtahPreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(SnapshotRejected, "capability identity"):
             check(p, c)
 
+    def test_any_future_observation_is_not_current_evidence(self):
+        # An offline snapshot has no independently established clock-skew authority.
+        # Even subsecond future observations cannot certify current health.
+        for delta in (timedelta(microseconds=1), timedelta(seconds=59),
+                      timedelta(minutes=1)):
+            with self.subTest(delta=delta):
+                p, c = fixtures()
+                c["health"]["observed_at"] = (NOW + delta).isoformat()
+                with self.assertRaisesRegex(SnapshotRejected, "future"):
+                    check(p, c)
+        p, c = fixtures()
+        c["health"]["observed_at"] = NOW.isoformat()
+        self.assertTrue(check(p, c)["candidate_compatible"])
+
     def test_exact_five_minute_freshness_boundary(self):
         p, c = fixtures()
         c["health"]["observed_at"] = "2026-10-25T19:45:00Z"
