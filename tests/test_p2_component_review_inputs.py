@@ -465,3 +465,19 @@ def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) ->
     else:
         raise AssertionError("review input path substitution admitted")
     assert opened, "review input was not opened through descriptor-bound custody"
+
+def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """An unresponsive Git metadata probe must not hang review custody."""
+    root, head = sample_repo(tmp_path)
+
+    def timeout_git(*args, **kwargs):
+        assert kwargs["timeout"] == module.GIT_READ_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(module.subprocess, "run", timeout_git)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "Git verification timed out" in str(error)
+    else:
+        raise AssertionError("timed-out Git probe admitted review evidence")
