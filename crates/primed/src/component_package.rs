@@ -110,9 +110,9 @@ impl ComponentTransactionState {
                             || matches!(
                                 c as u32,
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B
-                                    | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0x2800 | 0x3164
-                                    | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0001
-                                    | 0xE0020..=0xE007F | 0xE0100..=0xE01EF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
+                                    | 0x200C | 0x200D | 0x2060..=0x206F | 0x2800 | 0x3164
+                                    | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
+                                    | 0xE0000..=0xE0FFF | 0xE0100..=0xE01EF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
                     })
@@ -1933,6 +1933,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_reserved_invisible_ranges() {
+        use ComponentTransactionState as State;
+
+        // Reserved format and tag code points are not whitespace or control
+        // characters, but cannot supply trustworthy human-readable evidence.
+        for point in [0x2065, 0xFFF0, 0xFFF8, 0xE0080, 0xE0FFF] {
+            let mark = char::from_u32(point).unwrap();
+            for reason in [mark.to_string(), format!("disk{mark}failure")] {
+                for next in [
+                    State::Failed {
+                        reason: reason.clone(),
+                    },
+                    State::RecoveryRequired {
+                        reason: reason.clone(),
+                    },
+                ] {
+                    assert_eq!(
+                        State::Applying.advance(next),
+                        Err(ComponentTransactionTransitionError),
+                        "reserved invisible mark accepted: U+{point:06X}"
+                    );
+                }
+                assert_eq!(
+                    (State::Failed {
+                        reason: reason.clone(),
+                    })
+                    .advance(State::RecoveryRequired {
+                        reason: "restore previous package".into(),
+                    }),
+                    Err(ComponentTransactionTransitionError),
+                    "reserved prior failure reason accepted: U+{point:06X}"
+                );
+                assert_eq!(
+                    (State::RecoveryRequired { reason }).advance(State::RolledBack),
+                    Err(ComponentTransactionTransitionError),
+                    "reserved recovery reason allowed rollback: U+{point:06X}"
+                );
+            }
+        }
+        assert!(State::Applying
+            .advance(State::Failed {
+                reason: "disk failure".into(),
+            })
+            .is_ok());
     }
 
     #[test]
