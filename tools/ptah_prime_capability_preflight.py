@@ -85,7 +85,7 @@ def preflight_snapshot(
     if capability.get("availability") != "AVAILABLE" or health.get("status") != "HEALTHY":
         raise SnapshotRejected("capability is not observed healthy and available")
     observed = _observation(health.get("observed_at"))
-    if observed > now_utc + timedelta(minutes=1) or now_utc - observed > max_age:
+    if observed > now_utc or now_utc - observed > max_age:
         raise SnapshotRejected("capability observation is stale or in the future")
 
     return {
