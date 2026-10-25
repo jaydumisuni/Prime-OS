@@ -190,6 +190,8 @@ pub enum ComponentAdmissionError {
     MissingInstalledManifest(String),
     #[error("installed component {0} manifest disagrees with its inventory identity")]
     InstalledManifestMismatch(String),
+    #[error("candidate component {0} manifest disagrees with the verified package identity")]
+    CandidateManifestMismatch(String),
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
     #[error("installed component dependency graph contains a cycle through {0}")]
@@ -293,10 +295,24 @@ pub fn plan_component_transaction_checked(
     package: &VerifiedComponentPackage,
     installed: &[InstalledComponent],
     installed_manifests: &[PrimeComponentManifest],
+    candidate_manifest: &PrimeComponentManifest,
 ) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
     let plan = plan_component_transaction(package, installed)?;
+    // The caller separately authenticates the candidate manifest. A package
+    // digest alone does not prove its post-install/update dependencies.
+    validate_component_manifest(candidate_manifest)?;
+    if candidate_manifest.component_id != package.component_id
+        || candidate_manifest.revision != package.revision
+        || candidate_manifest.package_digest != package.package_digest
+        || candidate_manifest.version != package.version
+        || candidate_manifest.publisher_id != package.publisher_id
+    {
+        return Err(ComponentAdmissionError::CandidateManifestMismatch(
+            package.component_id.clone(),
+        ));
+    }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
-    if matches!(plan.kind, ComponentTransactionKind::Update { .. }) {
+    if matches!(&plan.kind, ComponentTransactionKind::Update { .. }) {
         for manifest in manifests.values() {
             if manifest.component_id != package.component_id
                 && manifest.dependencies.iter().any(|dep| {
@@ -310,6 +326,31 @@ pub fn plan_component_transaction_checked(
             }
         }
     }
+    // A previously valid inventory may become cyclic after an update.
+    // Recheck the complete proposed graph before returning a checked plan.
+    let mut resulting_installed = installed.to_vec();
+    let mut resulting_manifests = installed_manifests.to_vec();
+    let replacement = InstalledComponent {
+        component_id: package.component_id.clone(),
+        revision: package.revision,
+        package_digest: package.package_digest.clone(),
+    };
+    if matches!(&plan.kind, ComponentTransactionKind::Install) {
+        resulting_installed.push(replacement);
+        resulting_manifests.push(candidate_manifest.clone());
+    } else {
+        let current = resulting_installed
+            .iter_mut()
+            .find(|item| item.component_id == package.component_id)
+            .expect("checked update has an installed target");
+        *current = replacement;
+        let current_manifest = resulting_manifests
+            .iter_mut()
+            .find(|item| item.component_id == package.component_id)
+            .expect("complete installed manifest inventory was checked");
+        *current_manifest = candidate_manifest.clone();
+    }
+    index_installed_manifests(&resulting_installed, &resulting_manifests)?;
     Ok(plan)
 }
 
@@ -2418,6 +2459,10 @@ mod tests {
             version: "3.0.0".to_owned(),
             publisher_id: "thetechguy.origins".to_owned(),
         };
+        let mut candidate_manifest = target_manifest.clone();
+        candidate_manifest.revision = package.revision;
+        candidate_manifest.version = package.version.clone();
+        candidate_manifest.package_digest = package.package_digest.clone();
         let installed = [target.clone(), consumer.clone()];
         assert!(matches!(
             plan_component_transaction(&package, &installed)
@@ -2427,7 +2472,8 @@ mod tests {
         ));
         assert!(matches!(
             plan_component_transaction_checked(
-                &package, &installed, &[target_manifest.clone(), consumer_manifest.clone()]
+                &package, &installed, &[target_manifest.clone(), consumer_manifest.clone()],
+                &candidate_manifest,
             ),
             Err(ComponentAdmissionError::DependentDigestPinned { component_id, dependent_id })
                 if component_id == target.component_id && dependent_id == consumer.component_id
@@ -2437,22 +2483,103 @@ mod tests {
             plan_component_transaction_checked(
                 &package,
                 &installed,
-                &[target_manifest.clone(), consumer_manifest.clone()]
+                &[target_manifest.clone(), consumer_manifest.clone()],
+                &candidate_manifest,
             )
             .unwrap()
             .kind,
             ComponentTransactionKind::Update { .. }
         ));
         assert!(matches!(
-            plan_component_transaction_checked(&package, &installed, &[target_manifest.clone()]),
+            plan_component_transaction_checked(&package, &installed, &[target_manifest.clone()], &candidate_manifest),
             Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
         ));
         consumer_manifest.package_digest = DIGEST_A.to_owned();
         assert!(matches!(
             plan_component_transaction_checked(
-                &package, &installed, &[target_manifest, consumer_manifest]
+                &package, &installed, &[target_manifest, consumer_manifest],
+                &candidate_manifest,
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_update_rejects_cycle_from_authenticated_candidate() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut current_manifest = manifest(b"current");
+        current_manifest.package_digest = current.package_digest.clone();
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: current.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let installed = [current.clone(), consumer.clone()];
+        let manifests = [current_manifest.clone(), consumer_manifest];
+        assert!(index_installed_manifests(&installed, &manifests).is_ok());
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/new-component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: current.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let mut candidate = current_manifest;
+        candidate.revision = package.revision;
+        candidate.version = package.version.clone();
+        candidate.package_digest = package.package_digest.clone();
+        candidate.dependencies = vec![ComponentDependency {
+            component_id: consumer.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        // A <- B is valid, but updating A to depend on B creates A <-> B.
+        assert!(plan_component_transaction(&package, &installed).is_ok());
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &installed, &manifests, &candidate),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+        candidate.dependencies.clear();
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &installed, &manifests, &candidate)
+                .unwrap().kind,
+            ComponentTransactionKind::Update { .. }
+        ));
+        for field in 0..4 {
+            let mut forged = candidate.clone();
+            match field {
+                0 => forged.revision += 1,
+                1 => forged.package_digest = DIGEST_A.to_owned(),
+                2 => forged.version = "4.0.0".to_owned(),
+                _ => forged.publisher_id = "thetechguy.other".to_owned(),
+            }
+            assert!(matches!(
+                plan_component_transaction_checked(&package, &installed, &manifests, &forged),
+                Err(ComponentAdmissionError::CandidateManifestMismatch(_))
+            ));
+        }
+        candidate.dependencies = vec![ComponentDependency {
+            component_id: "missing.runtime".to_owned(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &installed, &manifests, &candidate),
+            Err(ComponentAdmissionError::DependencyMissing(_))
         ));
     }
 
