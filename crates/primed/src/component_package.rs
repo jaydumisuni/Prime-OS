@@ -839,8 +839,8 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.nlink() != 1 || metadata.permissions().mode() & 0o022 != 0 {
             return Err(ComponentAdmissionError::UnsafePackagePath);
         }
     }
@@ -857,6 +857,8 @@ fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool 
     use std::os::unix::fs::MetadataExt;
     before.is_file()
         && after.is_file()
+        && before.permissions().mode() & 0o022 == 0
+        && before.mode() == after.mode()
         && before.nlink() == 1
         && after.nlink() == 1
         && before.dev() == after.dev()
@@ -874,7 +876,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
     // and O_NONBLOCK prevent a symlink escape or blocking FIFO substitution.
     #[cfg(unix)]
     let (mut file, opened_metadata) = {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
         let file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -890,6 +892,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         let named = fs::symlink_metadata(path)?;
         if !opened.is_file()
             || opened.nlink() != 1
+            || opened.permissions().mode() & 0o022 != 0
             || opened.dev() != named.dev()
             || opened.ino() != named.ino()
             || fs::canonicalize(path)? != path
@@ -1043,6 +1046,44 @@ mod tests {
                 |_, _| true,
             ),
             Err(ComponentAdmissionError::SignatureRejected)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_peer_writable_inode_before_admission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let item = manifest(bytes);
+        for mode in [0o660, 0o606, 0o666] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &item,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "peer-writable package mode {mode:o} was admitted");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "direct hashing admitted peer-writable mode {mode:o}");
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &item,
+                &context(&[]),
+                |_| true,
+                |_, _| true,
+            ),
+            Ok(ComponentAdmissionOutcome::Ready(_))
         ));
     }
 
