@@ -686,6 +686,40 @@ pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVm
     Ok(())
 }
 
+// A guest-image pathname can be swapped after its regular-file admission.
+// Ordinary File::open would wait indefinitely on a replacement FIFO with no
+// writer. Open without following symlinks or waiting on special files, then
+// bind the descriptor to the admitted inode before hashing any guest bytes.
+fn open_admitted_guest_image(
+    image: &Path,
+    admitted: &fs::Metadata,
+) -> Result<fs::File, WindowsVmError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(image)?;
+    let actual = opened.metadata()?;
+    if !actual.file_type().is_file()
+        || actual.dev() != admitted.dev()
+        || actual.ino() != admitted.ino()
+        || actual.uid() != admitted.uid()
+        || actual.gid() != admitted.gid()
+        || actual.nlink() != admitted.nlink()
+        || actual.len() != admitted.len()
+        || actual.mode() != admitted.mode()
+        || actual.mtime() != admitted.mtime()
+        || actual.mtime_nsec() != admitted.mtime_nsec()
+        || actual.ctime() != admitted.ctime()
+        || actual.ctime_nsec() != admitted.ctime_nsec()
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image changed before digest read",
+        ));
+    }
+    Ok(opened)
+}
+
 // The digest must describe the same inode that was admitted and is still
 // reachable at the declared guest-image pathname after the final read.
 fn verify_guest_image_stable(
@@ -917,7 +951,7 @@ pub fn validate_guest_definition(
     if metadata.len() == 0 {
         return Err(WindowsVmError::InvalidGuest("base image is empty"));
     }
-    let mut file = fs::File::open(&image)?;
+    let mut file = open_admitted_guest_image(&image, &metadata)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 1024];
     loop {
@@ -1329,6 +1363,30 @@ fn parse_usb_node(path: &Path) -> Result<(u16, u16), WindowsVmError> {
 #[cfg(test)]
 mod vm_runtime_owner_tests {
     use super::*;
+
+    #[test]
+    fn guest_digest_open_rejects_fifo_and_symlink_swaps_without_waiting() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("guest.qcow2");
+        fs::write(&image, b"admitted guest bytes").unwrap();
+        let admitted = fs::symlink_metadata(&image).unwrap();
+        fs::remove_file(&image).unwrap();
+
+        let c_path = CString::new(image.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        // No writer exists: a blocking File::open would hang this regression.
+        let error = open_admitted_guest_image(&image, &admitted).unwrap_err();
+        assert!(matches!(error, WindowsVmError::InvalidGuest(_)));
+
+        fs::remove_file(&image).unwrap();
+        let replacement = dir.path().join("replacement.qcow2");
+        fs::write(&replacement, b"untrusted guest bytes").unwrap();
+        std::os::unix::fs::symlink(&replacement, &image).unwrap();
+        assert!(open_admitted_guest_image(&image, &admitted).is_err());
+    }
 
     #[test]
     fn foreign_owned_guest_image_inode_is_not_trusted_by_readonly_mode() {
