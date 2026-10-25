@@ -1202,6 +1202,17 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             ));
         }
     }
+    // Magic and version alone do not describe a usable qcow2 disk. QEMU's
+    // supported cluster size is 512 bytes through 2 MiB (bits 9..=21), and
+    // the virtual disk size must be positive and fit the signed size domain.
+    // Keep this host-only geometry preflight separate from full image proof.
+    let cluster_bits = u32::from_be_bytes(qcow2_prefix[20..24].try_into().unwrap());
+    let virtual_size = u64::from_be_bytes(qcow2_prefix[24..32].try_into().unwrap());
+    if !(9..=21).contains(&cluster_bits) || virtual_size == 0 || virtual_size > i64::MAX as u64 {
+        return Err(WindowsVmError::InvalidPlan(
+            "invalid qcow2 cluster geometry or virtual size",
+        ));
+    }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
     if overlay_meta.permissions().mode() & 0o077 != 0 {

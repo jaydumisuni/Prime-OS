@@ -50,6 +50,8 @@ fn private_overlay(path: &std::path::Path) {
     // Header-only fixture for plan admission; not a bootable guest disk.
     let mut header = vec![0u8; 104];
     header[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+    header[20..24].copy_from_slice(&16u32.to_be_bytes());
+    header[24..32].copy_from_slice(&(64u64 * 1024 * 1024).to_be_bytes());
     header[100..104].copy_from_slice(&104u32.to_be_bytes());
     fs::write(path, header).unwrap();
     #[cfg(unix)]
@@ -266,9 +268,58 @@ fn qemu_plan_rejects_inconsistent_qcow2_v3_header_length() {
     private_overlay(&overlay);
     let mut extended = vec![0u8; 112];
     extended[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+    extended[20..24].copy_from_slice(&16u32.to_be_bytes());
+    extended[24..32].copy_from_slice(&(64u64 * 1024 * 1024).to_be_bytes());
     extended[100..104].copy_from_slice(&112u32.to_be_bytes());
     fs::write(&overlay, extended).unwrap();
     assert!(build_qemu_plan(&request).is_ok());
+}
+
+#[test]
+fn qemu_plan_rejects_invalid_qcow2_cluster_geometry() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // These headers have valid magic/version but cannot describe a usable
+    // qcow2 geometry. Header-only admission must not hand them to QEMU.
+    for (cluster_bits, virtual_size) in [
+        (0u32, 64u64 * 1024 * 1024),
+        (8, 64 * 1024 * 1024),
+        (22, 64 * 1024 * 1024),
+        (16, 0),
+        (16, u64::MAX),
+    ] {
+        private_overlay(&overlay);
+        let mut header = fs::read(&overlay).unwrap();
+        header[20..24].copy_from_slice(&cluster_bits.to_be_bytes());
+        header[24..32].copy_from_slice(&virtual_size.to_be_bytes());
+        fs::write(&overlay, header).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("qcow2"),
+            "{cluster_bits}/{virtual_size}: {error}"
+        );
+    }
+
+    // Both supported cluster-size boundaries remain valid at header-only
+    // preflight; this does not certify a complete or bootable qcow2 image.
+    for cluster_bits in [9u32, 16, 21] {
+        private_overlay(&overlay);
+        let mut header = fs::read(&overlay).unwrap();
+        header[20..24].copy_from_slice(&cluster_bits.to_be_bytes());
+        fs::write(&overlay, header).unwrap();
+        assert!(build_qemu_plan(&request).is_ok(), "{cluster_bits}");
+    }
 }
 
 #[test]
