@@ -16,6 +16,7 @@ import stat
 import sys
 
 MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
+GIT_READ_TIMEOUT_SECONDS = 30
 
 INPUTS = (
     "Cargo.lock",
@@ -44,10 +45,16 @@ def git(repo: Path, *args: str) -> bytes:
     # Missing partial-clone objects are not permission to run a repository-
     # configured remote upload-pack helper during read-only review custody.
     trusted_env["GIT_NO_LAZY_FETCH"] = "1"
-    result = subprocess.run(
-        ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
-        capture_output=True, check=False, env=trusted_env,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
+            capture_output=True, check=False, env=trusted_env,
+            timeout=GIT_READ_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ReviewInputError(
+            f"Git verification timed out: {' '.join(args)}"
+        ) from exc
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout
