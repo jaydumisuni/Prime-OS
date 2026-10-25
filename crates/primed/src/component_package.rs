@@ -197,10 +197,18 @@ pub enum ComponentAdmissionError {
         component_id: String,
         dependent_id: String,
     },
-    #[error("updating {component_id} would invalidate the exact package digest pinned by {dependent_id}")]
+    #[error("updating or rolling back {component_id} would invalidate the exact package digest pinned by {dependent_id}")]
     DependentDigestPinned {
         component_id: String,
         dependent_id: String,
+    },
+    #[error(
+        "rolling back {component_id} below revision {minimum_revision} would strand {dependent_id}"
+    )]
+    DependentRevisionFloor {
+        component_id: String,
+        dependent_id: String,
+        minimum_revision: u64,
     },
     #[error("component transaction for {0} does not advance the installed revision")]
     RevisionNotAdvanced(String),
@@ -468,6 +476,59 @@ pub fn plan_component_rollback(
             previous_package_digest: current.package_digest.clone(),
         },
     })
+}
+
+/// Dependency-aware rollback preflight over a complete, authenticated installed
+/// manifest inventory. The retained package and manifest require separate
+/// signature/digest admission; this only establishes structural compatibility.
+/// No rollback, filesystem mutation, or promotion is performed here.
+pub fn plan_component_rollback_checked(
+    current: &InstalledComponent,
+    retained: &InstalledComponent,
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<ComponentTransactionPlan, ComponentAdmissionError> {
+    let plan = plan_component_rollback(current, retained)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let observed = manifests
+        .get(current.component_id.as_str())
+        .ok_or_else(|| {
+            ComponentAdmissionError::InstalledManifestMismatch(current.component_id.clone())
+        })?;
+    if observed.revision != current.revision || observed.package_digest != current.package_digest {
+        return Err(ComponentAdmissionError::InstalledManifestMismatch(
+            current.component_id.clone(),
+        ));
+    }
+
+    for manifest in manifests.values() {
+        if manifest.component_id == current.component_id {
+            continue;
+        }
+        for dependency in &manifest.dependencies {
+            if dependency.component_id != current.component_id {
+                continue;
+            }
+            if retained.revision < dependency.minimum_revision {
+                return Err(ComponentAdmissionError::DependentRevisionFloor {
+                    component_id: current.component_id.clone(),
+                    dependent_id: manifest.component_id.clone(),
+                    minimum_revision: dependency.minimum_revision,
+                });
+            }
+            if dependency
+                .exact_package_digest
+                .as_deref()
+                .is_some_and(|digest| digest != retained.package_digest)
+            {
+                return Err(ComponentAdmissionError::DependentDigestPinned {
+                    component_id: current.component_id.clone(),
+                    dependent_id: manifest.component_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(plan)
 }
 
 pub fn verify_offline_component_package<S, G>(
@@ -2219,6 +2280,84 @@ mod tests {
                 &package, &installed, &[target_manifest, consumer_manifest]
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_rollback_respects_installed_dependents_and_exact_inventory() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let installed = [current.clone(), consumer.clone()];
+        let mut target_manifest = manifest(b"target");
+        target_manifest.revision = current.revision;
+        target_manifest.package_digest = current.package_digest.clone();
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: current.component_id.clone(),
+            minimum_revision: 3,
+            exact_package_digest: None,
+        }];
+        let manifests = [target_manifest.clone(), consumer_manifest.clone()];
+        assert!(matches!(
+            plan_component_rollback_checked(&current, &retained, &installed, &manifests),
+            Err(ComponentAdmissionError::DependentRevisionFloor {
+                component_id, dependent_id, minimum_revision: 3
+            }) if component_id == current.component_id && dependent_id == consumer.component_id
+        ));
+
+        consumer_manifest.dependencies[0].minimum_revision = 2;
+        consumer_manifest.dependencies[0].exact_package_digest =
+            Some(current.package_digest.clone());
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current, &retained, &installed, &[target_manifest.clone(), consumer_manifest.clone()]
+            ),
+            Err(ComponentAdmissionError::DependentDigestPinned { component_id, dependent_id })
+                if component_id == current.component_id && dependent_id == consumer.component_id
+        ));
+
+        consumer_manifest.dependencies[0].exact_package_digest = None;
+        let plan = plan_component_rollback_checked(
+            &current,
+            &retained,
+            &installed,
+            &[target_manifest.clone(), consumer_manifest.clone()],
+        )
+        .unwrap();
+        assert!(matches!(
+            plan.kind,
+            ComponentTransactionKind::Rollback { .. }
+        ));
+        assert_eq!(plan.target_revision, 2);
+        assert_eq!(plan.target_package_digest, DIGEST_A);
+
+        assert!(matches!(
+            plan_component_rollback_checked(&current, &retained, &installed, &[target_manifest.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        let mut forged_current = current.clone();
+        forged_current.package_digest = format!("sha256:{}", "c".repeat(64));
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &forged_current, &retained, &installed, &[target_manifest, consumer_manifest]
+            ),
+            Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == current.component_id
         ));
     }
 }
