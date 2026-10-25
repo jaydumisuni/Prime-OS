@@ -276,6 +276,35 @@ fn qemu_plan_rejects_inconsistent_qcow2_v3_header_length() {
 }
 
 #[test]
+fn qemu_plan_rejects_unaligned_qcow2_v3_header_length() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // qcow2 v3 header_length must be 8-byte aligned. These declarations
+    // are otherwise within the file and first cluster, so only alignment
+    // should reject them during bounded host preflight.
+    for declared_length in [105u32, 111u32] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes.resize(declared_length as usize, 0);
+        bytes[100..104].copy_from_slice(&declared_length.to_be_bytes());
+        fs::write(&overlay, bytes).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(error.to_string().contains("qcow2"), "{error}");
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_qcow2_v3_header_spilling_past_first_cluster() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

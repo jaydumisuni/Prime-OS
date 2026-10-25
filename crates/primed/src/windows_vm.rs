@@ -1196,7 +1196,13 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         // qcow2 v3 declares its header length at byte 100. A zero, short or
         // beyond-EOF declaration cannot describe the admitted on-disk header.
         let header_length = u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64;
-        if header_length < 104 || header_length > overlay_meta.len() {
+        // qcow2 v3 headers are 8-byte aligned so extensions begin at a
+        // canonical boundary. A short, unaligned or beyond-EOF declaration
+        // must not reach QEMU as an admitted overlay.
+        if header_length < 104
+            || !header_length.is_multiple_of(8)
+            || header_length > overlay_meta.len()
+        {
             return Err(WindowsVmError::InvalidPlan(
                 "invalid qcow2 v3 declared header length",
             ));
