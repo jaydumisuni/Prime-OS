@@ -1251,6 +1251,22 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "invalid qcow2 cluster geometry or virtual size",
         ));
     }
+    // The qcow2 L1 and refcount table pointers in the fixed v2/v3 header
+    // identify cluster-based metadata, not arbitrary byte positions. A
+    // nonzero unaligned pointer would let QEMU interpret bytes outside the
+    // declared table cluster. Zero remains a header-only fixture value;
+    // full table presence and guest bootability require separate proof.
+    let cluster_size = 1u64 << cluster_bits;
+    for table_offset in [
+        u64::from_be_bytes(qcow2_prefix[40..48].try_into().unwrap()),
+        u64::from_be_bytes(qcow2_prefix[48..56].try_into().unwrap()),
+    ] {
+        if table_offset != 0 && table_offset % cluster_size != 0 {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 metadata table offset is not cluster-aligned",
+            ));
+        }
+    }
     // QEMU stores the entire v3 header inside the first qcow2 cluster.
     // A length within the physical file can still spill into the next
     // cluster, which is not a valid header geometry. The shift is safe
