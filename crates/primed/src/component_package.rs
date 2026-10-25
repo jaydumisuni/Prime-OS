@@ -376,6 +376,12 @@ fn index_installed_manifests<'a>(
             ));
         }
     }
+    // Exact manifest identity is insufficient if the installed dependency
+    // graph is already broken. Reject that inventory before issuing any
+    // dependency-sensitive update, removal, or rollback plan.
+    for manifest in manifests.values() {
+        validate_dependencies(manifest, installed)?;
+    }
     Ok(manifests)
 }
 
@@ -2280,6 +2286,68 @@ mod tests {
                 &package, &installed, &[target_manifest, consumer_manifest]
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_rollback_rejects_inconsistent_installed_dependency_closure() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let installed = [current.clone(), consumer.clone()];
+        let mut target_manifest = manifest(b"target");
+        target_manifest.revision = current.revision;
+        target_manifest.package_digest = current.package_digest.clone();
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: "missing.runtime".to_owned(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let check = |consumer_manifest: &PrimeComponentManifest| {
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &installed,
+                &[target_manifest.clone(), consumer_manifest.clone()],
+            )
+        };
+        assert!(matches!(
+            check(&consumer_manifest),
+            Err(ComponentAdmissionError::DependencyMissing(id)) if id == "missing.runtime"
+        ));
+        consumer_manifest.dependencies[0].component_id = current.component_id.clone();
+        consumer_manifest.dependencies[0].minimum_revision = 4;
+        assert!(matches!(
+            check(&consumer_manifest),
+            Err(ComponentAdmissionError::DependencyRevision { component_id, minimum_revision: 4 })
+                if component_id == current.component_id
+        ));
+        consumer_manifest.dependencies[0].minimum_revision = 3;
+        consumer_manifest.dependencies[0].exact_package_digest = Some(DIGEST_A.to_owned());
+        assert!(matches!(
+            check(&consumer_manifest),
+            Err(ComponentAdmissionError::DependencyDigest(id)) if id == current.component_id
+        ));
+        consumer_manifest.dependencies[0].exact_package_digest = None;
+        assert!(matches!(
+            check(&consumer_manifest),
+            Err(ComponentAdmissionError::DependentRevisionFloor { .. })
         ));
     }
 
