@@ -276,6 +276,49 @@ fn qemu_plan_rejects_inconsistent_qcow2_v3_header_length() {
 }
 
 #[test]
+fn qemu_plan_rejects_qcow2_v3_header_spilling_past_first_cluster() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // A v3 header must fit inside its first qcow2 cluster, even when the
+    // declared length fits the physical file. Header-only admission must
+    // not hand a cross-cluster metadata declaration to QEMU.
+    for (cluster_bits, declared_length) in [(9u32, 520u32), (16, 65544)] {
+        let mut bytes = vec![0u8; declared_length as usize];
+        bytes[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+        bytes[20..24].copy_from_slice(&cluster_bits.to_be_bytes());
+        bytes[24..32].copy_from_slice(&(64u64 * 1024 * 1024).to_be_bytes());
+        bytes[100..104].copy_from_slice(&declared_length.to_be_bytes());
+        fs::write(&overlay, bytes).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("qcow2"),
+            "{cluster_bits}: {error}"
+        );
+    }
+
+    // A header ending exactly at the cluster boundary is not rejected
+    // by this narrow geometry rule; bootability remains a separate gate.
+    let mut boundary = vec![0u8; 512];
+    boundary[..8].copy_from_slice(b"QFI\xfb\x00\x00\x00\x03");
+    boundary[20..24].copy_from_slice(&9u32.to_be_bytes());
+    boundary[24..32].copy_from_slice(&(64u64 * 1024 * 1024).to_be_bytes());
+    boundary[100..104].copy_from_slice(&512u32.to_be_bytes());
+    fs::write(&overlay, boundary).unwrap();
+    assert!(build_qemu_plan(&request).is_ok());
+}
+
+#[test]
 fn qemu_plan_rejects_invalid_qcow2_cluster_geometry() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

@@ -1213,6 +1213,19 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "invalid qcow2 cluster geometry or virtual size",
         ));
     }
+    // QEMU stores the entire v3 header inside the first qcow2 cluster.
+    // A length within the physical file can still spill into the next
+    // cluster, which is not a valid header geometry. The shift is safe
+    // because cluster_bits has already passed the bounded range check.
+    if qcow2_version == 3 {
+        let declared_header_length =
+            u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64;
+        if declared_header_length > (1u64 << cluster_bits) {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 v3 declared header exceeds first cluster",
+            ));
+        }
+    }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
     if overlay_meta.permissions().mode() & 0o077 != 0 {
