@@ -841,13 +841,14 @@ fn private_package_inode(metadata: &fs::Metadata) -> bool {
 }
 
 #[cfg(unix)]
-fn private_package_ancestors(path: &Path) -> Result<bool, io::Error> {
+fn private_package_ancestors(path: &Path) -> Result<Option<Vec<(u64, u64, u32, u32)>>, io::Error> {
     use std::os::unix::fs::MetadataExt;
     // A private package inode is insufficient when a peer can replace one
     // of its ancestor directories. Root/current-owner sticky directories
     // (such as /tmp) retain the owner-protected unlink boundary.
     let effective_uid = unsafe { libc::geteuid() };
     let mut ancestor = path.parent();
+    let mut identities = Vec::new();
     while let Some(directory) = ancestor {
         let metadata = fs::symlink_metadata(directory)?;
         let trusted_owner = metadata.uid() == 0 || metadata.uid() == effective_uid;
@@ -858,11 +859,12 @@ fn private_package_ancestors(path: &Path) -> Result<bool, io::Error> {
             || !trusted_owner
             || (peer_writable && !sticky)
         {
-            return Ok(false);
+            return Ok(None);
         }
+        identities.push((metadata.dev(), metadata.ino(), metadata.uid(), metadata.mode()));
         ancestor = directory.parent();
     }
-    Ok(true)
+    Ok(Some(identities))
 }
 
 fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
@@ -874,7 +876,7 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     #[cfg(unix)]
-    if !private_package_inode(&metadata) || !private_package_ancestors(path)? {
+    if !private_package_inode(&metadata) || private_package_ancestors(path)?.is_none() {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     // A regular final file can still be reached through a symlinked parent.
@@ -906,7 +908,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
     // validate_package_path can be swapped before File::open; O_NOFOLLOW
     // and O_NONBLOCK prevent a symlink escape or blocking FIFO substitution.
     #[cfg(unix)]
-    let (mut file, opened_metadata) = {
+    let (mut file, opened_metadata, opened_ancestors) = {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let file = fs::OpenOptions::new()
             .read(true)
@@ -921,16 +923,17 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
             })?;
         let opened = file.metadata()?;
         let named = fs::symlink_metadata(path)?;
+        let opened_ancestors = private_package_ancestors(path)?
+            .ok_or(ComponentAdmissionError::UnsafePackagePath)?;
         if !private_package_inode(&opened)
             || !private_package_inode(&named)
-            || !private_package_ancestors(path)?
             || opened.dev() != named.dev()
             || opened.ino() != named.ino()
             || fs::canonicalize(path)? != path
         {
             return Err(ComponentAdmissionError::UnsafePackagePath);
         }
-        (file, opened)
+        (file, opened, opened_ancestors)
     };
     #[cfg(not(unix))]
     let mut file = fs::File::open(path)?;
@@ -953,7 +956,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         let named = fs::symlink_metadata(path)?;
         if !stable_package_metadata(&opened_metadata, &after)
             || !private_package_inode(&named)
-            || !private_package_ancestors(path)?
+            || private_package_ancestors(path)?.as_ref() != Some(&opened_ancestors)
             || named.dev() != opened_metadata.dev()
             || named.ino() != opened_metadata.ino()
             || fs::canonicalize(path)? != path
@@ -2277,6 +2280,28 @@ mod tests {
             ));
             assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_ancestor_snapshot_detects_directory_replacement() {
+        let bytes = b"p2-ancestor-identity-snapshot";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("package-parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+
+        let before = private_package_ancestors(&path).unwrap().unwrap();
+        assert_eq!(before, private_package_ancestors(&path).unwrap().unwrap());
+
+        // Keep the old directory alive so a replacement cannot reuse its inode.
+        let moved = dir.path().join("moved-package-parent");
+        fs::rename(&parent, &moved).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::write(&path, bytes).unwrap();
+        let after = private_package_ancestors(&path).unwrap().unwrap();
+        assert_ne!(before, after);
     }
 
     #[cfg(unix)]
