@@ -6,6 +6,7 @@ A compatible snapshot is NOT a live capability or a Ptah admission decision.
 """
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 
 class SnapshotRejected(ValueError):
@@ -23,6 +24,18 @@ def _identity(value, label):
         raise SnapshotRejected(f"invalid {label}")
     if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
         raise SnapshotRejected(f"invalid {label}")
+    return value
+
+
+def _prime_host_id(value):
+    """Bind the independently supplied Host identity to Prime's frozen UUIDv7 contract."""
+    value = _identity(value, "expected Prime Host ID")
+    try:
+        parsed = UUID(value)
+    except ValueError as error:
+        raise SnapshotRejected("expected Prime Host ID must be canonical UUIDv7") from error
+    if parsed.version != 7 or str(parsed) != value:
+        raise SnapshotRejected("expected Prime Host ID must be canonical UUIDv7")
     return value
 
 
@@ -54,7 +67,7 @@ def preflight_snapshot(
     The output is a source-snapshot diagnostic only; live negotiation, Ptah
     enrollment, workload policy, effect witnessing and release remain external.
     """
-    expected_host_id = _identity(expected_host_id, "expected Prime Host ID")
+    expected_host_id = _prime_host_id(expected_host_id)
     expected_generation_id = _identity(expected_generation_id, "expected generation ID")
     requested_capability_id = _identity(requested_capability_id, "requested capability ID")
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
