@@ -1213,6 +1213,18 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
                 "qcow2 overlay has unsupported incompatible features",
             ));
         }
+        // Compatible features (bytes 80..88) may change refcount persistence,
+        // while autoclear features (bytes 88..96) may carry unadmitted bitmap
+        // or metadata state. W8 has not qualified either feature family for
+        // its session overlay, even though QEMU can recognize some bits.
+        // Do not infer guest-state authority from a recognized feature bit.
+        let compatible = u64::from_be_bytes(qcow2_prefix[80..88].try_into().unwrap());
+        let autoclear = u64::from_be_bytes(qcow2_prefix[88..96].try_into().unwrap());
+        if compatible != 0 || autoclear != 0 {
+            return Err(WindowsVmError::InvalidPlan(
+                "qcow2 overlay has unadmitted compatible or autoclear features",
+            ));
+        }
         // qcow2 v3 declares its header length at byte 100. A zero, short or
         // beyond-EOF declaration cannot describe the admitted on-disk header.
         let header_length = u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64;
