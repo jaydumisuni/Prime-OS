@@ -501,6 +501,67 @@ fn qemu_plan_rejects_oversized_qcow2_v3_refcount_order() {
 }
 
 #[test]
+fn qemu_plan_rejects_unaligned_qcow2_metadata_table_pointers() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // Both fixed-header table offsets are cluster-based in qcow2 v2/v3.
+    // Nonzero byte offsets within a cluster are not valid table pointers.
+    for version in [2u32, 3] {
+        for field_start in [40usize, 48] {
+            for bad_offset in [1u64, 512, 65535, 65537, u64::MAX] {
+                private_overlay(&overlay);
+                let mut bytes = fs::read(&overlay).unwrap();
+                bytes[4..8].copy_from_slice(&version.to_be_bytes());
+                if version == 2 {
+                    bytes.truncate(72);
+                }
+                bytes[field_start..field_start + 8]
+                    .copy_from_slice(&bad_offset.to_be_bytes());
+                fs::write(&overlay, bytes).unwrap();
+                let error = build_qemu_plan(&request).unwrap_err();
+                assert!(
+                    error.to_string().contains("metadata table offset"),
+                    "version {version}, field {field_start}, offset {bad_offset}: {error}"
+                );
+            }
+        }
+    }
+
+    // A zero pointer or an aligned pointer is not rejected by this narrow
+    // rule; table integrity and guest boot remain independent proof gates.
+    for version in [2u32, 3] {
+        for field_start in [40usize, 48] {
+            for admitted_offset in [0u64, 65536, 131072] {
+                private_overlay(&overlay);
+                let mut bytes = fs::read(&overlay).unwrap();
+                bytes[4..8].copy_from_slice(&version.to_be_bytes());
+                if version == 2 {
+                    bytes.truncate(72);
+                }
+                bytes[field_start..field_start + 8]
+                    .copy_from_slice(&admitted_offset.to_be_bytes());
+                fs::write(&overlay, bytes).unwrap();
+                assert!(
+                    build_qemu_plan(&request).is_ok(),
+                    "version {version}, field {field_start}, offset {admitted_offset}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
