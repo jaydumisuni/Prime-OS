@@ -192,6 +192,8 @@ pub enum ComponentAdmissionError {
     InstalledManifestMismatch(String),
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
+    #[error("installed component dependency graph contains a cycle through {0}")]
+    InstalledDependencyCycle(String),
     #[error("removing {component_id} would strand installed dependent {dependent_id}")]
     DependentComponentInstalled {
         component_id: String,
@@ -381,6 +383,48 @@ fn index_installed_manifests<'a>(
     // dependency-sensitive update, removal, or rollback plan.
     for manifest in manifests.values() {
         validate_dependencies(manifest, installed)?;
+    }
+    // A complete inventory can still be impossible to service when mutually
+    // dependent manifests form a cycle. Check this without recursive traversal
+    // (untrusted inventories must not exhaust the stack).
+    let mut outstanding = BTreeMap::<&str, usize>::new();
+    let mut dependents = BTreeMap::<&str, Vec<&str>>::new();
+    for (&id, manifest) in &manifests {
+        outstanding.insert(id, manifest.dependencies.len());
+        for dependency in &manifest.dependencies {
+            dependents
+                .entry(dependency.component_id.as_str())
+                .or_default()
+                .push(id);
+        }
+    }
+    let mut ready: Vec<&str> = outstanding
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut visited = 0;
+    while let Some(id) = ready.pop() {
+        visited += 1;
+        if let Some(users) = dependents.get(id) {
+            for user in users {
+                let count = outstanding
+                    .get_mut(user)
+                    .expect("dependency inventory was validated");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(user);
+                }
+            }
+        }
+    }
+    if visited != manifests.len() {
+        let id = outstanding
+            .iter()
+            .find_map(|(&id, &count)| (count > 0).then_some(id))
+            .expect("unvisited dependency cycle has a nonzero incoming degree");
+        return Err(ComponentAdmissionError::InstalledDependencyCycle(
+            id.to_owned(),
+        ));
     }
     Ok(manifests)
 }
@@ -2328,6 +2372,51 @@ mod tests {
                 &package, &installed, &[target_manifest, consumer_manifest]
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == consumer.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_rollback_rejects_cyclic_installed_dependency_inventory() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let consumer = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut target_manifest = manifest(b"target");
+        target_manifest.revision = current.revision;
+        target_manifest.package_digest = current.package_digest.clone();
+        target_manifest.dependencies = vec![ComponentDependency {
+            component_id: consumer.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let mut consumer_manifest = manifest(b"consumer");
+        consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.revision = consumer.revision;
+        consumer_manifest.package_digest = consumer.package_digest.clone();
+        consumer_manifest.dependencies = vec![ComponentDependency {
+            component_id: current.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &[current.clone(), consumer],
+                &[target_manifest, consumer_manifest],
+            ),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
         ));
     }
 
