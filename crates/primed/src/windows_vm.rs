@@ -1024,7 +1024,15 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
     }
     let qemu = fs::canonicalize(&request.qemu_binary)?;
-    let qemu_file = fs::File::open(&qemu)?;
+    // A canonical pathname is not proof that the executable remains regular:
+    // a FIFO substituted before open would block forever without a writer.
+    // Reject symlink replacement and open nonblocking before inspecting the
+    // descriptor; the final identity check below still binds the pathname.
+    use std::os::unix::fs::OpenOptionsExt;
+    let qemu_file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&qemu)?;
     let qemu_meta = qemu_file.metadata()?;
     let worker_uid = unsafe { libc::geteuid() };
     if !trusted_qemu_executable_owner(qemu_meta.uid(), worker_uid) {

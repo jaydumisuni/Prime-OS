@@ -437,6 +437,35 @@ fn qemu_plan_rejects_shared_writable_runtime_ancestor() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_fifo_executable_without_waiting_for_writer() {
+    use std::ffi::CString;
+
+    let dir = private_tempdir();
+    let qemu = dir.path().join("qemu-fifo");
+    let c_path = CString::new(qemu.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    // No FIFO writer exists. Executable admission must fail immediately,
+    // rather than block inside an ordinary read-only open.
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: qemu,
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("not executable"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_rejects_shared_writable_executable() {
     use std::os::unix::fs::PermissionsExt;
 
