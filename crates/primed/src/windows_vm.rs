@@ -1277,6 +1277,25 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             ));
         }
     }
+    // qcow2 header extensions follow the v2 fixed header or the v3
+    // declared header, rather than being included in v3 header_length.
+    // An extension can therefore be interpreted by QEMU even when every
+    // declared-header byte is zero. W8 has no authority for those fields.
+    // Inspect only the present bytes of the first cluster (at most 2 MiB).
+    let admitted_header_end = if qcow2_version == 3 {
+        u32::from_be_bytes(qcow2_prefix[100..104].try_into().unwrap()) as u64
+    } else {
+        72
+    };
+    let first_cluster_end = (1u64 << cluster_bits).min(overlay_meta.len());
+    let extension_len = (first_cluster_end - admitted_header_end) as usize;
+    let mut extension_space = vec![0u8; extension_len];
+    overlay_file.read_exact(&mut extension_space)?;
+    if extension_space.iter().any(|byte| *byte != 0) {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 overlay contains unadmitted header extensions",
+        ));
+    }
     // A shared-writable overlay can be replaced between plan validation and
     // QEMU admission, defeating session-scoped guest state integrity.
     if overlay_meta.permissions().mode() & 0o077 != 0 {

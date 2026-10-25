@@ -392,6 +392,74 @@ fn qemu_plan_rejects_nonzero_unadmitted_qcow2_v3_extended_header() {
 }
 
 #[test]
+fn qemu_plan_rejects_unadmitted_qcow2_extensions_after_header() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // Header extensions are stored after the v2 fixed header (72 bytes)
+    // or the v3 declared header, not within the declared header itself.
+    // The previous preflight checked only declared v3 header bytes.
+    for (version, header_length, extension_offset) in [
+        (2u32, 0u32, 72usize),
+        (3, 104, 104),
+        (3, 112, 112),
+    ] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes[4..8].copy_from_slice(&version.to_be_bytes());
+        if version == 2 {
+            bytes[72..104].fill(0);
+        } else {
+            bytes[100..104].copy_from_slice(&header_length.to_be_bytes());
+        }
+        bytes.resize(extension_offset + 8, 0);
+        // A nonzero extension type would be interpreted by QEMU even though
+        // the declared header itself contains no unadmitted fields.
+        bytes[extension_offset..extension_offset + 4]
+            .copy_from_slice(&0x6803_f857u32.to_be_bytes());
+        fs::write(&overlay, &bytes).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("header extensions"),
+            "version {version}, header {header_length}: {error}"
+        );
+    }
+
+    // Zero-filled present first-cluster tail remains acceptable to this
+    // bounded header-only preflight, without asserting guest bootability.
+    for (version, header_length, extension_offset) in [
+        (2u32, 0u32, 72usize),
+        (3, 104, 104),
+        (3, 112, 112),
+    ] {
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes[4..8].copy_from_slice(&version.to_be_bytes());
+        if version == 2 {
+            bytes[72..104].fill(0);
+        } else {
+            bytes[100..104].copy_from_slice(&header_length.to_be_bytes());
+        }
+        bytes.resize(extension_offset + 8, 0);
+        fs::write(&overlay, bytes).unwrap();
+        assert!(
+            build_qemu_plan(&request).is_ok(),
+            "version {version}, header {header_length}"
+        );
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_oversized_qcow2_v3_refcount_order() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
