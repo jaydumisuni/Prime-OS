@@ -37,6 +37,24 @@ class PrimePtahPreparationTests(unittest.TestCase):
             self.assertFalse(result[key])
         self.assertNotIn("ptah_node_id", result)
 
+    def test_host_identity_requires_canonical_uuidv7(self):
+        # A matching forged opaque string must not become a Prime Host ID.
+        invalid = (
+            "not-a-uuid",
+            "018f6b35-0000-4000-8000-123456789abc",  # UUIDv4
+            "018f6b35-0000-7000-0000-123456789abc",  # invalid UUID variant
+            HOST.upper(),  # noncanonical textual identity
+            "{" + HOST + "}",  # accepted by UUID parser, not canonical
+        )
+        for forged in invalid:
+            with self.subTest(host_id=forged):
+                p, c = fixtures()
+                p["host"]["host_id"] = forged
+                c["placement"]["host_id"] = forged
+                with self.assertRaisesRegex(SnapshotRejected, "canonical UUIDv7"):
+                    check(p, c, expected_host_id=forged)
+        self.assertTrue(check(*fixtures())["candidate_compatible"])
+
     def test_frozen_interface_mismatch_rejected(self):
         p, c = fixtures()
         p["interface_version"] = "2.0"
