@@ -840,6 +840,31 @@ fn private_package_inode(metadata: &fs::Metadata) -> bool {
         && metadata.mode() & 0o022 == 0
 }
 
+#[cfg(unix)]
+fn private_package_ancestors(path: &Path) -> Result<bool, io::Error> {
+    use std::os::unix::fs::MetadataExt;
+    // A private package inode is insufficient when a peer can replace one
+    // of its ancestor directories. Root/current-owner sticky directories
+    // (such as /tmp) retain the owner-protected unlink boundary.
+    let effective_uid = unsafe { libc::geteuid() };
+    let mut ancestor = path.parent();
+    while let Some(directory) = ancestor {
+        let metadata = fs::symlink_metadata(directory)?;
+        let trusted_owner = metadata.uid() == 0 || metadata.uid() == effective_uid;
+        let peer_writable = metadata.mode() & 0o022 != 0;
+        let sticky = metadata.mode() & 0o1000 != 0;
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || !trusted_owner
+            || (peer_writable && !sticky)
+        {
+            return Ok(false);
+        }
+        ancestor = directory.parent();
+    }
+    Ok(true)
+}
+
 fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     if !path.is_absolute() {
         return Err(ComponentAdmissionError::UnsafePackagePath);
@@ -849,7 +874,7 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     #[cfg(unix)]
-    if !private_package_inode(&metadata) {
+    if !private_package_inode(&metadata) || !private_package_ancestors(path)? {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     // A regular final file can still be reached through a symlinked parent.
@@ -898,6 +923,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         let named = fs::symlink_metadata(path)?;
         if !private_package_inode(&opened)
             || !private_package_inode(&named)
+            || !private_package_ancestors(path)?
             || opened.dev() != named.dev()
             || opened.ino() != named.ino()
             || fs::canonicalize(path)? != path
@@ -927,6 +953,7 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
         let named = fs::symlink_metadata(path)?;
         if !stable_package_metadata(&opened_metadata, &after)
             || !private_package_inode(&named)
+            || !private_package_ancestors(path)?
             || named.dev() != opened_metadata.dev()
             || named.ino() != opened_metadata.ino()
             || fs::canonicalize(path)? != path
@@ -2201,6 +2228,55 @@ mod tests {
             Ok(ComponentAdmissionOutcome::Ready(_))
         ));
         assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
+    }
+
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_peer_writable_ancestor_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = b"p2-ancestor-directory-custody";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("package-parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+        let manifest = manifest(bytes);
+
+        for mode in [0o770, 0o707] {
+            fs::set_permissions(&parent, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+
+        // A private directory and an owner-controlled sticky directory both
+        // preserve the existing source-only offline admission behavior.
+        for mode in [0o700, 0o1707] {
+            fs::set_permissions(&parent, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Ok(ComponentAdmissionOutcome::Ready(_))
+            ));
+            assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
+        }
     }
 
     #[cfg(unix)]
