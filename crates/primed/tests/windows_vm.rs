@@ -389,6 +389,54 @@ fn qemu_plan_rejects_oversized_qcow2_v3_refcount_order() {
 }
 
 #[test]
+fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // W8's session overlay has no internal snapshot selection/restore authority.
+    // The qcow2 v2/v3 header encodes snapshot count and table offset at
+    // bytes 60..72; any such metadata must be rejected before QEMU planning.
+    for version in [2u32, 3] {
+        for (count, offset) in [(1u32, 65536u64), (1, 0), (0, 65536)] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            bytes[60..64].copy_from_slice(&count.to_be_bytes());
+            bytes[64..72].copy_from_slice(&offset.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                error.to_string().contains("snapshot"),
+                "version {version}, count {count}, offset {offset}: {error}"
+            );
+        }
+
+        // Snapshot-free overlays remain admissible to this header-only gate.
+        private_overlay(&overlay);
+        let mut bytes = fs::read(&overlay).unwrap();
+        bytes[4..8].copy_from_slice(&version.to_be_bytes());
+        if version == 2 {
+            bytes.truncate(72);
+        }
+        fs::write(&overlay, bytes).unwrap();
+        assert!(build_qemu_plan(&request).is_ok(), "version {version}");
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_invalid_qcow2_cluster_geometry() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

@@ -1167,6 +1167,17 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 overlay references an unbound external backing file",
         ));
     }
+    // qcow2 v2/v3 internal snapshots carry additional guest-state tables
+    // that W8 does not select, digest-bind, or isolate per application.
+    // Refuse both populated and contradictory snapshot metadata rather than
+    // allowing QEMU to interpret unadmitted state during launch.
+    let snapshot_count = u32::from_be_bytes(qcow2_prefix[60..64].try_into().unwrap());
+    let snapshot_offset = u64::from_be_bytes(qcow2_prefix[64..72].try_into().unwrap());
+    if snapshot_count != 0 || snapshot_offset != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 overlay has unbound internal snapshot metadata",
+        ));
+    }
     // The W8 header-only admission has no key/secret authority. Even a
     // structurally valid encrypted qcow2 image cannot be handed to QEMU.
     let crypt_method = u32::from_be_bytes(qcow2_prefix[32..36].try_into().unwrap());
