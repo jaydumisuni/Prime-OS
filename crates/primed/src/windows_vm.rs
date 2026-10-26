@@ -4,8 +4,10 @@ use prime_contracts::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ffi::CStr;
 use std::fs;
 use std::io::{self, Read};
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
@@ -994,6 +996,31 @@ fn trusted_qemu_executable_owner(owner_uid: u32, worker_uid: u32) -> bool {
     owner_uid == worker_uid || owner_uid == 0
 }
 
+// Linux file capabilities can grant process privileges without setuid/setgid
+// mode bits. Probe the already-open descriptor, not a pathname that may be
+// swapped between admission and launch. An unsupported/failed xattr query is
+// not evidence that the executable has no capabilities.
+fn reject_qemu_privilege_xattr(opened: &fs::File, name: &CStr) -> Result<(), WindowsVmError> {
+    let size =
+        unsafe { libc::fgetxattr(opened.as_raw_fd(), name.as_ptr(), std::ptr::null_mut(), 0) };
+    if size >= 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has privileged file capabilities",
+        ));
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ENODATA) {
+        Ok(())
+    } else {
+        Err(error.into())
+    }
+}
+
+fn reject_qemu_file_capabilities(opened: &fs::File) -> Result<(), WindowsVmError> {
+    let capability = c"security.capability";
+    reject_qemu_privilege_xattr(opened, capability)
+}
+
 // A QEMU pathname admitted before plan construction must still refer to the
 // same executable inode afterwards. This is a preflight snapshot only;
 // the process launcher must separately enforce its own admission boundary.
@@ -1039,6 +1066,7 @@ fn verify_qemu_stable(
             "QEMU executable changed during plan construction",
         ));
     }
+    reject_qemu_file_capabilities(opened)?;
     Ok(())
 }
 
@@ -1100,6 +1128,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable has a hardlink alias",
         ));
     }
+    reject_qemu_file_capabilities(&qemu_file)?;
     for directory in qemu.ancestors().skip(1) {
         let parent = fs::symlink_metadata(directory)?;
         let mode = parent.permissions().mode();
@@ -1596,6 +1625,41 @@ mod vm_runtime_owner_tests {
         fs::write(&replacement, b"untrusted guest bytes").unwrap();
         std::os::unix::fs::symlink(&replacement, &image).unwrap();
         assert!(open_admitted_guest_image(&image, &admitted).is_err());
+    }
+
+    #[test]
+    fn qemu_privilege_xattr_probe_rejects_present_descriptor_attribute() {
+        use std::ffi::CString;
+
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("qemu-test");
+        fs::write(&executable, b"test executable").unwrap();
+        let opened = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&executable)
+            .unwrap();
+        let attribute = CString::new("user.ttg_w8_capability_probe").unwrap();
+        assert_eq!(
+            unsafe {
+                libc::fsetxattr(
+                    opened.as_raw_fd(),
+                    attribute.as_ptr(),
+                    b"present".as_ptr().cast(),
+                    7,
+                    0,
+                )
+            },
+            0,
+            "disposable fixture must support user xattrs"
+        );
+        let error = reject_qemu_privilege_xattr(&opened, &attribute).unwrap_err();
+        assert!(error.to_string().contains("file capabilities"), "{error}");
+        assert_eq!(
+            unsafe { libc::fremovexattr(opened.as_raw_fd(), attribute.as_ptr()) },
+            0
+        );
+        assert!(reject_qemu_privilege_xattr(&opened, &attribute).is_ok());
     }
 
     #[test]
