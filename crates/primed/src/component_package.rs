@@ -198,6 +198,12 @@ pub enum ComponentAdmissionError {
         installed_publisher: String,
         candidate_publisher: String,
     },
+    #[error("component {component_id} cannot silently rotate its publisher signing key from {installed_key} to {candidate_key}")]
+    PublisherSigningKeyChanged {
+        component_id: String,
+        installed_key: String,
+        candidate_key: String,
+    },
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
     #[error("installed component dependency graph contains a cycle through {0}")]
@@ -330,6 +336,15 @@ pub fn plan_component_transaction_checked(
                 component_id: package.component_id.clone(),
                 installed_publisher: original.publisher_id.clone(),
                 candidate_publisher: candidate_manifest.publisher_id.clone(),
+            });
+        }
+        // Key rotation is separate authority from signature admission. Until
+        // a signed key-transition protocol exists, pin the installed key ID.
+        if original.publisher_key_id != candidate_manifest.publisher_key_id {
+            return Err(ComponentAdmissionError::PublisherSigningKeyChanged {
+                component_id: package.component_id.clone(),
+                installed_key: original.publisher_key_id.clone(),
+                candidate_key: candidate_manifest.publisher_key_id.clone(),
             });
         }
         for manifest in manifests.values() {
@@ -629,6 +644,15 @@ pub fn plan_component_rollback_checked(
             component_id: current.component_id.clone(),
             installed_publisher: observed.publisher_id.clone(),
             candidate_publisher: retained_manifest.publisher_id.clone(),
+        });
+    }
+    // A retained package signed by a different key cannot silently change
+    // the installed trust anchor during rollback.
+    if observed.publisher_key_id != retained_manifest.publisher_key_id {
+        return Err(ComponentAdmissionError::PublisherSigningKeyChanged {
+            component_id: current.component_id.clone(),
+            installed_key: observed.publisher_key_id.clone(),
+            candidate_key: retained_manifest.publisher_key_id.clone(),
         });
     }
 
@@ -3043,6 +3067,92 @@ mod tests {
             )
             .is_ok(),
             "same-publisher rollback remains structurally eligible"
+        );
+    }
+
+    #[test]
+    fn checked_update_refuses_silent_publisher_signing_key_rotation() {
+        let installed = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut original = manifest(b"original");
+        original.package_digest = installed.package_digest.clone();
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/key-rotation.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: installed.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: original.publisher_id.clone(),
+        };
+        let mut candidate = original.clone();
+        candidate.package_digest = package.package_digest.clone();
+        candidate.revision = package.revision;
+        candidate.version = package.version.clone();
+        candidate.publisher_key_id = DIGEST_A.to_owned();
+        assert!(
+            plan_component_transaction_checked(
+                &package,
+                std::slice::from_ref(&installed),
+                std::slice::from_ref(&original),
+                &candidate
+            )
+            .is_err(),
+            "same publisher ID must not silently rotate its signing key"
+        );
+
+        candidate.publisher_key_id = original.publisher_key_id.clone();
+        assert!(
+            plan_component_transaction_checked(&package, &[installed], &[original], &candidate)
+                .is_ok(),
+            "same-publisher, same-key update remains eligible"
+        );
+    }
+
+    #[test]
+    fn checked_rollback_refuses_silent_publisher_signing_key_rotation() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut original = manifest(b"current");
+        original.revision = current.revision;
+        original.package_digest = current.package_digest.clone();
+        let mut retained_manifest = original.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.publisher_key_id = DIGEST_A.to_owned();
+        assert!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                std::slice::from_ref(&original)
+            )
+            .is_err(),
+            "retained package must not silently switch publisher signing key"
+        );
+
+        retained_manifest.publisher_key_id = original.publisher_key_id.clone();
+        assert!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                std::slice::from_ref(&original)
+            )
+            .is_ok(),
+            "same-publisher, same-key rollback remains eligible"
         );
     }
 
