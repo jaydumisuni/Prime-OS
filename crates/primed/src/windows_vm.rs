@@ -1267,6 +1267,21 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             ));
         }
     }
+    // qcow2's L1 and refcount table counts are meaningful only when their
+    // corresponding metadata pointers exist. A nonzero count with a null
+    // pointer would leave QEMU to interpret an absent table. This is only
+    // fixed-header coherence; it does not prove table contents or guest boot.
+    let l1_size = u32::from_be_bytes(qcow2_prefix[36..40].try_into().unwrap());
+    let l1_offset = u64::from_be_bytes(qcow2_prefix[40..48].try_into().unwrap());
+    let refcount_offset = u64::from_be_bytes(qcow2_prefix[48..56].try_into().unwrap());
+    let refcount_clusters = u32::from_be_bytes(qcow2_prefix[56..60].try_into().unwrap());
+    if (l1_size != 0 && l1_offset == 0)
+        || (refcount_clusters != 0 && refcount_offset == 0)
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 metadata table count has no table offset",
+        ));
+    }
     // QEMU stores the entire v3 header inside the first qcow2 cluster.
     // A length within the physical file can still spill into the next
     // cluster, which is not a valid header geometry. The shift is safe

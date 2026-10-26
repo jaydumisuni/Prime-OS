@@ -562,6 +562,63 @@ fn qemu_plan_rejects_unaligned_qcow2_metadata_table_pointers() {
 }
 
 #[test]
+fn qemu_plan_rejects_qcow2_table_counts_without_offsets() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // The qcow2 v2/v3 fixed header binds L1 size at bytes 36..40 to
+    // its table pointer at 40..48, and refcount table cluster count at
+    // 56..60 to its pointer at 48..56.
+    for version in [2u32, 3] {
+        for (count_start, offset_start) in [(36usize, 40usize), (56, 48)] {
+            for count in [1u32, u32::MAX] {
+                private_overlay(&overlay);
+                let mut bytes = fs::read(&overlay).unwrap();
+                bytes[4..8].copy_from_slice(&version.to_be_bytes());
+                if version == 2 {
+                    bytes.truncate(72);
+                }
+                bytes[count_start..count_start + 4].copy_from_slice(&count.to_be_bytes());
+                bytes[offset_start..offset_start + 8].fill(0);
+                fs::write(&overlay, bytes).unwrap();
+                let error = build_qemu_plan(&request).unwrap_err();
+                assert!(
+                    error.to_string().contains("metadata table count"),
+                    "version {version}, count field {count_start}, count {count}: {error}"
+                );
+            }
+            // A zero count/offset or a nonzero count with an aligned
+            // pointer is not rejected by this narrow coherence rule.
+            for (count, offset) in [(0u32, 0u64), (1, 65536)] {
+                private_overlay(&overlay);
+                let mut bytes = fs::read(&overlay).unwrap();
+                bytes[4..8].copy_from_slice(&version.to_be_bytes());
+                if version == 2 {
+                    bytes.truncate(72);
+                }
+                bytes[count_start..count_start + 4].copy_from_slice(&count.to_be_bytes());
+                bytes[offset_start..offset_start + 8].copy_from_slice(&offset.to_be_bytes());
+                fs::write(&overlay, bytes).unwrap();
+                assert!(
+                    build_qemu_plan(&request).is_ok(),
+                    "version {version}, count field {count_start}, count {count}, offset {offset}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
