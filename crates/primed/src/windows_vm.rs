@@ -19,6 +19,8 @@ pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proo
 pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES: usize = 1024 * 1024;
+/// Maximum JSON handshake payload admitted before decoding (8 KiB).
+pub const WINDOWS_VM_AGENT_HELLO_MAX_BYTES: usize = 8 * 1024;
 const WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES: usize = 15;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,6 +151,35 @@ pub enum WindowsVmError {
     InvalidUsb(String),
     #[error(transparent)]
     Io(#[from] io::Error),
+}
+
+/// Parse a bounded guest-agent hello without granting guest-runtime authority.
+///
+/// A future socket reader must first bound the received frame, then use this
+/// entry point. This is only source-level handshake admission: it does not
+/// establish a live guest connection or certify Windows workload execution.
+pub fn parse_guest_agent_hello_json(
+    bytes: &[u8],
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    if bytes.len() > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    let hello: GuestAgentHello = serde_json::from_slice(bytes)
+        .map_err(|_| WindowsVmError::InvalidGuest("malformed guest-agent hello JSON"))?;
+    validate_guest_agent_hello(
+        &hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    Ok(hello)
 }
 
 pub fn validate_guest_agent_hello(

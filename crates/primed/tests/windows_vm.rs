@@ -3,8 +3,8 @@ use prime_contracts::{
     MechanicalCompatibilityState, PolicyReference, RuntimeFamily, APPLICATION_PROFILE_SCHEMA,
 };
 use primed::windows_vm::{
-    build_qemu_plan, validate_guest_definition, validate_vm_profile, VmGuestDefinition,
-    VmPlanRequest,
+    build_qemu_plan, parse_guest_agent_hello_json, validate_guest_definition, validate_vm_profile,
+    VmGuestDefinition, VmPlanRequest,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -1875,6 +1875,65 @@ fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
         "x86_64"
     )
     .is_err());
+}
+
+#[test]
+fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
+    use primed::windows_vm::GuestAgentHello;
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let json = serde_json::to_vec(&hello).unwrap();
+    let accepted = parse_guest_agent_hello_json(
+        &json,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap();
+    assert_eq!(accepted, hello);
+
+    // Whitespace is legal JSON. The exact limit is accepted, but one extra
+    // byte must fail before the JSON decoder sees a potentially huge payload.
+    assert!(json.len() < 8192);
+    let mut boundary = vec![b' '; 8192 - json.len()];
+    boundary.extend_from_slice(&json);
+    assert!(parse_guest_agent_hello_json(
+        &boundary,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_ok());
+    let mut oversized = boundary;
+    oversized.push(b' ');
+    let error = parse_guest_agent_hello_json(
+        &oversized,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("size limit"), "{error}");
+
+    for invalid in [b"".as_slice(), b"{".as_slice(), b"[]".as_slice()] {
+        assert!(parse_guest_agent_hello_json(
+            invalid,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .is_err());
+    }
 }
 
 #[test]
