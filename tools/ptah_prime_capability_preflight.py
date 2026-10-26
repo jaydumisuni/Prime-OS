@@ -5,6 +5,7 @@ Prime, enrolls a Ptah Node, selects a task, or grants execution authority.
 A compatible snapshot is NOT a live capability or a Ptah admission decision.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -39,16 +40,30 @@ def _prime_host_id(value):
     return value
 
 
+_RFC3339_OBSERVATION = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"
+    r"(?P<fraction>\.[0-9]{1,9})?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z"
+)
+
+
 def _observation(value):
-    if type(value) is not str:
-        raise SnapshotRejected("missing capability observation time")
+    # datetime.fromisoformat also accepts week dates, basic dates, and offsets
+    # without a colon. Those are not Prime's RFC3339 health observations.
+    match = _RFC3339_OBSERVATION.fullmatch(value) if type(value) is str else None
+    if match is None:
+        raise SnapshotRejected("capability observation must be RFC3339")
     try:
-        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        normalized = value.replace("t", "T").replace("z", "Z").replace("Z", "+00:00")
+        observed = datetime.fromisoformat(normalized)
     except ValueError as error:
         raise SnapshotRejected("invalid capability observation time") from error
     if observed.tzinfo is None or observed.utcoffset() is None:
         raise SnapshotRejected("capability observation must include timezone")
-    return observed.astimezone(timezone.utc)
+    fraction = match.group("fraction")
+    # Python truncates RFC3339 nanoseconds to microseconds. Retain the
+    # remaining 0-999 ns so a future-dated submicrosecond sample cannot pass.
+    submicro_ns = int((fraction[1:] if fraction else "").ljust(9, "0")[6:])
+    return observed.astimezone(timezone.utc), submicro_ns
 
 
 def preflight_snapshot(
@@ -97,9 +112,17 @@ def preflight_snapshot(
         raise SnapshotRejected("capability identity mismatch")
     if capability.get("availability") != "AVAILABLE" or health.get("status") != "HEALTHY":
         raise SnapshotRejected("capability is not observed healthy and available")
-    observed = _observation(health.get("observed_at"))
-    if observed > now_utc or now_utc - observed > max_age:
+    observed, submicro_ns = _observation(health.get("observed_at"))
+    if (observed > now_utc or (observed == now_utc and submicro_ns)
+            or now_utc - observed > max_age):
         raise SnapshotRejected("capability observation is stale or in the future")
+
+    observed_text = observed.isoformat()
+    if submicro_ns:
+        clock, offset = observed_text.rsplit("+", 1)
+        if "." not in clock:
+            clock += ".000000"
+        observed_text = f"{clock}{submicro_ns:03d}+{offset}"
 
     return {
         "candidate_compatible": True,
@@ -107,7 +130,7 @@ def preflight_snapshot(
         "prime_host_id": expected_host_id,
         "prime_generation_id": expected_generation_id,
         "capability_id": requested_capability_id,
-        "observed_at": observed.isoformat(),
+        "observed_at": observed_text,
         "ptah_node_enrolled": False,
         "execution_authorized": False,
         "live_verified": False,
