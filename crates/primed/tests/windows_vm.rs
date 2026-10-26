@@ -551,6 +551,10 @@ fn qemu_plan_rejects_unaligned_qcow2_metadata_table_pointers() {
                 }
                 bytes[field_start..field_start + 8]
                     .copy_from_slice(&admitted_offset.to_be_bytes());
+                // Both halves of a present metadata table must agree.
+                let count_start = if field_start == 40 { 36 } else { 56 };
+                let count = if admitted_offset == 0 { 0u32 } else { 1u32 };
+                bytes[count_start..count_start + 4].copy_from_slice(&count.to_be_bytes());
                 fs::write(&overlay, bytes).unwrap();
                 assert!(
                     build_qemu_plan(&request).is_ok(),
@@ -595,6 +599,24 @@ fn qemu_plan_rejects_qcow2_table_counts_without_offsets() {
                 assert!(
                     error.to_string().contains("metadata table count"),
                     "version {version}, count field {count_start}, count {count}: {error}"
+                );
+            }
+            // A nonzero aligned pointer paired with an absent table count
+            // is also contradictory, even though its alignment is valid.
+            for offset in [65536u64, 131072] {
+                private_overlay(&overlay);
+                let mut bytes = fs::read(&overlay).unwrap();
+                bytes[4..8].copy_from_slice(&version.to_be_bytes());
+                if version == 2 {
+                    bytes.truncate(72);
+                }
+                bytes[count_start..count_start + 4].fill(0);
+                bytes[offset_start..offset_start + 8].copy_from_slice(&offset.to_be_bytes());
+                fs::write(&overlay, bytes).unwrap();
+                let error = build_qemu_plan(&request).unwrap_err();
+                assert!(
+                    error.to_string().contains("metadata table count"),
+                    "version {version}, offset field {offset_start}, offset {offset}: {error}"
                 );
             }
             // A zero count/offset or a nonzero count with an aligned
