@@ -1275,11 +1275,13 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     let l1_offset = u64::from_be_bytes(qcow2_prefix[40..48].try_into().unwrap());
     let refcount_offset = u64::from_be_bytes(qcow2_prefix[48..56].try_into().unwrap());
     let refcount_clusters = u32::from_be_bytes(qcow2_prefix[56..60].try_into().unwrap());
-    if (l1_size != 0 && l1_offset == 0)
-        || (refcount_clusters != 0 && refcount_offset == 0)
+    // A nonzero pointer with a zero count is equally contradictory: W8
+    // cannot grant authority to metadata that the header declares absent.
+    if (l1_size == 0) != (l1_offset == 0)
+        || (refcount_clusters == 0) != (refcount_offset == 0)
     {
         return Err(WindowsVmError::InvalidPlan(
-            "qcow2 metadata table count has no table offset",
+            "qcow2 metadata table count/offset mismatch",
         ));
     }
     // QEMU stores the entire v3 header inside the first qcow2 cluster.
