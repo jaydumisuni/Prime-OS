@@ -72,7 +72,7 @@ pub(crate) fn decode_system_wallpaper(index: usize) -> Result<DecodedWallpaper, 
     decode_png(entry.encoded)
 }
 
-fn decode_png(encoded: &[u8]) -> Result<DecodedWallpaper, String> {
+pub(crate) fn decode_png(encoded: &[u8]) -> Result<DecodedWallpaper, String> {
     let mut decoder = png::Decoder::new(Cursor::new(encoded));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|error| error.to_string())?;
@@ -270,5 +270,33 @@ impl WallpaperSelection {
         }
         let encoded = self.to_json().map_err(|error| error.to_string())?;
         fs::write(path, encoded).map_err(|error| error.to_string())
+    }
+}
+
+/// Draw real application artwork from a decoded PNG at a bounded size.
+pub(crate) fn paint_icon_image(
+    canvas: &mut Canvas<'_>,
+    image: &DecodedWallpaper,
+    target: super::Rect,
+    opacity: u8,
+) {
+    if image.width == 0 || image.height == 0 || target.width == 0 || target.height == 0 {
+        return;
+    }
+    if image.rgba.len() != image.width as usize * image.height as usize * 4 {
+        return;
+    }
+    for iy in 0..target.height {
+        for ix in 0..target.width {
+            let sx = ((ix as f32 + 0.5) / target.width as f32 * image.width as f32 - 0.5)
+                .clamp(0.0, image.width.saturating_sub(1) as f32);
+            let sy = ((iy as f32 + 0.5) / target.height as f32 * image.height as f32 - 0.5)
+                .clamp(0.0, image.height.saturating_sub(1) as f32);
+            let mut color = bilinear_pixel(image, sx, sy);
+            color.a = ((u16::from(color.a) * u16::from(opacity)) / 255) as u8;
+            if color.a != 0 {
+                canvas.blend_pixel(target.x + ix as i32, target.y + iy as i32, color);
+            }
+        }
     }
 }

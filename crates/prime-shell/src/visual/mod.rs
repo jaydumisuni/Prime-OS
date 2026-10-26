@@ -17,8 +17,9 @@ pub(crate) use background::{
     STATUS_CLUSTER_TOP_MARGIN, STATUS_CLUSTER_WIDTH,
 };
 pub(crate) use prime_launcher::{
-    paint_prime_launcher_surface, PrimeLauncherLayout, PrimeLauncherView, PRIME_LAUNCHER_HEIGHT,
-    PRIME_LAUNCHER_LEFT_MARGIN, PRIME_LAUNCHER_TOP_MARGIN, PRIME_LAUNCHER_WIDTH,
+    paint_prime_launcher_surface, MenuHit, PrimeLauncherLayout, PrimeLauncherView,
+    PRIME_LAUNCHER_HEIGHT, PRIME_LAUNCHER_LEFT_MARGIN, PRIME_LAUNCHER_TOP_MARGIN,
+    PRIME_LAUNCHER_WIDTH, VISIBLE_APP_LIMIT,
 };
 pub(crate) use primitives::{draw_icon, Argb, Canvas, Icon, Rect};
 pub(crate) use quick_controls::{
@@ -98,6 +99,26 @@ mod tests {
         canvas.line((16, 4), (16, 20), 1, color);
         assert_eq!(canvas.pixel(16, 12).unwrap(), color);
         assert_eq!(canvas.pixel(15, 12).unwrap(), Argb::TRANSPARENT);
+    }
+
+    #[test]
+    fn actual_application_png_painter_preserves_full_color_artwork() {
+        let icon = wallpaper::DecodedWallpaper {
+            width: 2,
+            height: 2,
+            rgba: vec![
+                245, 95, 20, 255, 245, 95, 20, 255, 245, 95, 20, 255, 245, 95, 20, 255,
+            ],
+        };
+        let mut bytes = vec![0u8; 48 * 48 * 4];
+        let mut canvas = Canvas::new(&mut bytes, 48, 48).unwrap();
+        wallpaper::paint_icon_image(&mut canvas, &icon, Rect::new(8, 8, 32, 32), 255);
+        let pixel = canvas.pixel(18, 18).unwrap();
+        assert!(
+            pixel.r > 220 && pixel.g > 80 && pixel.b < 50,
+            "The real app's brand colors must survive compositing, not become line art"
+        );
+        assert_eq!(canvas.pixel(0, 0), Some(Argb::TRANSPARENT));
     }
 
     #[test]
@@ -608,10 +629,16 @@ mod tests {
             &Theme::prime_dark(),
             PrimeLauncherView {
                 applications: &[],
+                icons: &std::collections::HashMap::new(),
+                incoming_left: None,
+                incoming_right: None,
+                files: &[],
                 selected: 0,
                 query: "",
                 message: None,
                 progress: 1.0,
+                wallpaper_anchored: false,
+                overflow: false,
             },
         );
 
@@ -652,15 +679,21 @@ mod tests {
             &Theme::prime_dark(),
             PrimeLauncherView {
                 applications: &applications,
+                icons: &std::collections::HashMap::new(),
+                incoming_left: None,
+                incoming_right: None,
+                files: &[],
                 selected: 0,
                 query: "",
                 message: None,
                 progress: 1.0,
+                wallpaper_anchored: false,
+                overflow: false,
             },
         );
 
         let card =
-            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).card_rect(0);
+            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).icon_rect(0);
         let y = card.center_y().round() as i32;
         let edge = canvas.pixel(card.x, y).unwrap();
         let inner = canvas.pixel(card.x + 1, y).unwrap();
@@ -669,20 +702,10 @@ mod tests {
             "selected card should use one crisp edge pixel, edge={edge:?} inner={inner:?}"
         );
 
-        let layout = PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT);
-        let bright_footer_pixels = (layout.footer.y..layout.footer.y + layout.footer.height as i32)
-            .flat_map(|y| {
-                (layout.footer.x..layout.footer.x + layout.footer.width as i32).map(move |x| (x, y))
-            })
-            .filter(|&(x, y)| {
-                canvas
-                    .pixel(x, y)
-                    .is_some_and(|p| p.a > 90 && p.r > 100 && p.g > 100)
-            })
-            .count();
-        assert!(
-            bright_footer_pixels < 8,
-            "normal Home surface should not advertise keyboard construction hints; found {bright_footer_pixels} bright footer pixels"
+        // Orbit design has no extraneous instruction footer.
+        assert_eq!(
+            canvas.pixel(6, PRIME_LAUNCHER_HEIGHT as i32 - 6).unwrap(),
+            Argb::TRANSPARENT
         );
     }
 
@@ -699,14 +722,20 @@ mod tests {
             &Theme::prime_dark(),
             PrimeLauncherView {
                 applications: &applications,
+                icons: &std::collections::HashMap::new(),
+                incoming_left: None,
+                incoming_right: None,
+                files: &[],
                 selected: 0,
                 query: "",
                 message: None,
                 progress: 1.0,
+                wallpaper_anchored: false,
+                overflow: false,
             },
         );
         let card =
-            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).card_rect(0);
+            PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).icon_rect(0);
         let amber_pixels = (card.y + 170..card.y + card.height as i32)
             .flat_map(|y| (card.x..card.x + card.width as i32).map(move |x| (x, y)))
             .filter(|&(x, y)| {
@@ -783,29 +812,18 @@ mod tests {
     }
 
     #[test]
-    fn prime_launcher_layout_maps_four_column_application_cards() {
-        let layout = PrimeLauncherLayout::new(858, 786);
-        let first = layout.card_rect(0);
-        let second = layout.card_rect(1);
-        let third = layout.card_rect(2);
+    fn prime_launcher_layout_uses_eleven_orbit_slots() {
+        let layout = PrimeLauncherLayout::new(1366, 768);
+        for index in 0..11 {
+            let rect = layout.icon_rect(index);
+            assert_eq!(
+                layout.hit(rect.center_x(), rect.center_y(), 11, false),
+                prime_launcher::MenuHit::App(index)
+            );
+        }
         assert_eq!(
-            layout.application_at(first.center_x(), first.center_y(), 3),
-            Some(0)
-        );
-        assert_eq!(
-            layout.application_at(second.center_x(), second.center_y(), 3),
-            Some(1)
-        );
-        assert_eq!(
-            layout.application_at(third.center_x(), third.center_y(), 3),
-            Some(2)
-        );
-        assert!(second.x > first.x);
-        assert!(third.x > second.x);
-        assert_eq!(layout.application_at(8.0, 8.0, 3), None);
-        assert!(
-            layout.apps.height >= 540,
-            "Home should dedicate its lower body to applications instead of duplicating power controls"
+            layout.hit(8.0, 8.0, 11, false),
+            prime_launcher::MenuHit::Outside
         );
     }
 

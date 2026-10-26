@@ -83,4 +83,45 @@ This section captures the owner's follow-up to the saved `menu/Prime_OS_Apps_Men
 
 ### Acceptance gate
 
-This is a **recorded owner design direction**, not implemented UI or permission to replace the Ubuntu default desktop. Before implementation: reproduce the corrected Prime mark in an owner-reviewed mockup; then implement and test the two-stack bidirectional movement, exactly bounded visible slots, wallpaper-aware presentation, full search, app/window focus, and outside-dismiss behavior against the existing Prime Shell/Compositor contracts. Preserve XFCE, Oracle, and rollback. Do not mark this or native Prime release `KNOWN_GOOD` without independent proof.
+This is a **recorded owner design direction**, not implemented UI or permission to replace the Ubuntu default desktop. Before implementation: reproduce the corrected Prime mark in an owner-reviewed mockup; then implement and test the two-stack bidirectional movement, exactly bounded visible slots, wallpaper-aware presentation, full search, app/window focus, and outside-dismiss behavior against the existing Prime Shell/Compositor contracts. Preserve XFCE, Oracle, and rollback. Do not mark this or native Prime release `KNOWN_GOOD` without independent proof.\n
+
+## 26 October 2026 — Native preview UI update (draft, not qualified)
+
+The implementation advances the existing Prime-on-Ubuntu PR rather than replacing Ubuntu.
+The initial generic line-art app renderer was visually rejected by the owner. The
+corrective preview now renders the **actual installed app artwork** from the
+Ubuntu GTK icon theme. A user-only bridge materializes PNG icons under
+`$XDG_RUNTIME_DIR/prime-on-ubuntu/icons`, and the native Rust Shell decodes
+and composites the corresponding per-application artwork (rather than
+drawing generic line icons). The exact repository Prime logo is retained
+on the rail. When system-03 is selected, the wallpaper's existing Prime
+logo remains in place without creating a second one.
+
+Implementation and validation at this checkpoint:
+
+- 79 real Ubuntu desktop apps indexed; 79/79 icons materialized on KRATOS.
+  The Ubuntu-preview desktop entry is excluded from its own catalogue.
+- Eleven visible app slots; two-sided circular navigation; colorful incoming
+  app icons shown on both folding-stack fronts. Right-click a visible app to
+  toggle preferred front-of-menu placement, stored in user config
+  `prime/menu.json`. No native Prime Exec status is inferred.
+- Compact typing-first app search and a bounded filename-only local search
+  in user directories. A discovered file may be dispatched with Ubuntu's
+  `gio open`; this is not certification of opening all formats.
+- Launcher outside-click / Escape dismissals; distinct Ubuntu-preview
+  Quick Controls backed by real read-only host status. No power mutation
+  is enabled.
+- Native Rust test suite and bridge tests pass at this checkpoint, and the
+  native release builds on KRATOS.
+- Live compositor capture confirmed full-color installed app icons and
+  colored stack-front images at 1366 x 718 on the isolated nested desktop:
+  `/home/kratos/.oracle/proof/prime-color-icon-acceptance-20261026/live-prime-color-icons-and-stacks.png`.
+  This is a visual check, not owner acceptance of the overall UI.
+
+**Still open:** Running-app taskbar and overflow are not wired to the preview
+rail; actual window focus is not yet accepted; desktop placement and
+Prime-native Machine/Bin icons remain pending; full search coverage, arc
+animation, small-screen layout, and Ubuntu Quick Controls outside-click
+recovery need systematic interaction proof. Some browser/compositor checks
+still demonstrate dispatch rather than a complete application workflow.
+No new default desktop, native boot identity, installer, or ISO admission.

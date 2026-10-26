@@ -226,10 +226,16 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
                 &theme,
                 PrimeLauncherView {
                     applications: &applications,
+                    icons: &std::collections::HashMap::new(),
+                    incoming_left: None,
+                    incoming_right: None,
+                    files: &[],
                     selected: 0,
                     query: "",
                     message: None,
                     progress: 1.0,
+                    wallpaper_anchored: false,
+                    overflow: true,
                 },
             );
         }

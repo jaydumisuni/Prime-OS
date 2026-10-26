@@ -42,5 +42,78 @@ class BridgeTests(unittest.TestCase):
             raise OSError("Cannot launch")
         self.assertEqual(b.dispatch("POST", "/v1/shell/launch", body, self.apps, failure)[0], 503)
 
+
+class CatalogueTests(unittest.TestCase):
+    def test_enumerates_more_than_eleven_without_invented_entries(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            folder=Path(root)
+            for i in range(21):
+                (folder/f"app-{i:02d}.desktop").write_text(
+                    f"[Desktop Entry]\nType=Application\nName=Prime Test {i}\nExec=/bin/true\n"
+                )
+            found=b.discover_desktops([folder])
+            self.assertEqual(len(found),21)
+            self.assertEqual(found["app-00.desktop"][0],"Prime Test 0")
+
+    def test_hidden_and_symlinked_desktop_entries_are_excluded(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            folder=Path(root)
+            valid=folder/"real.desktop"
+            valid.write_text("[Desktop Entry]\nType=Application\nName=Visible\nExec=/bin/true\n")
+            (folder/"hidden.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Hidden\nExec=/bin/true\nNoDisplay=true\n"
+            )
+            (folder/"alias.desktop").symlink_to(valid)
+            found=b.discover_desktops([folder])
+            self.assertEqual(list(found),["real.desktop"])
+
+
+class FileSearchTests(unittest.TestCase):
+    def test_local_index_and_search_excludes_hidden_and_symlinks(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            docs=root/"Documents"
+            docs.mkdir()
+            (docs/"Plan 2026.txt").write_text("example")
+            (docs/".secret").write_text("hidden")
+            (docs/"alias.txt").symlink_to(docs/"Plan 2026.txt")
+            nested=docs/"Invoices"
+            nested.mkdir()
+            (nested/"October Invoice.pdf").write_text("example")
+            indexed=b.index_user_files(root)
+            self.assertEqual([item["name"] for item in indexed],
+                             ["Plan 2026.txt","October Invoice.pdf"])
+            self.assertEqual(len(b.search_preview_files("invoice",indexed)),1)
+            self.assertEqual(b.search_preview_files("secret",indexed),[])
+
+    def test_only_indexed_files_can_be_dispatched(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            doc=root/"readme.txt"
+            doc.write_text("data")
+            files=[{"name":"readme.txt","path":str(doc),"kind":"file"}]
+            opened=[]
+            self.assertEqual(b.open_indexed_file(str(doc),files,opened.append)[0],202)
+            self.assertEqual(opened,[str(doc)])
+            self.assertEqual(b.open_indexed_file("/etc/passwd",files,opened.append)[0],403)
+            doc.unlink()
+            self.assertEqual(b.open_indexed_file(str(doc),files,opened.append)[0],404)
+
+    def test_search_api_returns_matching_local_files_only(self):
+        file={"name":"Budget 2026.xlsx","path":"/home/example/Documents/Budget 2026.xlsx","kind":"file"}
+        body=json.dumps({"query":"budget"}).encode()
+        status,result=b.dispatch("POST","/v1/preview/search",body,{},lambda _:None,[file])
+        self.assertEqual(status,200)
+        self.assertEqual(result["schema"],"prime.ubuntu.file-search.v1")
+        self.assertEqual(result["results"],[file])
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT},
+        pointer::{PointerEvent, PointerEventKind, PointerHandler, BTN_LEFT, BTN_RIGHT},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -236,11 +236,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         baseline_reported: false,
         prime_launcher: None,
         quick_controls: None,
+        quick_backdrop: None,
+        menu_offset: 0,
         keyboard: None,
         pointer: None,
         keyboard_focus: None,
         core: core_client::CoreClient::from_env(),
         applications: Vec::new(),
+        icon_cache: std::collections::HashMap::new(),
+        file_results: Vec::new(),
         selected_application: 0,
         launcher_query: String::new(),
         prime_launcher_message: None,
@@ -342,6 +346,49 @@ fn bounded_prime_launcher(output_width: u32, output_height: u32) -> (u32, u32, i
     (width, height, top, left)
 }
 
+fn visible_menu_window<T: Clone>(items: &[T], offset: usize, capacity: usize) -> Vec<T> {
+    if items.is_empty() || capacity == 0 {
+        return Vec::new();
+    }
+    let count = items.len().min(capacity);
+    (0..count)
+        .map(|index| items[(offset + index) % items.len()].clone())
+        .collect()
+}
+
+fn update_menu_preference(path: &std::path::Path, name: &str) -> io::Result<Vec<String>> {
+    let source = std::fs::read_to_string(path).unwrap_or_default();
+    let mut preferred = serde_json::from_str::<serde_json::Value>(&source)
+        .ok()
+        .filter(|value| value.get("schema").and_then(|v| v.as_str()) == Some("prime.menu.v1"))
+        .and_then(|value| value.get("preferred").and_then(|v| v.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.as_str().map(str::to_owned))
+        .take(11)
+        .collect::<Vec<_>>();
+    if let Some(pos) = preferred
+        .iter()
+        .position(|item| item.eq_ignore_ascii_case(name))
+    {
+        preferred.remove(pos);
+    } else {
+        preferred.insert(0, name.to_owned());
+    }
+    preferred.truncate(11);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let data = serde_json::to_vec_pretty(
+        &serde_json::json!({"schema":"prime.menu.v1","preferred":preferred}),
+    )
+    .map_err(io::Error::other)?;
+    let tmp = path.with_extension("json.new");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(tmp, path)?;
+    Ok(preferred)
+}
+
 fn launcher_query_matches(display_name: &str, query: &str) -> bool {
     let query = query.trim();
     query.is_empty() || display_name.to_lowercase().contains(&query.to_lowercase())
@@ -386,11 +433,15 @@ struct PrimeShell {
     baseline_reported: bool,
     prime_launcher: Option<TransientSurface>,
     quick_controls: Option<TransientSurface>,
+    quick_backdrop: Option<LayerSurface>,
+    menu_offset: usize,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard_focus: Option<ShellSurfaceKind>,
     core: core_client::CoreClient,
     applications: Vec<prime_contracts::ApplicationEntry>,
+    icon_cache: std::collections::HashMap<String, visual::wallpaper::DecodedWallpaper>,
+    file_results: Vec<core_client::PreviewFileResult>,
     selected_application: usize,
     launcher_query: String,
     prime_launcher_message: Option<String>,
@@ -595,10 +646,66 @@ impl PrimeShell {
         self.pending_power = None;
         self.quick_message = None;
         self.launcher_query.clear();
+        self.file_results.clear();
         self.selected_application = 0;
+        self.menu_offset = 0;
+        self.quick_controls.take();
+        self.quick_backdrop.take();
         match self.core.applications() {
             Ok(projection) => {
                 self.applications = projection.applications;
+                // User preference changes ordering only; installed catalogue stays complete.
+                let mut preference = Vec::new();
+                if let Some(home) = std::env::var_os("HOME") {
+                    let path = std::path::PathBuf::from(home).join(".config/prime/menu.json");
+                    if let Ok(source) = std::fs::read_to_string(path) {
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&source) {
+                            if value.get("schema").and_then(|v| v.as_str()) == Some("prime.menu.v1")
+                            {
+                                if let Some(items) =
+                                    value.get("preferred").and_then(|v| v.as_array())
+                                {
+                                    for item in items.iter().take(11) {
+                                        if let Some(name) = item.as_str() {
+                                            preference.push(name.to_lowercase());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.icon_cache.clear();
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
+                    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+                        let folder =
+                            std::path::PathBuf::from(runtime).join("prime-on-ubuntu/icons");
+                        for entry in &self.applications {
+                            let id = entry.application_id.to_string();
+                            let path = folder.join(format!("{id}.png"));
+                            if let Ok(data) = std::fs::read(&path) {
+                                if data.len() <= 3 * 1024 * 1024 {
+                                    if let Ok(icon) = visual::wallpaper::decode_png(&data) {
+                                        if icon.width <= 512 && icon.height <= 512 {
+                                            self.icon_cache.insert(id, icon);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                eprintln!(
+                    "PRIME_SHELL_APPLICATION_ICONS={}/{}",
+                    self.icon_cache.len(),
+                    self.applications.len()
+                );
+                self.applications.sort_by_key(|entry| {
+                    preference
+                        .iter()
+                        .position(|name| entry.display_name.to_lowercase() == *name)
+                        .unwrap_or(usize::MAX)
+                });
                 self.selected_application = self
                     .selected_application
                     .min(self.applications.len().saturating_sub(1));
@@ -614,15 +721,13 @@ impl PrimeShell {
                 self.prime_launcher_message = Some(format!("CORE UNAVAILABLE: {error}"));
             }
         }
-        let (popup_width, popup_height, popup_top, popup_left) =
-            bounded_prime_launcher(self.background_width, self.background_height);
         self.prime_launcher = Some(self.create_overlay(
             queue_handle,
             PRIME_NAMESPACE,
             Anchor::TOP | Anchor::LEFT,
-            (popup_top, 0, 0, popup_left),
-            popup_width,
-            popup_height,
+            (0, 0, 0, 0),
+            self.background_width.max(1),
+            self.background_height.max(1),
         ));
         self.redraw_rail();
         match source {
@@ -642,30 +747,67 @@ impl PrimeShell {
         }
         self.pending_power = None;
         self.quick_message = None;
-        match self.core.system_status() {
-            Ok(status) => {
-                self.quick_lines = status.lines;
-                self.quick_power_ready = status.power_ready;
-            }
-            Err(error) => {
-                self.quick_lines = vec![format!("CORE STATUS UNAVAILABLE: {error}")];
-                self.quick_power_ready = false;
-            }
-        }
-        match self.core.storage_status() {
-            Ok(storage_lines) => self.quick_lines.extend(storage_lines),
-            Err(error) => self
-                .quick_lines
-                .push(format!("STORAGE UNAVAILABLE: {error}")),
-        }
-        self.quick_controls = Some(self.create_overlay(
+        self.prime_launcher.take();
+        self.launcher_query.clear();
+        // An input-owning transparent backdrop dismisses on outside clicks.
+        let surface = self.compositor.create_surface(queue_handle);
+        let backdrop = self.layer_shell.create_layer_surface(
             queue_handle,
-            QUICK_CONTROLS_NAMESPACE,
-            Anchor::TOP | Anchor::RIGHT,
-            (94, 28, 0, 0),
-            visual::QUICK_WIDTH,
-            visual::QUICK_HEIGHT,
-        ));
+            surface,
+            Layer::Overlay,
+            Some("prime.shell.dismiss"),
+            None,
+        );
+        backdrop.set_anchor(Anchor::TOP | Anchor::LEFT);
+        backdrop.set_margin(0, 0, 0, 0);
+        backdrop.set_size(self.background_width.max(1), self.background_height.max(1));
+        backdrop.set_keyboard_interactivity(KeyboardInteractivity::None);
+        backdrop.set_exclusive_zone(0);
+        backdrop.commit();
+        self.quick_backdrop = Some(backdrop);
+        let ubuntu_preview = std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some();
+        if ubuntu_preview {
+            self.quick_lines = self.core.ubuntu_preview_status().unwrap_or_else(|error| {
+                vec![format!("STATUS: Ubuntu host data unavailable ({error})")]
+            });
+            self.quick_power_ready = false;
+        } else {
+            match self.core.system_status() {
+                Ok(status) => {
+                    self.quick_lines = status.lines;
+                    self.quick_power_ready = status.power_ready;
+                }
+                Err(error) => {
+                    self.quick_lines = vec![format!("CORE STATUS UNAVAILABLE: {error}")];
+                    self.quick_power_ready = false;
+                }
+            }
+            match self.core.storage_status() {
+                Ok(storage_lines) => self.quick_lines.extend(storage_lines),
+                Err(error) => self
+                    .quick_lines
+                    .push(format!("STORAGE UNAVAILABLE: {error}")),
+            }
+        }
+        self.quick_controls = Some(if ubuntu_preview {
+            self.create_overlay(
+                queue_handle,
+                QUICK_CONTROLS_NAMESPACE,
+                Anchor::BOTTOM | Anchor::LEFT,
+                (0, 0, 23, 23),
+                455.min(self.background_width.saturating_sub(46).max(1)),
+                424.min(self.background_height.saturating_sub(70).max(1)),
+            )
+        } else {
+            self.create_overlay(
+                queue_handle,
+                QUICK_CONTROLS_NAMESPACE,
+                Anchor::TOP | Anchor::RIGHT,
+                (65, 22, 0, 0),
+                visual::QUICK_WIDTH.min(self.background_width.saturating_sub(48).max(1)),
+                visual::QUICK_HEIGHT.min(self.background_height.saturating_sub(90).max(1)),
+            )
+        });
         self.redraw_rail();
         match source {
             InteractionSource::Pointer => {
@@ -678,18 +820,111 @@ impl PrimeShell {
     }
 
     fn filtered_applications(&self) -> Vec<prime_contracts::ApplicationEntry> {
-        self.applications
+        let matches = self
+            .applications
             .iter()
             .filter(|entry| launcher_query_matches(&entry.display_name, &self.launcher_query))
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        if !self.launcher_query.is_empty() {
+            return matches
+                .into_iter()
+                .take(if self.file_results.is_empty() { 6 } else { 3 })
+                .collect();
+        }
+        visible_menu_window(&matches, self.menu_offset, visual::VISIBLE_APP_LIMIT)
+    }
+    fn refresh_file_results(&mut self) {
+        self.file_results = if self.launcher_query.chars().count() >= 2 {
+            self.core
+                .search_preview_files(&self.launcher_query)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
     }
 
-    fn activate_selected_application(&mut self) {
+    fn toggle_menu_pin(&mut self, index: usize) {
+        if !self.launcher_query.is_empty() {
+            return;
+        }
         let visible = self.filtered_applications();
+        let Some(entry) = visible.get(index) else {
+            return;
+        };
+        let name = entry.display_name.clone();
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|root| std::path::PathBuf::from(root).join(".config"))
+            });
+        let Some(config) = config else {
+            return;
+        };
+        match update_menu_preference(&config.join("prime/menu.json"), &name) {
+            Ok(preferred) => {
+                self.applications.sort_by_key(|item| {
+                    preferred
+                        .iter()
+                        .position(|candidate| candidate.eq_ignore_ascii_case(&item.display_name))
+                        .unwrap_or(usize::MAX)
+                });
+                self.menu_offset = 0;
+                self.selected_application = 0;
+                self.prime_launcher_message = Some(format!("UPDATED PRIME FAVORITES: {name}"));
+            }
+            Err(error) => {
+                self.prime_launcher_message = Some(format!("FAVORITES SAVE FAILED: {error}"))
+            }
+        }
+    }
+
+    fn incoming_menu_indices(&self) -> (Option<usize>, Option<usize>) {
+        let n = self.applications.len();
+        if n <= visual::VISIBLE_APP_LIMIT {
+            return (None, None);
+        }
+        (
+            Some((self.menu_offset + n - 1) % n),
+            Some((self.menu_offset + visual::VISIBLE_APP_LIMIT) % n),
+        )
+    }
+
+    fn rotate_menu(&mut self, direction: i32) {
+        if self.applications.len() <= visual::VISIBLE_APP_LIMIT || !self.launcher_query.is_empty() {
+            return;
+        }
+        let n = self.applications.len();
+        self.menu_offset = if direction > 0 {
+            (self.menu_offset + 1) % n
+        } else {
+            (self.menu_offset + n - 1) % n
+        };
+        self.selected_application = 0;
+    }
+
+    fn activate_selected_application(&mut self) -> bool {
+        let visible = self.filtered_applications();
+        if !self.launcher_query.is_empty() && self.selected_application >= visible.len() {
+            let file_index = self.selected_application - visible.len();
+            if let Some(file) = self.file_results.get(file_index) {
+                match self.core.open_preview_file(&file.path) {
+                    Ok(()) => {
+                        self.prime_launcher_message = None;
+                        return true;
+                    }
+                    Err(error) => {
+                        self.prime_launcher_message = Some(format!("FILE OPEN DENIED: {error}"));
+                        return false;
+                    }
+                }
+            }
+            self.prime_launcher_message = Some("NO FILE SELECTED".to_owned());
+            return false;
+        }
         let Some(entry) = visible.get(self.selected_application).cloned() else {
             self.prime_launcher_message = Some("NO APPLICATION SELECTED".to_owned());
-            return;
+            return false;
         };
         if !entry.launch_ready {
             self.prime_launcher_message = Some(if entry.limitations.is_empty() {
@@ -697,19 +932,28 @@ impl PrimeShell {
             } else {
                 entry.limitations.join(" | ")
             });
-            return;
+            return false;
         }
-        self.prime_launcher_message = Some(match self.core.launch(entry.application_id) {
-            Ok(()) if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() => {
-                format!("UBUNTU LAUNCH DISPATCHED: {}", entry.display_name)
+        match self.core.launch(entry.application_id) {
+            Ok(()) => {
+                self.prime_launcher_message = None;
+                true
             }
-            Ok(()) => format!("LAUNCH ACCEPTED: {}", entry.display_name),
-            Err(error) => format!("LAUNCH DENIED: {error}"),
-        });
+            Err(error) => {
+                self.prime_launcher_message = Some(format!("LAUNCH DENIED: {error}"));
+                false
+            }
+        }
     }
 
     fn move_application_selection(&mut self, delta: isize) {
-        let visible_count = self.filtered_applications().len();
+        let visible_count = (self.filtered_applications().len() + self.file_results.len())
+            .min(6)
+            .max(if self.launcher_query.is_empty() {
+                self.filtered_applications().len()
+            } else {
+                0
+            });
         if visible_count == 0 {
             self.selected_application = 0;
             return;
@@ -739,6 +983,18 @@ impl PrimeShell {
                 .frame(queue_handle, layer.wl_surface().clone());
         }
         let applications = self.filtered_applications();
+        let (left_index, right_index) = self.incoming_menu_indices();
+        let incoming_left = left_index.and_then(|i| {
+            self.icon_cache
+                .get(&self.applications[i].application_id.to_string())
+        });
+        let incoming_right = right_index.and_then(|i| {
+            self.icon_cache
+                .get(&self.applications[i].application_id.to_string())
+        });
+        let wallpaper_anchored =
+            self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
+        let overflow = self.applications.len() > visual::VISIBLE_APP_LIMIT;
         let theme = self.theme;
         let text = &mut self.text;
         if let Err(error) =
@@ -751,10 +1007,16 @@ impl PrimeShell {
                     &theme,
                     visual::PrimeLauncherView {
                         applications: &applications,
+                        icons: &self.icon_cache,
+                        incoming_left,
+                        incoming_right,
+                        files: &self.file_results,
                         selected: self.selected_application,
                         query: &self.launcher_query,
                         message: self.prime_launcher_message.as_deref(),
                         progress,
+                        wallpaper_anchored,
+                        overflow,
                     },
                 );
             })
@@ -855,6 +1117,7 @@ impl PrimeShell {
             return;
         }
         if kind == ShellSurfaceKind::QuickControls {
+            self.quick_backdrop.take();
             self.pending_power = None;
             self.quick_message = None;
             self.redraw_quick_controls(queue_handle);
@@ -876,6 +1139,18 @@ impl PrimeShell {
         configure: &LayerSurfaceConfigure,
     ) -> bool {
         let filtered_applications = self.filtered_applications();
+        let (left_index, right_index) = self.incoming_menu_indices();
+        let incoming_left = left_index.and_then(|i| {
+            self.icon_cache
+                .get(&self.applications[i].application_id.to_string())
+        });
+        let incoming_right = right_index.and_then(|i| {
+            self.icon_cache
+                .get(&self.applications[i].application_id.to_string())
+        });
+        let wallpaper_anchored =
+            self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
+        let overflow = self.applications.len() > visual::VISIBLE_APP_LIMIT;
         if let Some(prime_launcher) = self.prime_launcher.as_mut() {
             if layer.wl_surface() == prime_launcher.layer.wl_surface() {
                 let width = NonZeroU32::new(configure.new_size.0)
@@ -914,10 +1189,16 @@ impl PrimeShell {
                             &theme,
                             visual::PrimeLauncherView {
                                 applications: &filtered_applications,
+                                icons: &self.icon_cache,
+                                incoming_left,
+                                incoming_right,
+                                files: &self.file_results,
                                 selected: self.selected_application,
                                 query: &self.launcher_query,
                                 message: self.prime_launcher_message.as_deref(),
                                 progress,
+                                wallpaper_anchored,
+                                overflow,
                             },
                         );
                     },
@@ -1062,6 +1343,7 @@ impl CompositorHandler for PrimeShell {
             }
             if should_close {
                 self.quick_controls.take();
+                self.quick_backdrop.take();
                 self.pending_power = None;
                 self.quick_message = None;
                 self.keyboard_focus = None;
@@ -1147,6 +1429,7 @@ impl LayerShellHandler for PrimeShell {
             .as_ref()
             .is_some_and(|overlay| layer.wl_surface() == overlay.layer.wl_surface())
         {
+            self.quick_backdrop.take();
             self.quick_controls.take();
             self.keyboard_focus = None;
             eprintln!("PRIME_SHELL_QUICK_CONTROLS_CLOSED=compositor");
@@ -1162,6 +1445,29 @@ impl LayerShellHandler for PrimeShell {
         _serial: u32,
     ) {
         if self.configure_transient(queue_handle, layer, &configure) {
+            return;
+        }
+        if self
+            .quick_backdrop
+            .as_ref()
+            .is_some_and(|b| b.wl_surface() == layer.wl_surface())
+        {
+            let width = NonZeroU32::new(configure.new_size.0)
+                .map(NonZeroU32::get)
+                .unwrap_or(self.background_width.max(1));
+            let height = NonZeroU32::new(configure.new_size.1)
+                .map(NonZeroU32::get)
+                .unwrap_or(self.background_height.max(1));
+            if let Err(error) =
+                draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
+                    let mut canvas =
+                        visual::Canvas::new(bytes, w, h).expect("Backdrop buffer dimensions");
+                    canvas.clear();
+                })
+            {
+                eprintln!("Prime dismiss layer could not draw: {error}");
+                self.quick_backdrop.take();
+            }
             return;
         }
 
@@ -1403,6 +1709,7 @@ impl KeyboardHandler for PrimeShell {
         if self.keyboard_focus == Some(ShellSurfaceKind::PrimeLauncher) {
             if event.keysym == Keysym::BackSpace {
                 self.launcher_query.pop();
+                self.refresh_file_results();
                 self.selected_application = 0;
                 self.prime_launcher_message = None;
                 self.redraw_prime_launcher(queue_handle);
@@ -1419,13 +1726,31 @@ impl KeyboardHandler for PrimeShell {
                 return;
             }
             if event.keysym == Keysym::Return {
-                self.activate_selected_application();
+                if self.activate_selected_application() {
+                    self.close_transient(
+                        ShellSurfaceKind::PrimeLauncher,
+                        queue_handle,
+                        InteractionSource::Keyboard,
+                    );
+                } else {
+                    self.redraw_prime_launcher(queue_handle);
+                }
+                return;
+            }
+            if self.launcher_query.is_empty() && event.keysym == Keysym::Right {
+                self.rotate_menu(1);
+                self.redraw_prime_launcher(queue_handle);
+                return;
+            }
+            if self.launcher_query.is_empty() && event.keysym == Keysym::Left {
+                self.rotate_menu(-1);
                 self.redraw_prime_launcher(queue_handle);
                 return;
             }
             if let Some(character) = event.keysym.key_char() {
                 if !character.is_control() && self.launcher_query.chars().count() < 64 {
                     self.launcher_query.push(character);
+                    self.refresh_file_results();
                     self.selected_application = 0;
                     self.prime_launcher_message = None;
                     self.redraw_prime_launcher(queue_handle);
@@ -1500,9 +1825,78 @@ impl PointerHandler for PrimeShell {
         events: &[PointerEvent],
     ) {
         for event in events {
+            if let PointerEventKind::Axis { vertical, .. } = &event.kind {
+                if self
+                    .prime_launcher
+                    .as_ref()
+                    .is_some_and(|menu| &event.surface == menu.layer.wl_surface())
+                    && self.launcher_query.is_empty()
+                {
+                    let direction = if vertical.value120 > 0
+                        || vertical.discrete > 0
+                        || vertical.absolute > 0.0
+                    {
+                        1
+                    } else if vertical.value120 < 0
+                        || vertical.discrete < 0
+                        || vertical.absolute < 0.0
+                    {
+                        -1
+                    } else {
+                        0
+                    };
+                    if direction != 0 {
+                        self.rotate_menu(direction);
+                        self.redraw_prime_launcher(queue_handle);
+                    }
+                }
+                continue;
+            }
+            if self
+                .quick_backdrop
+                .as_ref()
+                .is_some_and(|backdrop| &event.surface == backdrop.wl_surface())
+            {
+                if matches!(
+                    event.kind,
+                    PointerEventKind::Press {
+                        button: BTN_LEFT,
+                        ..
+                    }
+                ) {
+                    self.close_transient(
+                        ShellSurfaceKind::QuickControls,
+                        queue_handle,
+                        InteractionSource::Pointer,
+                    );
+                }
+                continue;
+            }
             let PointerEventKind::Press { button, .. } = event.kind else {
                 continue;
             };
+            if button == BTN_RIGHT {
+                if self
+                    .prime_launcher
+                    .as_ref()
+                    .is_some_and(|menu| event.surface == *menu.layer.wl_surface())
+                {
+                    let count = self.filtered_applications().len();
+                    let hit = self.prime_launcher.as_ref().map(|menu| {
+                        visual::PrimeLauncherLayout::new(menu.width, menu.height).hit(
+                            event.position.0,
+                            event.position.1,
+                            count,
+                            false,
+                        )
+                    });
+                    if let Some(visual::MenuHit::App(index)) = hit {
+                        self.toggle_menu_pin(index);
+                        self.redraw_prime_launcher(queue_handle);
+                    }
+                }
+                continue;
+            }
             if button != BTN_LEFT {
                 continue;
             }
@@ -1572,18 +1966,61 @@ impl PointerHandler for PrimeShell {
                 .as_ref()
                 .is_some_and(|prime_launcher| &event.surface == prime_launcher.layer.wl_surface())
             {
-                let visible_count = self.filtered_applications().len();
-                let application = self.prime_launcher.as_ref().and_then(|prime_launcher| {
+                let apps = self.filtered_applications();
+                let hit = self.prime_launcher.as_ref().map(|prime_launcher| {
                     let layout = visual::PrimeLauncherLayout::new(
                         prime_launcher.width,
                         prime_launcher.height,
                     );
-                    layout.application_at(event.position.0, event.position.1, visible_count)
+                    layout.hit(
+                        event.position.0,
+                        event.position.1,
+                        if self.launcher_query.is_empty() {
+                            self.applications.len()
+                        } else {
+                            (apps.len() + self.file_results.len()).min(6)
+                        },
+                        !self.launcher_query.is_empty(),
+                    )
                 });
-                if let Some(index) = application {
-                    self.selected_application = index;
-                    self.activate_selected_application();
-                    self.redraw_prime_launcher(queue_handle);
+                match hit {
+                    Some(visual::MenuHit::App(index)) => {
+                        self.selected_application = index;
+                        if self.activate_selected_application() {
+                            self.close_transient(
+                                ShellSurfaceKind::PrimeLauncher,
+                                queue_handle,
+                                InteractionSource::Pointer,
+                            );
+                        } else {
+                            self.redraw_prime_launcher(queue_handle);
+                        }
+                    }
+                    Some(visual::MenuHit::LeftStack) => {
+                        self.rotate_menu(-1);
+                        self.redraw_prime_launcher(queue_handle);
+                    }
+                    Some(visual::MenuHit::RightStack) => {
+                        self.rotate_menu(1);
+                        self.redraw_prime_launcher(queue_handle);
+                    }
+                    Some(visual::MenuHit::Outside) => {
+                        let x = event.position.0 as i32;
+                        let y = event.position.1 as i32;
+                        let status_left = self.background_width as i32
+                            - visual::STATUS_CLUSTER_RIGHT_MARGIN
+                            - visual::STATUS_CLUSTER_WIDTH as i32;
+                        if x >= status_left && y >= 0 && y < 65 {
+                            self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
+                        } else {
+                            self.close_transient(
+                                ShellSurfaceKind::PrimeLauncher,
+                                queue_handle,
+                                InteractionSource::Pointer,
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             } else if self
                 .quick_controls
@@ -1662,6 +2099,43 @@ mod cached_frame_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preferred_menu_apps_are_persistent_and_bounded_to_eleven() {
+        let folder =
+            std::env::temp_dir().join(format!("prime-menu-favorites-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("menu.json");
+        let _ = std::fs::remove_file(&file);
+        for index in 0..18 {
+            update_menu_preference(&file, &format!("App {index}")).unwrap();
+        }
+        let saved = std::fs::read_to_string(&file).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(value["preferred"].as_array().unwrap().len(), 11);
+        let reduced = update_menu_preference(&file, "App 17").unwrap();
+        assert_eq!(reduced.len(), 10);
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn inward_folding_menu_never_exceeds_eleven_or_duplicates_apps() {
+        let catalogue = (0..37).collect::<Vec<_>>();
+        for offset in 0..200 {
+            let visible = visible_menu_window(&catalogue, offset, 11);
+            assert_eq!(visible.len(), 11);
+            assert_eq!(
+                visible
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                11
+            );
+        }
+        assert_eq!(visible_menu_window(&catalogue, 1, 11)[0], 1);
+        assert_eq!(visible_menu_window(&catalogue, 36, 11)[0], 36);
+        assert_eq!(visible_menu_window(&[0, 1, 2], 0, 11), vec![0, 1, 2]);
+    }
 
     #[test]
     fn launcher_search_is_case_insensitive_and_empty_query_matches_all() {

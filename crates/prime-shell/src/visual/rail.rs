@@ -300,7 +300,7 @@ fn sample_logo_bilinear(source: &[u8], source_size: u32, x: f32, y: f32) -> Argb
 }
 
 pub(crate) fn draw_prime_mark(canvas: &mut Canvas<'_>, rect: Rect, theme: &Theme, active: bool) {
-    let size = rect.width.min(rect.height).clamp(1, 80);
+    let size = rect.width.min(rect.height).clamp(1, 220);
     let (source, source_size) = prime_logo_asset(size);
     debug_assert_eq!(source.len(), (source_size * source_size * 4) as usize);
     let center_x = rect.center_x() as f32;
@@ -364,8 +364,21 @@ pub(crate) fn paint_rail_surface(
             canvas.stroke_rounded_rect(*rect, 18, 1, theme.cyan.with_alpha(112));
         }
         if matches!(action, RailAction::Prime) {
-            let mark = Rect::new(rect.x + 18, rect.y + 4, rect.width.saturating_sub(36), 80);
+            let mark = Rect::new(rect.x + 29, rect.y + 16, rect.width.saturating_sub(58), 48);
             draw_prime_mark(canvas, mark, theme, is_active);
+            let label = "PRIME OS";
+            let style = TextStyle {
+                size_px: 11,
+                weight: FontWeight::Semibold,
+            };
+            let label_width = text.measure(label, style).width as i32;
+            text.draw(
+                canvas,
+                (rect.center_x() as i32 - label_width / 2, rect.y + 64),
+                label,
+                style,
+                theme.text.with_alpha(234),
+            );
             continue;
         }
 
@@ -396,5 +409,166 @@ pub(crate) fn paint_rail_surface(
                 theme.text.with_alpha(205),
             );
         }
+    }
+}
+
+/// Ubuntu-hosted task rail, backed by verified Wayland toplevel state.
+/// Native Prime P1 rail rendering remains untouched.
+pub(crate) fn paint_preview_rail_surface(
+    canvas: &mut Canvas<'_>,
+    text: &mut TextSystem,
+    theme: &Theme,
+    running: &[crate::core_client::PreviewWindow],
+    pins: &[RailAction],
+    running_offset: usize,
+) {
+    canvas.clear();
+    let h = canvas.height as i32;
+    let panel = Rect::new(
+        1,
+        1,
+        canvas.width.saturating_sub(2),
+        canvas.height.saturating_sub(2),
+    );
+    canvas.fill_rounded_rect(panel, 23, theme.base_0.with_alpha(177));
+    canvas.stroke_rounded_rect(panel, 23, 1, theme.cyan.with_alpha(114));
+    let mark = Rect::new((canvas.width as i32 - 65) / 2, 16, 65, 65);
+    draw_prime_mark(canvas, mark, theme, false);
+    let title = "PRIME OS";
+    let title_style = TextStyle {
+        size_px: 11,
+        weight: FontWeight::Semibold,
+    };
+    let tx = (canvas.width as i32 - text.measure(title, title_style).width as i32) / 2;
+    text.draw(canvas, (tx, 82), title, title_style, theme.text);
+
+    let label_style = TextStyle {
+        size_px: 11,
+        weight: FontWeight::Semibold,
+    };
+    text.draw(canvas, (16, 113), "RUNNING", label_style, theme.muted);
+    for (index, window) in running.iter().skip(running_offset).take(5).enumerate() {
+        let y = 140 + index as i32 * 51;
+        let tile = Rect::new(13, y, canvas.width.saturating_sub(26), 46);
+        canvas.fill_rounded_rect(tile, 12, theme.panel.with_alpha(94));
+        let label = window.app_id.as_str();
+        let icon = if label.contains("thunar") || label.contains("file") {
+            Icon::Files
+        } else if label.contains("term") || label.contains("ptyxis") {
+            Icon::Terminal
+        } else if label.contains("chrome") || label.contains("brave") || label.contains("firefox") {
+            Icon::Browser
+        } else if label.contains("settings") {
+            Icon::Settings
+        } else {
+            Icon::Applications
+        };
+        draw_icon(
+            canvas,
+            Rect::new(tile.x + 12, y + 7, 31, 31),
+            icon,
+            theme.cyan,
+        );
+        let shortened = if label.chars().count() > 10 {
+            format!("{}…", label.chars().take(9).collect::<String>())
+        } else {
+            label.to_owned()
+        };
+        text.draw(
+            canvas,
+            (tile.x + 49, y + 14),
+            &shortened,
+            TextStyle {
+                size_px: 10,
+                weight: FontWeight::Regular,
+            },
+            theme.text,
+        );
+    }
+    if running.len() > 5 {
+        let y = 397;
+        let pager = Rect::new(18, y, canvas.width.saturating_sub(36), 27);
+        canvas.stroke_rounded_rect(pager, 10, 1, theme.violet.with_alpha(170));
+        let count = format!("{} / {}", running_offset + 1, running.len());
+        text.draw(
+            canvas,
+            (pager.x + 15, y + 6),
+            &count,
+            TextStyle {
+                size_px: 11,
+                weight: FontWeight::Regular,
+            },
+            theme.text,
+        );
+        draw_icon(
+            canvas,
+            Rect::new(pager.x + pager.width as i32 - 22, y + 4, 17, 17),
+            Icon::Chevron,
+            theme.cyan,
+        );
+    }
+    let pinned_y = if h > 620 { 456 } else { 414 };
+    text.draw(canvas, (16, pinned_y), "PINNED", label_style, theme.muted);
+    let app_pins = pins
+        .iter()
+        .filter(|p| matches!(p, RailAction::Application(_)))
+        .take(3)
+        .collect::<Vec<_>>();
+    for (index, action) in app_pins.iter().enumerate() {
+        let y = pinned_y + 30 + index as i32 * 47;
+        let tile = Rect::new(13, y, canvas.width.saturating_sub(26), 42);
+        canvas.fill_rounded_rect(tile, 11, theme.panel.with_alpha(78));
+        draw_icon(
+            canvas,
+            Rect::new(tile.x + 12, y + 6, 28, 28),
+            Icon::Applications,
+            theme.violet,
+        );
+        if let RailAction::Application(id) = action {
+            let shortened = if id.len() > 8 {
+                format!("{}…", &id[..7])
+            } else {
+                id.to_owned()
+            };
+            text.draw(
+                canvas,
+                (tile.x + 46, y + 14),
+                &shortened,
+                TextStyle {
+                    size_px: 10,
+                    weight: FontWeight::Regular,
+                },
+                theme.text,
+            );
+        }
+    }
+    let quick_y = h - 87;
+    if quick_y > pinned_y + 40 {
+        canvas.fill_rect(
+            Rect::new(16, quick_y - 12, canvas.width.saturating_sub(32), 1),
+            theme.text.with_alpha(42),
+        );
+        draw_icon(
+            canvas,
+            Rect::new(20, quick_y, 29, 29),
+            Icon::Network,
+            theme.cyan,
+        );
+        draw_icon(
+            canvas,
+            Rect::new(canvas.width as i32 - 48, quick_y, 29, 29),
+            Icon::Audio,
+            theme.cyan,
+        );
+        text.draw(
+            canvas,
+            (22, quick_y + 37),
+            "Quick Controls",
+            TextStyle {
+                size_px: 10,
+                weight: FontWeight::Semibold,
+            },
+            theme.text,
+        );
     }
 }
