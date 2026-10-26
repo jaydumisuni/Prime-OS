@@ -1077,6 +1077,15 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !qemu_meta.is_file() || qemu_meta.permissions().mode() & 0o111 == 0 {
         return Err(WindowsVmError::InvalidPlan("QEMU is not executable"));
     }
+    // A set-user-ID or set-group-ID executable can change the identity of
+    // the eventual QEMU process even when its inode and directory are trusted.
+    // W8 has no privilege-transition authority: reject these mode bits before
+    // constructing a launchable plan. The final identity check binds mode.
+    if qemu_meta.permissions().mode() & 0o6000 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has set-id permission bits",
+        ));
+    }
     // A shared-writable QEMU executable is mutable by another local principal
     // after its path is canonicalized and before the VM process starts.
     if qemu_meta.permissions().mode() & 0o022 != 0 {

@@ -1300,6 +1300,44 @@ fn qemu_plan_rejects_fifo_executable_without_waiting_for_writer() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_set_id_executable_before_guest_launch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let qemu = dir.path().join("qemu-test-binary");
+    fs::write(&qemu, b"#!/bin/sh\n").unwrap();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    let request = || VmPlanRequest {
+        qemu_binary: qemu.clone(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(build_qemu_plan(&request()).is_ok());
+
+    // File mode alone must not let an otherwise trusted QEMU executable
+    // cross a UID or GID boundary when a caller eventually launches it.
+    // This is a plan-only regression: no test executable is run.
+    for unsafe_mode in [0o4700, 0o2700, 0o6700] {
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(unsafe_mode)).unwrap();
+        assert_eq!(
+            fs::metadata(&qemu).unwrap().permissions().mode() & 0o6000,
+            unsafe_mode & 0o6000,
+        );
+        let error = build_qemu_plan(&request()).unwrap_err();
+        assert!(error.to_string().contains("set-id"), "{error}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_rejects_shared_writable_executable() {
     use std::os::unix::fs::PermissionsExt;
 
