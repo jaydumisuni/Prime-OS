@@ -183,6 +183,26 @@ class PrimePtahPreparationTests(unittest.TestCase):
         c["health"]["observed_at"] = "2026-10-25t19:49:00z"
         self.assertTrue(check(p, c)["candidate_compatible"])
 
+    def test_utc_normalization_overflow_is_rejected_as_snapshot_evidence(self):
+        # These timestamps match RFC3339 and parse locally, but conversion
+        # across the supported datetime year boundary raises OverflowError.
+        for value in (
+            "0001-01-01T00:00:00+23:59",
+            "9999-12-31T23:59:59-23:59",
+        ):
+            with self.subTest(value=value):
+                projection, descriptor = fixtures()
+                descriptor["health"]["observed_at"] = value
+                with self.assertRaisesRegex(SnapshotRejected, "UTC normalization"):
+                    check(projection, descriptor)
+
+        # Ordinary explicit UTC and offset timestamps remain admissible.
+        for value in ("2026-10-25T19:49:00Z", "2026-10-25T21:49:00+02:00"):
+            with self.subTest(value=value):
+                projection, descriptor = fixtures()
+                descriptor["health"]["observed_at"] = value
+                self.assertTrue(check(projection, descriptor)["candidate_compatible"])
+
     def test_exact_five_minute_freshness_boundary(self):
         p, c = fixtures()
         c["health"]["observed_at"] = "2026-10-25T19:45:00Z"
