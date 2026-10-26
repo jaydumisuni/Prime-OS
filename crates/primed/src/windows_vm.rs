@@ -1077,6 +1077,15 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !qemu_meta.is_file() || qemu_meta.permissions().mode() & 0o111 == 0 {
         return Err(WindowsVmError::InvalidPlan("QEMU is not executable"));
     }
+    // A set-user-ID or set-group-ID executable can change the identity of
+    // the eventual QEMU process even when its inode and directory are trusted.
+    // W8 has no privilege-transition authority: reject these mode bits before
+    // constructing a launchable plan. The final identity check binds mode.
+    if qemu_meta.permissions().mode() & 0o6000 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has set-id permission bits",
+        ));
+    }
     // A shared-writable QEMU executable is mutable by another local principal
     // after its path is canonicalized and before the VM process starts.
     if qemu_meta.permissions().mode() & 0o022 != 0 {
@@ -1277,9 +1286,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     let refcount_clusters = u32::from_be_bytes(qcow2_prefix[56..60].try_into().unwrap());
     // A nonzero pointer with a zero count is equally contradictory: W8
     // cannot grant authority to metadata that the header declares absent.
-    if (l1_size == 0) != (l1_offset == 0)
-        || (refcount_clusters == 0) != (refcount_offset == 0)
-    {
+    if (l1_size == 0) != (l1_offset == 0) || (refcount_clusters == 0) != (refcount_offset == 0) {
         return Err(WindowsVmError::InvalidPlan(
             "qcow2 metadata table count/offset mismatch",
         ));
@@ -1310,6 +1317,18 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 L1 table exceeds cluster-rounded virtual disk coverage",
         ));
     }
+    // Refcount table clusters also allocate QEMU metadata. The header
+    // alone must not grant a tiny virtual disk a multi-gigabyte refcount
+    // table. Conservatively cap table clusters to the number of clusters
+    // in the declared virtual disk. This is a W8 admission budget, not a
+    // general qcow2-format prohibition on separately qualified images.
+    // The virtual size and cluster geometry were already bounded above.
+    let max_refcount_clusters = virtual_size.div_ceil(cluster_size);
+    if u64::from(refcount_clusters) > max_refcount_clusters {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 refcount table exceeds virtual disk cluster budget",
+        ));
+    }
     // A coherent pointer/count pair can still alias the other table's
     // clusters. The L1 count is in 8-byte entries, while the refcount count
     // is in whole clusters. Reject overlap and address-space wrap without
@@ -1318,12 +1337,17 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     let l1_clusters = l1_bytes.div_ceil(cluster_size);
     let l1_span = l1_clusters * cluster_size;
     let refcount_span = u64::from(refcount_clusters) * cluster_size;
-    let l1_end = l1_offset.checked_add(l1_span).ok_or(
-        WindowsVmError::InvalidPlan("qcow2 metadata table span overflows address space"),
-    )?;
-    let refcount_end = refcount_offset.checked_add(refcount_span).ok_or(
-        WindowsVmError::InvalidPlan("qcow2 metadata table span overflows address space"),
-    )?;
+    let l1_end = l1_offset
+        .checked_add(l1_span)
+        .ok_or(WindowsVmError::InvalidPlan(
+            "qcow2 metadata table span overflows address space",
+        ))?;
+    let refcount_end =
+        refcount_offset
+            .checked_add(refcount_span)
+            .ok_or(WindowsVmError::InvalidPlan(
+                "qcow2 metadata table span overflows address space",
+            ))?;
     // QEMU's block I/O offsets and lengths are signed 64-bit values.
     // A checked u64 span can still lie outside that address domain; do
     // not pass an unrepresentable metadata extent to the VM backend.

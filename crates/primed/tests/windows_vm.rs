@@ -409,11 +409,9 @@ fn qemu_plan_rejects_unadmitted_qcow2_extensions_after_header() {
     // Header extensions are stored after the v2 fixed header (72 bytes)
     // or the v3 declared header, not within the declared header itself.
     // The previous preflight checked only declared v3 header bytes.
-    for (version, header_length, extension_offset) in [
-        (2u32, 0u32, 72usize),
-        (3, 104, 104),
-        (3, 112, 112),
-    ] {
+    for (version, header_length, extension_offset) in
+        [(2u32, 0u32, 72usize), (3, 104, 104), (3, 112, 112)]
+    {
         private_overlay(&overlay);
         let mut bytes = fs::read(&overlay).unwrap();
         bytes[4..8].copy_from_slice(&version.to_be_bytes());
@@ -437,11 +435,9 @@ fn qemu_plan_rejects_unadmitted_qcow2_extensions_after_header() {
 
     // Zero-filled present first-cluster tail remains acceptable to this
     // bounded header-only preflight, without asserting guest bootability.
-    for (version, header_length, extension_offset) in [
-        (2u32, 0u32, 72usize),
-        (3, 104, 104),
-        (3, 112, 112),
-    ] {
+    for (version, header_length, extension_offset) in
+        [(2u32, 0u32, 72usize), (3, 104, 104), (3, 112, 112)]
+    {
         private_overlay(&overlay);
         let mut bytes = fs::read(&overlay).unwrap();
         bytes[4..8].copy_from_slice(&version.to_be_bytes());
@@ -526,8 +522,7 @@ fn qemu_plan_rejects_unaligned_qcow2_metadata_table_pointers() {
                 if version == 2 {
                     bytes.truncate(72);
                 }
-                bytes[field_start..field_start + 8]
-                    .copy_from_slice(&bad_offset.to_be_bytes());
+                bytes[field_start..field_start + 8].copy_from_slice(&bad_offset.to_be_bytes());
                 fs::write(&overlay, bytes).unwrap();
                 let error = build_qemu_plan(&request).unwrap_err();
                 assert!(
@@ -549,8 +544,7 @@ fn qemu_plan_rejects_unaligned_qcow2_metadata_table_pointers() {
                 if version == 2 {
                     bytes.truncate(72);
                 }
-                bytes[field_start..field_start + 8]
-                    .copy_from_slice(&admitted_offset.to_be_bytes());
+                bytes[field_start..field_start + 8].copy_from_slice(&admitted_offset.to_be_bytes());
                 // Both halves of a present metadata table must agree.
                 let count_start = if field_start == 40 { 36 } else { 56 };
                 let count = if admitted_offset == 0 { 0u32 } else { 1u32 };
@@ -671,6 +665,10 @@ fn qemu_plan_rejects_overlapping_or_wrapping_qcow2_metadata_tables() {
             bytes[4..8].copy_from_slice(&version.to_be_bytes());
             if version == 2 {
                 bytes.truncate(72);
+            }
+            // Keep the overlap fixture within the L1 allocation budget.
+            if l1_entries == 8193 {
+                bytes[24..32].copy_from_slice(&(8193u64 * 536_870_912).to_be_bytes());
             }
             bytes[36..40].copy_from_slice(&l1_entries.to_be_bytes());
             bytes[40..48].copy_from_slice(&l1_offset.to_be_bytes());
@@ -898,6 +896,76 @@ fn qemu_plan_bounds_qcow2_l1_allocation_to_virtual_disk() {
 }
 
 #[test]
+fn qemu_plan_bounds_qcow2_refcount_table_allocation() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // Refcount metadata is not entitled to arbitrary allocation unrelated to
+    // the virtual disk. This is W8's conservative host admission budget, not
+    // a general qcow2-format restriction or guest boot qualification.
+    for version in [2u32, 3] {
+        for (cluster_bits, virtual_size, refcount_clusters, admitted) in [
+            (9u32, 1u64, 0u32, true),
+            (9, 1, 1, true),
+            (9, 1, 2, false),
+            (9, 512, 1, true),
+            (9, 512, 2, false),
+            (9, 513, 2, true),
+            (9, 513, 3, false),
+            (16, 1, 1, true),
+            (16, 1, 2, false),
+            (16, 65537, 2, true),
+            (16, 65537, 3, false),
+            (9, 1, u32::MAX, false),
+        ] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            let cluster_size = 1u64 << cluster_bits;
+            let refcount_offset = if refcount_clusters == 0 {
+                0
+            } else {
+                cluster_size * 2
+            };
+            bytes[20..24].copy_from_slice(&cluster_bits.to_be_bytes());
+            bytes[24..32].copy_from_slice(&virtual_size.to_be_bytes());
+            bytes[36..40].copy_from_slice(&0u32.to_be_bytes());
+            bytes[40..48].copy_from_slice(&0u64.to_be_bytes());
+            bytes[48..56].copy_from_slice(&refcount_offset.to_be_bytes());
+            bytes[56..60].copy_from_slice(&refcount_clusters.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+
+            let result = build_qemu_plan(&request);
+            if admitted {
+                assert!(
+                    result.is_ok(),
+                    "v{version}, bits {cluster_bits}, disk {virtual_size}, refcount clusters {refcount_clusters}: {result:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("refcount table exceeds virtual disk"),
+                    "v{version}, bits {cluster_bits}, disk {virtual_size}, refcount clusters {refcount_clusters}: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
@@ -1035,6 +1103,8 @@ fn qemu_plan_rejects_unbound_qcow2_backing_and_external_data_files() {
     private_overlay(&overlay);
     let mut header = fs::read(&overlay).unwrap();
     header[4..8].copy_from_slice(&2u32.to_be_bytes());
+    // v2 must not retain the v3-only header-length field at byte 100.
+    header.truncate(72);
     fs::write(&overlay, header).unwrap();
     assert!(build_qemu_plan(&request).is_ok());
 }
@@ -1226,6 +1296,44 @@ fn qemu_plan_rejects_fifo_executable_without_waiting_for_writer() {
     })
     .unwrap_err();
     assert!(error.to_string().contains("not executable"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn qemu_plan_rejects_set_id_executable_before_guest_launch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let qemu = dir.path().join("qemu-test-binary");
+    fs::write(&qemu, b"#!/bin/sh\n").unwrap();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    let request = || VmPlanRequest {
+        qemu_binary: qemu.clone(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    fs::set_permissions(&qemu, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(build_qemu_plan(&request()).is_ok());
+
+    // File mode alone must not let an otherwise trusted QEMU executable
+    // cross a UID or GID boundary when a caller eventually launches it.
+    // This is a plan-only regression: no test executable is run.
+    for unsafe_mode in [0o4700, 0o2700, 0o6700] {
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(unsafe_mode)).unwrap();
+        assert_eq!(
+            fs::metadata(&qemu).unwrap().permissions().mode() & 0o6000,
+            unsafe_mode & 0o6000,
+        );
+        let error = build_qemu_plan(&request()).unwrap_err();
+        assert!(error.to_string().contains("set-id"), "{error}");
+    }
 }
 
 #[cfg(unix)]
