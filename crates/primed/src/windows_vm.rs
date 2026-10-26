@@ -1284,6 +1284,29 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 metadata table count/offset mismatch",
         ));
     }
+    // A coherent pointer/count pair can still alias the other table's
+    // clusters. The L1 count is in 8-byte entries, while the refcount count
+    // is in whole clusters. Reject overlap and address-space wrap without
+    // claiming that either table's on-disk contents are qualified.
+    let l1_bytes = u64::from(l1_size) * 8;
+    let l1_clusters = l1_bytes.div_ceil(cluster_size);
+    let l1_span = l1_clusters * cluster_size;
+    let refcount_span = u64::from(refcount_clusters) * cluster_size;
+    let l1_end = l1_offset.checked_add(l1_span).ok_or(
+        WindowsVmError::InvalidPlan("qcow2 metadata table span overflows address space"),
+    )?;
+    let refcount_end = refcount_offset.checked_add(refcount_span).ok_or(
+        WindowsVmError::InvalidPlan("qcow2 metadata table span overflows address space"),
+    )?;
+    if l1_size != 0
+        && refcount_clusters != 0
+        && l1_offset < refcount_end
+        && refcount_offset < l1_end
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 L1 and refcount metadata tables overlap",
+        ));
+    }
     // QEMU stores the entire v3 header inside the first qcow2 cluster.
     // A length within the physical file can still spill into the next
     // cluster, which is not a valid header geometry. The shift is safe

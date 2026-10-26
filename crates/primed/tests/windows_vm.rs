@@ -641,6 +641,84 @@ fn qemu_plan_rejects_qcow2_table_counts_without_offsets() {
 }
 
 #[test]
+fn qemu_plan_rejects_overlapping_or_wrapping_qcow2_metadata_tables() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // L1 size counts 8-byte entries; refcount size counts whole clusters.
+    // Adjacent tables are permitted by this header-only admission rule.
+    for version in [2u32, 3] {
+        for (l1_entries, l1_offset, ref_clusters, ref_offset, overlaps) in [
+            (1u32, 65536u64, 1u32, 65536u64, true),
+            (8193, 65536, 1, 131072, true),
+            (1, 131072, 2, 65536, true),
+            (1, 65536, 1, 131072, false),
+            (8193, 65536, 1, 196608, false),
+            (1, 131072, 1, 65536, false),
+        ] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            bytes[36..40].copy_from_slice(&l1_entries.to_be_bytes());
+            bytes[40..48].copy_from_slice(&l1_offset.to_be_bytes());
+            bytes[48..56].copy_from_slice(&ref_offset.to_be_bytes());
+            bytes[56..60].copy_from_slice(&ref_clusters.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+            if overlaps {
+                let error = build_qemu_plan(&request).unwrap_err();
+                assert!(
+                    error.to_string().contains("overlap"),
+                    "version {version}, L1 {l1_entries}@{l1_offset}, refcount {ref_clusters}@{ref_offset}: {error}"
+                );
+            } else {
+                assert!(
+                    build_qemu_plan(&request).is_ok(),
+                    "version {version}, L1 {l1_entries}@{l1_offset}, refcount {ref_clusters}@{ref_offset}"
+                );
+            }
+        }
+
+        // The final aligned cluster cannot fit a nonempty table span
+        // into a u64 address domain; reject before QEMU argument creation.
+        let last_aligned_cluster = u64::MAX - 65535;
+        for (l1_entries, l1_offset, ref_clusters, ref_offset) in [
+            (1u32, last_aligned_cluster, 0u32, 0u64),
+            (0, 0, 1, last_aligned_cluster),
+        ] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            bytes[36..40].copy_from_slice(&l1_entries.to_be_bytes());
+            bytes[40..48].copy_from_slice(&l1_offset.to_be_bytes());
+            bytes[48..56].copy_from_slice(&ref_offset.to_be_bytes());
+            bytes[56..60].copy_from_slice(&ref_clusters.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                error.to_string().contains("overflows"),
+                "version {version}, L1 {l1_entries}@{l1_offset}, refcount {ref_clusters}@{ref_offset}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
