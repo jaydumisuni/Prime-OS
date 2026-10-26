@@ -96,7 +96,10 @@ impl ComponentTransactionState {
             Self::Failed { reason } | Self::RecoveryRequired { reason } => {
                 // Invisible format controls, separators, and bidi marks can spoof
                 // durable failure/recovery log evidence.
+                // Durable failure evidence must not admit unbounded payloads.
+                // Bound UTF-8 bytes, not Unicode scalar count, before logging.
                 !reason.trim().is_empty()
+                    && reason.len() <= 4096
                     && reason.trim() == reason
                     && !reason.chars().any(|c| {
                         c.is_control()
@@ -1931,6 +1934,52 @@ mod tests {
                 reason: "disk write interrupted".into()
             })
             .is_ok());
+    }
+
+    #[test]
+    fn transaction_failure_reasons_are_bounded_in_utf8_bytes() {
+        use ComponentTransactionState as State;
+        const LIMIT: usize = 4096;
+
+        for reason in ["a".repeat(LIMIT), "é".repeat(LIMIT / 2)] {
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert!(State::Applying.advance(next).is_ok());
+            }
+        }
+
+        for reason in ["a".repeat(LIMIT + 1), "é".repeat(LIMIT / 2 + 1)] {
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "oversized transaction reason was admitted"
+                );
+            }
+            assert_eq!(
+                (State::Failed {
+                    reason: reason.clone()
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore prior component".into()
+                }),
+                Err(ComponentTransactionTransitionError),
+                "oversized prior failure reason was admitted"
+            );
+        }
     }
 
     #[test]
