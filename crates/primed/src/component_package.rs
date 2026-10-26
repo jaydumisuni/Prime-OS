@@ -847,14 +847,16 @@ struct PackageAncestorIdentity {
     ino: u64,
     uid: u32,
     mode: u32,
-    mtime: i64,
-    mtime_nsec: i64,
-    ctime: i64,
-    ctime_nsec: i64,
+    mtime: Option<i64>,
+    mtime_nsec: Option<i64>,
+    ctime: Option<i64>,
+    ctime_nsec: Option<i64>,
 }
 
 #[cfg(unix)]
-fn private_package_ancestors(path: &Path) -> Result<Option<Vec<PackageAncestorIdentity>>, io::Error> {
+fn private_package_ancestors(
+    path: &Path,
+) -> Result<Option<Vec<PackageAncestorIdentity>>, io::Error> {
     use std::os::unix::fs::MetadataExt;
     // A private package inode is insufficient when a peer can replace one
     // of its ancestor directories. Root/current-owner sticky directories
@@ -874,18 +876,23 @@ fn private_package_ancestors(path: &Path) -> Result<Option<Vec<PackageAncestorId
         {
             return Ok(None);
         }
-        // An unchanged inode and mode do not prove its directory entries
-        // stayed unchanged during hashing. Include kernel-maintained times
-        // so in-place ancestor mutations cannot silently replay as stable.
+        // In a private directory, mutation timestamps catch in-place
+        // entry changes even when its inode and permissions remain stable.
+        // A trusted sticky, peer-writable directory (such as /tmp) may
+        // change for unrelated peer-owned entries. Its sticky bit protects
+        // our owned next component against peer removal, so keep binding
+        // its inode/owner/mode without treating unrelated timestamp churn
+        // as a mutation of this package's custody chain.
+        let private_entries = !peer_writable;
         identities.push(PackageAncestorIdentity {
             dev: metadata.dev(),
             ino: metadata.ino(),
             uid: metadata.uid(),
             mode: metadata.mode(),
-            mtime: metadata.mtime(),
-            mtime_nsec: metadata.mtime_nsec(),
-            ctime: metadata.ctime(),
-            ctime_nsec: metadata.ctime_nsec(),
+            mtime: private_entries.then_some(metadata.mtime()),
+            mtime_nsec: private_entries.then_some(metadata.mtime_nsec()),
+            ctime: private_entries.then_some(metadata.ctime()),
+            ctime_nsec: private_entries.then_some(metadata.ctime_nsec()),
         });
         ancestor = directory.parent();
     }
@@ -2356,6 +2363,64 @@ mod tests {
         assert_eq!(before[0].mode, after[0].mode);
         assert_ne!(before, after);
         assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_allows_unrelated_sticky_ancestor_entry_churn() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let bytes = b"p2-sticky-ancestor-unrelated-entry";
+        let (dir, _) = write_package(bytes);
+        let shared = dir.path().join("shared-sticky");
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o1777)).unwrap();
+        let path = shared.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+
+        let before = private_package_ancestors(&path).unwrap().unwrap();
+        assert!(before[0].mtime.is_none());
+        let sticky_inode = fs::symlink_metadata(&shared).unwrap().ino();
+        fs::write(shared.join("unrelated-peer-entry"), b"unrelated").unwrap();
+        let after = private_package_ancestors(&path).unwrap().unwrap();
+        assert_eq!(
+            before, after,
+            "unrelated sticky-directory churn is not a package replacement"
+        );
+        assert_eq!(after[0].ino, sticky_inode);
+        assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
+        assert!(matches!(
+            verify_offline_component_package(
+                &path,
+                &manifest(bytes),
+                &context(&[]),
+                |_| true,
+                |_, _| true,
+            ),
+            Ok(ComponentAdmissionOutcome::Ready(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_detects_sticky_ancestor_inode_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = b"p2-sticky-ancestor-replacement";
+        let (dir, _) = write_package(bytes);
+        let shared = dir.path().join("shared-sticky");
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o1777)).unwrap();
+        let path = shared.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+        let before = private_package_ancestors(&path).unwrap().unwrap();
+
+        let moved = dir.path().join("old-shared-sticky");
+        fs::rename(&shared, &moved).unwrap();
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o1777)).unwrap();
+        fs::write(&path, bytes).unwrap();
+        let after = private_package_ancestors(&path).unwrap().unwrap();
+        assert_ne!(before[0].ino, after[0].ino);
+        assert_ne!(before, after);
     }
 
     #[cfg(unix)]
