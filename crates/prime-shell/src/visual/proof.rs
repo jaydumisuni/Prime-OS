@@ -302,3 +302,58 @@ fn production_wallpaper_can_be_dumped_at_native_4k() {
     wallpaper::paint_system_wallpaper(&mut canvas, &wallpaper);
     std::fs::write(format!("{directory}/04-wallpaper-4k.bgra"), bytes).unwrap();
 }
+
+#[test]
+fn offline_mockup_quick_controls_reference_proof() {
+    let width = 455u32;
+    let height = 424u32;
+    let mut bytes = vec![0u8; (width * height * 4) as usize];
+    let mut text = TextSystem::load_system().unwrap();
+    let theme = Theme::prime_dark();
+    let lines = vec![
+        "WIFI: Connected".to_owned(),
+        "BLUETOOTH: On".to_owned(),
+        "PERFORMANCE: Balanced".to_owned(),
+        "BRIGHTNESS: 65%".to_owned(),
+        "VOLUME: 40%".to_owned(),
+    ];
+    {
+        let mut canvas = Canvas::new(&mut bytes, width, height).unwrap();
+        super::quick_controls::paint_ubuntu_host_preview(
+            &mut canvas,
+            &mut text,
+            &theme,
+            super::quick_controls::QuickControlsView {
+                lines: &lines,
+                power_ready: false,
+                pending_power: None,
+                message: None,
+                progress: 1.0,
+            },
+        );
+        assert!(canvas.pixel(25, 25).unwrap().a > 0);
+        assert!(canvas.pixel(220, 100).unwrap().a > 0);
+    }
+    if let Some(path) = std::env::var_os("PRIME_VISUAL_EXPORT_DIR") {
+        let path = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&path).unwrap();
+        // wl_shm::Argb8888 is memory BGRA; turn that into unpremultiplied
+        // PNG RGBA for a visually inspectable offline reference proof.
+        let mut rgba = bytes.clone();
+        for i in (0..bytes.len()).step_by(4) {
+            let alpha = bytes[i + 3] as u32;
+            for (dst, src) in [(0usize, 2usize), (1usize, 1usize), (2usize, 0usize)] {
+                rgba[i + dst] = if alpha == 0 {
+                    0
+                } else {
+                    ((bytes[i + src] as u32 * 255 / alpha).min(255)) as u8
+                };
+            }
+        }
+        let file = std::fs::File::create(path.join("prime-quick-controls-offline.png")).unwrap();
+        let mut enc = png::Encoder::new(file, width, height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&rgba).unwrap();
+    }
+}

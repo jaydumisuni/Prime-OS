@@ -137,3 +137,17 @@ Evidence: Rust 76/76, bridge 13/13 and release build passed. Live app orbit scre
 Blocked: current system-03 waves are not the cosmic mockup wallpaper; central mark alignment differs. Quick Controls has not passed graphical or behavioral acceptance; a capture failed/turned black and the second nested Wayland session exited with a broken pipe. Carousel movement timing, window focus, real app launching, full taskbar overflow, desktop shortcut usability, click-away, search and multiple resolutions require complete interactive proof.
 
 ACCEPTANCE STATUS: FAILED / OPEN. Keep existing Prime preview, Ubuntu XFCE, recovery and rollback unchanged. No merge and no KRATOS default-desktop promotion until owner visual signoff and system-function proofs.
+
+### Independent Quick Controls raster check
+
+An offline Rust/PNG painter test named
+offline_mockup_quick_controls_reference_proof now renders the Ubuntu-preview
+panel at 455x424 independently of the nested compositor. It verifies the card
+raster and exports reproducible evidence under
+~/.oracle/proof/prime-quick-offline-20261026/prime-quick-controls-offline.png.
+Six screenshot-derived control icons were re-trimmed to discard baked-in text;
+upper three and lower three use distinct crop coordinates.
+Visual inspection confirms six icons/labels and two sliders, all unclipped.
+This is **only an offline painter proof**, NOT live network, Bluetooth,
+performance, brightness or power integrations; the compositor's earlier
+black capture/exit and outside-click behavior remain live acceptance gates.

@@ -177,7 +177,7 @@ fn paint_card(
 /// Six-card compact system control panel, matching the approved reference
 /// grouping. Connected values are read from Ubuntu; unsupported control
 /// mutations are not falsely presented as completed.
-fn paint_ubuntu_host_preview(
+pub(crate) fn paint_ubuntu_host_preview(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
     theme: &Theme,
