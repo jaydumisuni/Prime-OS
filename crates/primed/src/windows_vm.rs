@@ -1504,7 +1504,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         usb.push(parse_usb_node(node)?);
     }
     usb.sort_unstable();
-    usb.dedup();
+    // The W7 allowlist is explicit authority, not a bag of requested
+    // devices. Silently deduplicating a repeated node conceals malformed
+    // caller state and changes the approved request before QEMU planning.
+    if usb.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(WindowsVmError::InvalidPlan(
+            "duplicate USB passthrough node in allowlist",
+        ));
+    }
 
     let agent = request.runtime_dir.join("agent.sock");
     validate_agent_socket_path(&agent)?;

@@ -1729,6 +1729,45 @@ fn qemu_plan_rejects_oversized_usb_allowlist_before_qemu_launch() {
     }
 }
 
+#[test]
+fn qemu_plan_rejects_duplicate_usb_device_authority() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    let request = |nodes: Vec<&str>| VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: nodes.into_iter().map(Into::into).collect(),
+    };
+
+    // Repeated authority is not a second device: reject ambiguous input
+    // instead of silently shrinking the caller's explicit W7 allowlist.
+    let duplicate = build_qemu_plan(&request(vec![
+        "/dev/bus/usb/001/018",
+        "/dev/bus/usb/001/018",
+    ]))
+    .unwrap_err();
+    assert!(
+        duplicate.to_string().contains("duplicate USB"),
+        "{duplicate}"
+    );
+
+    let distinct = build_qemu_plan(&request(vec![
+        "/dev/bus/usb/001/018",
+        "/dev/bus/usb/001/019",
+    ]))
+    .unwrap();
+    let arguments = distinct.args.join(" ");
+    assert!(arguments.contains("usb-host,hostbus=1,hostaddr=18"));
+    assert!(arguments.contains("usb-host,hostbus=1,hostaddr=19"));
+}
+
 fn vm_profile(backend: ExecutionBackend) -> ApplicationProfile {
     ApplicationProfile {
         schema: APPLICATION_PROFILE_SCHEMA.to_owned(),
