@@ -63,7 +63,14 @@ def _observation(value):
     # Python truncates RFC3339 nanoseconds to microseconds. Retain the
     # remaining 0-999 ns so a future-dated submicrosecond sample cannot pass.
     submicro_ns = int((fraction[1:] if fraction else "").ljust(9, "0")[6:])
-    return observed.astimezone(timezone.utc), submicro_ns
+    try:
+        utc_observed = observed.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as error:
+        # Valid RFC3339 local times near the datetime limits can overflow
+        # when their explicit offset is converted to UTC. Never let malformed
+        # snapshot evidence escape as an unclassified runtime exception.
+        raise SnapshotRejected("capability observation UTC normalization out of range") from error
+    return utc_observed, submicro_ns
 
 
 def preflight_snapshot(
