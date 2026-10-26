@@ -2556,7 +2556,10 @@ mod tests {
         assert_eq!(before.ino(), after.ino());
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_ne!(before.mtime(), after.mtime());
-        assert!(matches!(result, Err(ComponentAdmissionError::UnsafePackagePath)));
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
     }
 
     #[cfg(unix)]
