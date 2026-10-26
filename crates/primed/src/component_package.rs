@@ -670,6 +670,9 @@ where
     validate_component_manifest(manifest)?;
     validate_package_path(package_path)?;
     let original_metadata = fs::metadata(package_path)?;
+    #[cfg(unix)]
+    let original_ancestors = private_package_ancestors(package_path)?
+        .ok_or(ComponentAdmissionError::UnsafePackagePath)?;
 
     let observed_digest = sha256_file(package_path)?;
     if observed_digest != manifest.package_digest {
@@ -740,6 +743,12 @@ where
     let final_digest = sha256_file(package_path)?;
     #[cfg(unix)]
     {
+        // Each hash pins its own ancestors, but callbacks can mutate a
+        // private parent between the two hashes without changing file bytes.
+        // Bind the entire custody chain to the initial admission snapshot.
+        if private_package_ancestors(package_path)?.as_ref() != Some(&original_ancestors) {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
         let final_metadata = fs::symlink_metadata(package_path)?;
         if !stable_package_metadata(&original_metadata, &current_metadata)
             || !stable_package_metadata(&original_metadata, &final_metadata)
@@ -2522,6 +2531,74 @@ mod tests {
             result,
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_private_parent_mutation_during_signature() {
+        use std::os::unix::fs::MetadataExt;
+        let bytes = b"p2-callback-parent-custody";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("private-parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+        let before_file = fs::symlink_metadata(&path).unwrap();
+        let before_ancestors = private_package_ancestors(&path).unwrap().unwrap();
+
+        let result = verify_offline_component_package(
+            &path,
+            &manifest(bytes),
+            &context(&[]),
+            |_| {
+                // Changing only a private parent must invalidate the original
+                // custody snapshot even if both hashes see identical bytes.
+                fs::File::open(&parent)
+                    .unwrap()
+                    .set_times(
+                        fs::FileTimes::new()
+                            .set_modified(std::time::SystemTime::UNIX_EPOCH),
+                    )
+                    .unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        assert_ne!(
+            before_ancestors,
+            private_package_ancestors(&path).unwrap().unwrap()
+        );
+        assert_eq!(before_file.ino(), fs::symlink_metadata(&path).unwrap().ino());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_allows_sticky_parent_churn_during_signature() {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = b"p2-sticky-parent-callback";
+        let (dir, _) = write_package(bytes);
+        let shared = dir.path().join("shared-sticky");
+        fs::create_dir(&shared).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o1777)).unwrap();
+        let path = shared.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+
+        let result = verify_offline_component_package(
+            &path,
+            &manifest(bytes),
+            &context(&[]),
+            |_| {
+                fs::write(shared.join("unrelated-entry"), b"peer-data").unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        assert!(matches!(result, Ok(ComponentAdmissionOutcome::Ready(_))));
     }
 
     #[cfg(unix)]
