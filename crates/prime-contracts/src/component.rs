@@ -227,6 +227,9 @@ fn valid_bounded_text(value: &str) -> bool {
         && !value.chars().any(|c| matches!(c as u32, 0x115F | 0x1160 | 0x3164 | 0xFFA0 | 0x2800 | 0xE0000..=0xE007F))
         && !value.chars().any(|c| matches!(c as u32, 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD))
         && !value.chars().any(|c| matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'))
+        // Unicode Cf marks that are not classified as whitespace/control can
+        // silently alter component versions, requirements, and evidence text.
+        && !value.chars().any(|c| matches!(c as u32, 0x0600..=0x0605 | 0x06DD | 0x08E2 | 0x110BD | 0x110CD))
         && !value.chars().any(|c| matches!(c as u32, 0xE0100..=0xE01EF))
 }
 
@@ -363,6 +366,47 @@ mod tests {
             validate_component_manifest(&item),
             Err(ComponentManifestError::Version)
         );
+    }
+
+    #[test]
+    fn format_marks_cannot_spoof_component_metadata() {
+        // These Cf format marks are neither whitespace nor Rust control chars.
+        // Do not allow invisible prefixes or in-band authority/evidence labels.
+        for mark in [
+            '\u{0600}',
+            '\u{0605}',
+            '\u{06DD}',
+            '\u{08E2}',
+            '\u{110BD}',
+            '\u{110CD}',
+        ] {
+            let mut item = manifest();
+            item.version = format!("1.0{mark}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version),
+                "format mark U+{:04X} admitted in version",
+                mark as u32
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("1.0{mark}"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement),
+                "format mark U+{:04X} admitted in compatibility",
+                mark as u32
+            );
+
+            let mut item = manifest();
+            item.limitations = vec![format!("verified{mark}source")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation),
+                "format mark U+{:04X} admitted in limitation",
+                mark as u32
+            );
+        }
     }
 
     #[test]
