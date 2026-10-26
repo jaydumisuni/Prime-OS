@@ -51,3 +51,36 @@ native Prime Core authority, generation update, or KNOWN_GOOD promotion.
   XFCE remains active; all preview bridge processes must exit and socket
   cleanup must be checked. Installer/boot/recovery and native Prime acceptance
   remain separate future proof gates.
+
+## Owner-directed Prime launcher concept — 26 October 2026 (design freeze candidate; not implemented)
+
+This section captures the owner's follow-up to the saved `menu/Prime_OS_Apps_Menu_Standalone.html` and the Ubuntu-hosted mockup. **Do not replace or silently modify the frozen standalone menu artifact.** The generated mockup is a discussion artifact, not approved Prime branding or proof.
+
+### Exact Prime identity — correction to mockup
+
+- The generated mockup incorrectly substituted a large angular/A-shaped triangular glyph for the Prime OS emblem. **Do not use that glyph.**
+- Canonical Prime mark is already tracked in `crates/prime-shell/assets/branding/prime-logo-master-128.png` and scaled `prime-logo-*.rgba` variants: the violet/cyan hood-shaped symbol with an illuminated circular center/eye. Preserve its exact silhouette and color.
+- Default wallpaper `crates/prime-shell/assets/wallpapers/Prime_OS_Wallpaper_03.png` has the corresponding central logo composition. The default-wallpaper menu arranges application icons **around the logo already present in the wallpaper** at its existing visible scale; do not duplicate or replace the wallpaper logo. On any other wallpaper the self-contained floating menu may display the same authentic Prime mark.
+- The left taskbar Prime menu button is labeled **Prime OS** beneath the icon. Never put "Prime OS" under the former bottom "More apps" position.
+
+### Bounded visible apps and two-sided folding carousel
+
+- The app ring has **at most 11 visible application positions**. The owner chooses/reorders which applications take priority; this limit never constrains the total installed-app catalogue.
+- Retain the saved **icons surrounding a central Prime symbol** layout, not the currently implemented generic card grid. Retain the inward-folding, nested portal visual language of the original menu.
+- Two stacks at the lower **left and right** are both **the navigation controls and visible ends of one circular stream** of installed apps. Do not add a "More apps" label, arrow, or separate expansion panel in the bottom center.
+- **Right stack activation:** the next hidden app unfolds/inserts from the right, visible positions shift as one sequence, and one app at the far left retracts/folds into the opposite stack. **Left stack activation:** the inverse sequence (one arrives from the left, one leaves on the right). Once the carousel has more than 11 apps, there must still be exactly 11 visible after a completed step. If fewer than 11 are available, show only the available apps.
+- Wheel/trackpad and keyboard navigation may drive the same single-step sequence. Animation must convey arrival, translation across the app arc, and retreat toward the opposite stack. No duplicate or disappearing catalogue entries.
+- A compact search input is integrated into the center-logo area; clicking it **or typing as soon as the menu is open** begins live search across accessible apps and files (with folders/settings where connected). Search results use Prime styling, not Windows artwork.
+- The outer icon arrangement should preserve the visual clarity of the referenced Insync-style app presentation, while retaining Prime's two-sided inward-folding overflow.
+
+### Adjacent agreed desktop behaviors (separate implementation boundaries)
+
+- The taskbar/rail tracks actual running windows with up to five visible running-app entries and independent overflow navigation; pinned apps (at least three supported) are distinguished from running entries.
+- Desktop shortcuts can be placed and rearranged independently of the eleven-menu-icon selection.
+- Quick Controls are accessed via the taskbar's lower system-control area.
+- Menus and Quick Controls dismiss on outside click, Escape, another transient opening, or switching to an app; never require clicking only the original toggle/collapse button.
+- Ubuntu-backed Settings/app launches must produce/focus real windows, not merely report a dispatch as completion.
+
+### Acceptance gate
+
+This is a **recorded owner design direction**, not implemented UI or permission to replace the Ubuntu default desktop. Before implementation: reproduce the corrected Prime mark in an owner-reviewed mockup; then implement and test the two-stack bidirectional movement, exactly bounded visible slots, wallpaper-aware presentation, full search, app/window focus, and outside-dismiss behavior against the existing Prime Shell/Compositor contracts. Preserve XFCE, Oracle, and rollback. Do not mark this or native Prime release `KNOWN_GOOD` without independent proof.
