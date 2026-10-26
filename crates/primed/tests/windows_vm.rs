@@ -836,6 +836,68 @@ fn qemu_plan_rejects_l1_tables_too_small_for_virtual_disk() {
 }
 
 #[test]
+fn qemu_plan_bounds_qcow2_l1_allocation_to_virtual_disk() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // L1 table capacity may round up to a full cluster, but arbitrary
+    // extra clusters would expose QEMU to unadmitted metadata allocation.
+    // Keep zero-L1 as the existing header-only fixture exception.
+    for version in [2u32, 3] {
+        for (cluster_bits, virtual_size, l1_entries, admissible) in [
+            (9u32, 32_768u64, 1u32, true),
+            (9, 32_768, 64, true),
+            (9, 32_768, 65, false),
+            (9, 65_536, 64, true),
+            (9, 65_536, 65, false),
+            (16, 536_870_912, 8192, true),
+            (16, 536_870_912, 8193, false),
+            (9, 32_768, 0, true),
+        ] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            let cluster_size = 1u64 << cluster_bits;
+            let l1_offset = if l1_entries == 0 { 0 } else { cluster_size };
+            bytes[20..24].copy_from_slice(&cluster_bits.to_be_bytes());
+            bytes[24..32].copy_from_slice(&virtual_size.to_be_bytes());
+            bytes[36..40].copy_from_slice(&l1_entries.to_be_bytes());
+            bytes[40..48].copy_from_slice(&l1_offset.to_be_bytes());
+            bytes[48..56].copy_from_slice(&0u64.to_be_bytes());
+            bytes[56..60].copy_from_slice(&0u32.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+
+            let result = build_qemu_plan(&request);
+            if admissible {
+                assert!(
+                    result.is_ok(),
+                    "v{version}, bits {cluster_bits}, size {virtual_size}, L1 {l1_entries}: {result:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("exceeds cluster-rounded"),
+                    "v{version}, bits {cluster_bits}, size {virtual_size}, L1 {l1_entries}: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
