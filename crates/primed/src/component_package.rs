@@ -192,6 +192,12 @@ pub enum ComponentAdmissionError {
     InstalledManifestMismatch(String),
     #[error("candidate component {0} manifest disagrees with the verified package identity")]
     CandidateManifestMismatch(String),
+    #[error("component {component_id} cannot silently transfer publisher from {installed_publisher} to {candidate_publisher}")]
+    PublisherIdentityChanged {
+        component_id: String,
+        installed_publisher: String,
+        candidate_publisher: String,
+    },
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
     #[error("installed component dependency graph contains a cycle through {0}")]
@@ -313,6 +319,19 @@ pub fn plan_component_transaction_checked(
     }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     if matches!(&plan.kind, ComponentTransactionKind::Update { .. }) {
+        // A new digest and a separately admitted signature do not authorize
+        // changing the owner of an already installed component identity.
+        // Publisher transfer needs its own explicit authenticated protocol.
+        let original = manifests
+            .get(package.component_id.as_str())
+            .expect("checked update has a complete installed manifest");
+        if original.publisher_id != candidate_manifest.publisher_id {
+            return Err(ComponentAdmissionError::PublisherIdentityChanged {
+                component_id: package.component_id.clone(),
+                installed_publisher: original.publisher_id.clone(),
+                candidate_publisher: candidate_manifest.publisher_id.clone(),
+            });
+        }
         for manifest in manifests.values() {
             if manifest.component_id != package.component_id
                 && manifest.dependencies.iter().any(|dep| {
@@ -603,6 +622,14 @@ pub fn plan_component_rollback_checked(
         return Err(ComponentAdmissionError::InstalledManifestMismatch(
             current.component_id.clone(),
         ));
+    }
+    // Retained package authentication alone is not publisher-transfer authority.
+    if observed.publisher_id != retained_manifest.publisher_id {
+        return Err(ComponentAdmissionError::PublisherIdentityChanged {
+            component_id: current.component_id.clone(),
+            installed_publisher: observed.publisher_id.clone(),
+            candidate_publisher: retained_manifest.publisher_id.clone(),
+        });
     }
 
     for manifest in manifests.values() {
@@ -2931,6 +2958,92 @@ mod tests {
             plan_component_removal_checked(&target.component_id, &installed, &[target_manifest.clone(), target_manifest, consumer_manifest]),
             Err(ComponentAdmissionError::DuplicateInstalledManifest(id)) if id == target.component_id
         ));
+    }
+
+    #[test]
+    fn checked_update_refuses_silent_component_publisher_transfer() {
+        let installed = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut original = manifest(b"original");
+        original.package_digest = installed.package_digest.clone();
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/publisher-transfer.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: installed.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            publisher_id: "other.publisher".to_owned(),
+        };
+        let mut candidate = original.clone();
+        candidate.package_digest = package.package_digest.clone();
+        candidate.revision = package.revision;
+        candidate.version = package.version.clone();
+        candidate.publisher_id = package.publisher_id.clone();
+        assert!(matches!(plan_component_transaction_checked(
+            &package, std::slice::from_ref(&installed), std::slice::from_ref(&original), &candidate
+        ), Err(ComponentAdmissionError::PublisherIdentityChanged {
+            component_id, installed_publisher, candidate_publisher
+        }) if component_id == installed.component_id
+            && installed_publisher == original.publisher_id
+            && candidate_publisher == package.publisher_id));
+
+        candidate.publisher_id = original.publisher_id.clone();
+        let mut original_publisher_package = package;
+        original_publisher_package.publisher_id = original.publisher_id.clone();
+        assert!(
+            plan_component_transaction_checked(
+                &original_publisher_package,
+                &[installed],
+                &[original],
+                &candidate
+            )
+            .is_ok(),
+            "same-publisher updates remain structurally eligible"
+        );
+    }
+
+    #[test]
+    fn checked_rollback_refuses_silent_component_publisher_transfer() {
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut current_manifest = manifest(b"current");
+        current_manifest.revision = current.revision;
+        current_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = current_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.publisher_id = "other.publisher".to_owned();
+        assert!(matches!(plan_component_rollback_checked(
+            &current, &retained, &retained_manifest, std::slice::from_ref(&current), std::slice::from_ref(&current_manifest)
+        ), Err(ComponentAdmissionError::PublisherIdentityChanged {
+            component_id, installed_publisher, candidate_publisher
+        }) if component_id == current.component_id
+            && installed_publisher == current_manifest.publisher_id
+            && candidate_publisher == retained_manifest.publisher_id));
+
+        retained_manifest.publisher_id = current_manifest.publisher_id.clone();
+        assert!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                &[current_manifest]
+            )
+            .is_ok(),
+            "same-publisher rollback remains structurally eligible"
+        );
     }
 
     #[test]
