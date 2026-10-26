@@ -1284,6 +1284,19 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 metadata table count/offset mismatch",
         ));
     }
+    // Each L1 entry addresses one L2 cluster of cluster_size / 8 entries,
+    // and each ordinary L2 entry addresses one data cluster. A declared
+    // nonempty L1 table must cover the advertised virtual disk, even in a
+    // header-only preflight. Zero L1 entries remain an explicit fixture-only
+    // allowance here; they do not prove a bootable or qualified guest image.
+    // The bounded cluster geometry keeps this multiplication within u64.
+    let l1_entry_coverage = cluster_size * (cluster_size / 8);
+    let required_l1_entries = virtual_size.div_ceil(l1_entry_coverage);
+    if l1_size != 0 && u64::from(l1_size) < required_l1_entries {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 L1 table does not cover declared virtual size",
+        ));
+    }
     // A coherent pointer/count pair can still alias the other table's
     // clusters. The L1 count is in 8-byte entries, while the refcount count
     // is in whole clusters. Reject overlap and address-space wrap without
