@@ -192,8 +192,13 @@ pub(crate) fn paint_prime_launcher_surface(
         size_px: 14,
         weight: FontWeight::Regular,
     };
+    let ubuntu_preview = std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some();
     let search_text = if query.trim().is_empty() {
-        "Search admitted applications..."
+        if ubuntu_preview {
+            "Search Ubuntu applications..."
+        } else {
+            "Search admitted applications..."
+        }
     } else {
         query
     };
@@ -238,7 +243,11 @@ pub(crate) fn paint_prime_launcher_surface(
     text.draw(
         canvas,
         (layout.apps.x + slide, 118),
-        "CORE APPS",
+        if ubuntu_preview {
+            "UBUNTU APPS / PREVIEW"
+        } else {
+            "CORE APPS"
+        },
         section_style,
         theme.text.with_alpha(((220u16 * alpha as u16) / 255) as u8),
     );

@@ -59,6 +59,14 @@ fn finish_wayland_read(
     }
 }
 
+fn copy_cached_pixels(destination: &mut [u8], source: &[u8]) -> Result<(), io::Error> {
+    let frame = destination
+        .get_mut(..source.len())
+        .ok_or_else(|| io::Error::other("Prime framebuffer shorter than its cached frame"))?;
+    frame.copy_from_slice(source);
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "--font-probe") {
@@ -314,6 +322,26 @@ fn power_action_name(action: SystemPowerAction) -> &'static str {
     }
 }
 
+fn bounded_prime_launcher(output_width: u32, output_height: u32) -> (u32, u32, i32, i32) {
+    let width = visual::PRIME_LAUNCHER_WIDTH
+        .min(output_width.saturating_sub(48))
+        .max(1);
+    let height = visual::PRIME_LAUNCHER_HEIGHT
+        .min(output_height.saturating_sub(96))
+        .max(1);
+    let left = if width == visual::PRIME_LAUNCHER_WIDTH {
+        visual::PRIME_LAUNCHER_LEFT_MARGIN.min(output_width.saturating_sub(width) as i32)
+    } else {
+        (output_width.saturating_sub(width) / 2) as i32
+    };
+    let top = if height == visual::PRIME_LAUNCHER_HEIGHT {
+        visual::PRIME_LAUNCHER_TOP_MARGIN.min(output_height.saturating_sub(height) as i32)
+    } else {
+        (output_height.saturating_sub(height) / 2) as i32
+    };
+    (width, height, top, left)
+}
+
 fn launcher_query_matches(display_name: &str, query: &str) -> bool {
     let query = query.trim();
     query.is_empty() || display_name.to_lowercase().contains(&query.to_lowercase())
@@ -447,8 +475,10 @@ impl PrimeShell {
         let background_static = &self.background_static;
         if let Err(error) =
             draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
-                debug_assert_eq!(bytes.len(), background_static.len());
-                bytes.copy_from_slice(background_static);
+                if let Err(error) = copy_cached_pixels(bytes, background_static) {
+                    eprintln!("prime-shell background frame copy rejected: {error}");
+                    return;
+                }
                 let mut canvas = visual::Canvas::new(bytes, w, h)
                     .expect("Prime background buffer must match configured dimensions");
                 visual::paint_background_motion(&mut canvas, &theme, phase);
@@ -584,18 +614,15 @@ impl PrimeShell {
                 self.prime_launcher_message = Some(format!("CORE UNAVAILABLE: {error}"));
             }
         }
+        let (popup_width, popup_height, popup_top, popup_left) =
+            bounded_prime_launcher(self.background_width, self.background_height);
         self.prime_launcher = Some(self.create_overlay(
             queue_handle,
             PRIME_NAMESPACE,
             Anchor::TOP | Anchor::LEFT,
-            (
-                visual::PRIME_LAUNCHER_TOP_MARGIN,
-                0,
-                0,
-                visual::PRIME_LAUNCHER_LEFT_MARGIN,
-            ),
-            visual::PRIME_LAUNCHER_WIDTH,
-            visual::PRIME_LAUNCHER_HEIGHT,
+            (popup_top, 0, 0, popup_left),
+            popup_width,
+            popup_height,
         ));
         self.redraw_rail();
         match source {
@@ -673,6 +700,9 @@ impl PrimeShell {
             return;
         }
         self.prime_launcher_message = Some(match self.core.launch(entry.application_id) {
+            Ok(()) if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() => {
+                format!("UBUNTU LAUNCH DISPATCHED: {}", entry.display_name)
+            }
             Ok(()) => format!("LAUNCH ACCEPTED: {}", entry.display_name),
             Err(error) => format!("LAUNCH DENIED: {error}"),
         });
@@ -1167,8 +1197,10 @@ impl LayerShellHandler for PrimeShell {
 
             if let Err(error) =
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
-                    debug_assert_eq!(bytes.len(), static_bytes.len());
-                    bytes.copy_from_slice(&static_bytes);
+                    if let Err(error) = copy_cached_pixels(bytes, &static_bytes) {
+                        eprintln!("prime-shell background configure copy rejected: {error}");
+                        return;
+                    }
                     if self.wallpaper_selection == visual::wallpaper::WallpaperSelection::Animated {
                         let mut canvas = visual::Canvas::new(bytes, w, h)
                             .expect("Prime background buffer must match configured dimensions");
@@ -1582,6 +1614,48 @@ impl PointerHandler for PrimeShell {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ubuntu_launcher_geometry_tests {
+    use super::bounded_prime_launcher;
+
+    #[test]
+    fn retains_reference_position_on_full_hd() {
+        assert_eq!(bounded_prime_launcher(1920, 1080), (858, 786, 140, 210));
+    }
+
+    #[test]
+    fn fits_kratos_small_display_without_offscreen_launcher() {
+        assert_eq!(bounded_prime_launcher(1366, 768), (858, 672, 48, 210));
+    }
+
+    #[test]
+    fn stays_bounded_on_smaller_outputs() {
+        let (w, h, top, left) = bounded_prime_launcher(800, 600);
+        assert!(w + left as u32 <= 800);
+        assert!(h + top as u32 <= 600);
+    }
+}
+
+#[cfg(test)]
+mod cached_frame_tests {
+    use super::copy_cached_pixels;
+
+    #[test]
+    fn pool_allocation_padding_does_not_crash_cached_frame_copy() {
+        let mut backing = vec![0x99u8; 19];
+        let frame = vec![0x42u8; 16];
+        copy_cached_pixels(&mut backing, &frame).unwrap();
+        assert_eq!(&backing[..16], &frame);
+        assert_eq!(&backing[16..], &[0x99u8; 3]);
+    }
+
+    #[test]
+    fn undersized_destination_fails_closed() {
+        let mut backing = vec![0u8; 7];
+        assert!(copy_cached_pixels(&mut backing, &[1u8; 8]).is_err());
     }
 }
 
