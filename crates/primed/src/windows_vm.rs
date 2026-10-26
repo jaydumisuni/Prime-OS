@@ -1298,6 +1298,16 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     let refcount_end = refcount_offset.checked_add(refcount_span).ok_or(
         WindowsVmError::InvalidPlan("qcow2 metadata table span overflows address space"),
     )?;
+    // QEMU's block I/O offsets and lengths are signed 64-bit values.
+    // A checked u64 span can still lie outside that address domain; do
+    // not pass an unrepresentable metadata extent to the VM backend.
+    if (l1_size != 0 && l1_end > i64::MAX as u64)
+        || (refcount_clusters != 0 && refcount_end > i64::MAX as u64)
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 metadata table span exceeds signed file-offset range",
+        ));
+    }
     if l1_size != 0
         && refcount_clusters != 0
         && l1_offset < refcount_end
