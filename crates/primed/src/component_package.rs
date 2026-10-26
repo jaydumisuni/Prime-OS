@@ -675,6 +675,15 @@ where
         .ok_or(ComponentAdmissionError::UnsafePackagePath)?;
 
     let observed_digest = sha256_file(package_path)?;
+    #[cfg(unix)]
+    {
+        // Do not invoke either external admission callback if the original
+        // package or its private ancestor custody changed during first hash.
+        // The final post-callback check remains necessary independently.
+        if !package_custody_matches(package_path, &original_metadata, &original_ancestors)? {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
+    }
     if observed_digest != manifest.package_digest {
         return Err(ComponentAdmissionError::PackageDigestMismatch);
     }
@@ -953,6 +962,17 @@ fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool 
         && before.mtime_nsec() == after.mtime_nsec()
         && before.ctime() == after.ctime()
         && before.ctime_nsec() == after.ctime_nsec()
+}
+
+#[cfg(unix)]
+fn package_custody_matches(
+    path: &Path,
+    original: &fs::Metadata,
+    ancestors: &[PackageAncestorIdentity],
+) -> Result<bool, ComponentAdmissionError> {
+    let named = fs::symlink_metadata(path)?;
+    Ok(stable_package_metadata(original, &named)
+        && private_package_ancestors(path)?.as_deref() == Some(ancestors))
 }
 
 fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
@@ -2531,6 +2551,66 @@ mod tests {
             result,
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_pre_signature_custody_detects_parent_mutation() {
+        let bytes = b"p2-pre-signature-parent";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("private-parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+        let original = fs::symlink_metadata(&path).unwrap();
+        let ancestors = private_package_ancestors(&path).unwrap().unwrap();
+        assert!(package_custody_matches(&path, &original, &ancestors).unwrap());
+
+        fs::File::open(&parent)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH),
+            )
+            .unwrap();
+        assert!(!package_custody_matches(&path, &original, &ancestors).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_pre_signature_custody_detects_same_byte_rewrite() {
+        let bytes = b"p2-pre-signature-same-byte";
+        let (_dir, path) = write_package(bytes);
+        let original = fs::symlink_metadata(&path).unwrap();
+        let ancestors = private_package_ancestors(&path).unwrap().unwrap();
+        assert!(package_custody_matches(&path, &original, &ancestors).unwrap());
+
+        fs::write(&path, bytes).unwrap();
+        fs::File::open(&path)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH),
+            )
+            .unwrap();
+        assert!(!package_custody_matches(&path, &original, &ancestors).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_pre_signature_custody_allows_sticky_entry_churn() {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = b"p2-pre-signature-sticky";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("shared-sticky");
+        fs::create_dir(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o1777)).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+        let original = fs::symlink_metadata(&path).unwrap();
+        let ancestors = private_package_ancestors(&path).unwrap().unwrap();
+        fs::write(parent.join("unrelated-peer-entry"), b"unrelated").unwrap();
+        assert!(package_custody_matches(&path, &original, &ancestors).unwrap());
     }
 
     #[cfg(unix)]
