@@ -719,6 +719,63 @@ fn qemu_plan_rejects_overlapping_or_wrapping_qcow2_metadata_tables() {
 }
 
 #[test]
+fn qemu_plan_rejects_qcow2_tables_beyond_signed_file_offsets() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // The u64 addition need not overflow for a qcow2 table to exceed
+    // QEMU's signed block-offset domain. Preserve a nearby valid control.
+    let first_unrepresentable = (i64::MAX as u64) + 1;
+    let high_nonwrapping_cluster = u64::MAX - 131_071;
+    let last_safe_cluster = first_unrepresentable - 131_072;
+    for version in [2u32, 3] {
+        for (l1_entries, l1_offset, ref_clusters, ref_offset, valid) in [
+            (1u32, first_unrepresentable, 0u32, 0u64, false),
+            (0, 0, 1, first_unrepresentable, false),
+            (1, high_nonwrapping_cluster, 0, 0, false),
+            (0, 0, 1, high_nonwrapping_cluster, false),
+            (1, last_safe_cluster, 0, 0, true),
+            (0, 0, 1, last_safe_cluster, true),
+        ] {
+            private_overlay(&overlay);
+            let mut bytes = fs::read(&overlay).unwrap();
+            bytes[4..8].copy_from_slice(&version.to_be_bytes());
+            if version == 2 {
+                bytes.truncate(72);
+            }
+            bytes[36..40].copy_from_slice(&l1_entries.to_be_bytes());
+            bytes[40..48].copy_from_slice(&l1_offset.to_be_bytes());
+            bytes[48..56].copy_from_slice(&ref_offset.to_be_bytes());
+            bytes[56..60].copy_from_slice(&ref_clusters.to_be_bytes());
+            fs::write(&overlay, bytes).unwrap();
+            let result = build_qemu_plan(&request);
+            if valid {
+                assert!(
+                    result.is_ok(),
+                    "version {version}, L1 {l1_entries}@{l1_offset}, refcount {ref_clusters}@{ref_offset}: {result:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("signed file-offset"),
+                    "version {version}, L1 {l1_entries}@{l1_offset}, refcount {ref_clusters}@{ref_offset}: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_unbound_internal_qcow2_snapshots() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
