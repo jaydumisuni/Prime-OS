@@ -854,7 +854,9 @@ struct PackageAncestorIdentity {
 }
 
 #[cfg(unix)]
-fn private_package_ancestors(path: &Path) -> Result<Option<Vec<PackageAncestorIdentity>>, io::Error> {
+fn private_package_ancestors(
+    path: &Path,
+) -> Result<Option<Vec<PackageAncestorIdentity>>, io::Error> {
     use std::os::unix::fs::MetadataExt;
     // A private package inode is insufficient when a peer can replace one
     // of its ancestor directories. Root/current-owner sticky directories
@@ -2380,7 +2382,10 @@ mod tests {
         let sticky_inode = fs::symlink_metadata(&shared).unwrap().ino();
         fs::write(shared.join("unrelated-peer-entry"), b"unrelated").unwrap();
         let after = private_package_ancestors(&path).unwrap().unwrap();
-        assert_eq!(before, after, "unrelated sticky-directory churn is not a package replacement");
+        assert_eq!(
+            before, after,
+            "unrelated sticky-directory churn is not a package replacement"
+        );
         assert_eq!(after[0].ino, sticky_inode);
         assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
         assert!(matches!(
