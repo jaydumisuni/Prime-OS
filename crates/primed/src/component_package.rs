@@ -112,7 +112,7 @@ impl ComponentTransactionState {
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B
                                     | 0x200C | 0x200D | 0x2060..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
-                                    | 0xE0000..=0xE0FFF | 0xE0100..=0xE01EF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
+                                    | 0xE0000..=0xE0FFF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
                     })
@@ -691,6 +691,12 @@ where
     if !signature_admitted(manifest) {
         return Err(ComponentAdmissionError::SignatureRejected);
     }
+    #[cfg(unix)]
+    if !package_custody_matches(package_path, &original_metadata, &original_ancestors)? {
+        // A signature callback may mutate the package or its custody chain.
+        // Do not invoke the separate generation authority on stale evidence.
+        return Err(ComponentAdmissionError::UnsafePackagePath);
+    }
 
     if !manifest.architectures.is_empty()
         && !manifest
@@ -995,8 +1001,8 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
             })?;
         let opened = file.metadata()?;
         let named = fs::symlink_metadata(path)?;
-        let opened_ancestors = private_package_ancestors(path)?
-            .ok_or(ComponentAdmissionError::UnsafePackagePath)?;
+        let opened_ancestors =
+            private_package_ancestors(path)?.ok_or(ComponentAdmissionError::UnsafePackagePath)?;
         if !private_package_inode(&opened)
             || !private_package_inode(&named)
             || opened.dev() != named.dev()
@@ -2305,7 +2311,6 @@ mod tests {
         assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
     }
 
-
     #[cfg(unix)]
     #[test]
     fn offline_package_rejects_peer_writable_ancestor_directory() {
@@ -2391,10 +2396,7 @@ mod tests {
         // package inode. A dev/ino/uid/mode-only snapshot would miss this.
         let parent_file = fs::File::open(&parent).unwrap();
         parent_file
-            .set_times(
-                fs::FileTimes::new()
-                    .set_modified(std::time::SystemTime::UNIX_EPOCH),
-            )
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
             .unwrap();
         let after = private_package_ancestors(&path).unwrap().unwrap();
         assert_eq!(before[0].dev, after[0].dev);
@@ -2568,9 +2570,7 @@ mod tests {
 
         fs::File::open(&parent)
             .unwrap()
-            .set_times(
-                fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH),
-            )
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
             .unwrap();
         assert!(!package_custody_matches(&path, &original, &ancestors).unwrap());
         assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -2588,9 +2588,7 @@ mod tests {
         fs::write(&path, bytes).unwrap();
         fs::File::open(&path)
             .unwrap()
-            .set_times(
-                fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH),
-            )
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
             .unwrap();
         assert!(!package_custody_matches(&path, &original, &ancestors).unwrap());
         assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -2615,6 +2613,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn offline_package_skips_generation_callback_after_signature_custody_change() {
+        let bytes = b"p2-signature-generation-boundary";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let generation_called = std::cell::Cell::new(false);
+        let result = verify_offline_component_package(
+            &path,
+            &manifest,
+            &context(&[]),
+            |_| {
+                // The digest is unchanged, but the original inode custody is not.
+                fs::write(&path, bytes).unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+                    .unwrap();
+                true
+            },
+            |_, _| {
+                generation_called.set(true);
+                true
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        assert!(
+            !generation_called.get(),
+            "generation callback must not run on a mutated package"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn offline_package_rejects_private_parent_mutation_during_signature() {
         use std::os::unix::fs::MetadataExt;
         let bytes = b"p2-callback-parent-custody";
@@ -2635,10 +2670,7 @@ mod tests {
                 // custody snapshot even if both hashes see identical bytes.
                 fs::File::open(&parent)
                     .unwrap()
-                    .set_times(
-                        fs::FileTimes::new()
-                            .set_modified(std::time::SystemTime::UNIX_EPOCH),
-                    )
+                    .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
                     .unwrap();
                 true
             },
@@ -2648,7 +2680,10 @@ mod tests {
             before_ancestors,
             private_package_ancestors(&path).unwrap().unwrap()
         );
-        assert_eq!(before_file.ino(), fs::symlink_metadata(&path).unwrap().ino());
+        assert_eq!(
+            before_file.ino(),
+            fs::symlink_metadata(&path).unwrap().ino()
+        );
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert!(matches!(
             result,
@@ -2700,10 +2735,7 @@ mod tests {
                     .write(true)
                     .open(&path)
                     .unwrap()
-                    .set_times(
-                        fs::FileTimes::new()
-                            .set_modified(std::time::SystemTime::UNIX_EPOCH),
-                    )
+                    .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
                     .unwrap();
                 true
             },
@@ -3029,7 +3061,8 @@ mod tests {
         candidate.dependencies.clear();
         assert!(matches!(
             plan_component_transaction_checked(&package, &installed, &manifests, &candidate)
-                .unwrap().kind,
+                .unwrap()
+                .kind,
             ComponentTransactionKind::Update { .. }
         ));
         for field in 0..4 {
