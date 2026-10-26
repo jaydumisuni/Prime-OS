@@ -146,6 +146,13 @@ class PrimePtahPreparationTests(unittest.TestCase):
             "2026-10-25 19:49:00Z",
             "2026-10-25T19:49:00+0000",
             "2026-10-25T19:49:00.1234567890Z",
+            "2026-10-25T10:00:00+00:90",  # not a 90-minute RFC3339 offset
+            "2026-10-25T10:00:00+24:00",
+            "2026-10-25T10:00:00-24:00",
+            "2026-10-25T10:00:00+23:60",
+            "2026-10-25T24:00:00Z",
+            "2026-10-25T19:60:00Z",
+            "2026-10-25T19:49:60Z",
         ):
             with self.subTest(invalid=invalid):
                 p, c = fixtures()
@@ -161,6 +168,7 @@ class PrimePtahPreparationTests(unittest.TestCase):
         for value in (
             "2026-10-25T19:49:00.123456789Z",
             "2026-10-25T21:49:00.123456789+02:00",
+            "2026-10-25T20:49:00.123456789+01:00",
         ):
             with self.subTest(value=value):
                 p, c = fixtures()
