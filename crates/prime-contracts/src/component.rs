@@ -230,6 +230,9 @@ fn valid_bounded_text(value: &str) -> bool {
         // Unicode Cf marks that are not classified as whitespace/control can
         // silently alter component versions, requirements, and evidence text.
         && !value.chars().any(|c| matches!(c as u32, 0x0600..=0x0605 | 0x06DD | 0x08E2 | 0x110BD | 0x110CD))
+        // Complete the known Unicode Cf exclusions for Syriac/Arabic markers,
+        // interlinear annotations, and Egyptian hieroglyph format controls.
+        && !value.chars().any(|c| matches!(c as u32, 0x070F | 0x0890..=0x0891 | 0xFFF9..=0xFFFB | 0x13430..=0x1343F))
         && !value.chars().any(|c| matches!(c as u32, 0xE0100..=0xE01EF))
 }
 
@@ -405,6 +408,49 @@ mod tests {
                 Err(ComponentManifestError::Limitation),
                 "format mark U+{:04X} admitted in limitation",
                 mark as u32
+            );
+        }
+    }
+
+    #[test]
+    fn remaining_unicode_format_controls_cannot_spoof_component_text() {
+        // Unicode Cf codepoints missing from the existing bounded-text guard.
+        // These are not whitespace or Rust control characters.
+        for point in [0x070F, 0x0890, 0x0891, 0xFFF9, 0xFFFA, 0xFFFB]
+            .into_iter()
+            .chain(0x13430..=0x1343F)
+        {
+            let mark = char::from_u32(point).unwrap();
+            let mut item = manifest();
+            item.version = format!("1.0{mark}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version),
+                "U+{point:04X} admitted in version"
+            );
+
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{mark}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement),
+                "U+{point:04X} admitted in compatibility"
+            );
+
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{mark}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement),
+                "U+{point:04X} admitted in base requirement"
+            );
+
+            let mut item = manifest();
+            item.limitations = vec![format!("verified{mark}source")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation),
+                "U+{point:04X} admitted in limitation"
             );
         }
     }
