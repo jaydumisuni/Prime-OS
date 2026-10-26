@@ -1297,6 +1297,19 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "qcow2 L1 table does not cover declared virtual size",
         ));
     }
+    // A table larger than the disk requires can force disproportionate
+    // QEMU metadata allocation before W8 has qualified the guest image.
+    // Permit cluster-rounded L1 capacity, but not arbitrary extra clusters
+    // reserved for unadmitted future disk growth. Zero remains the explicit
+    // header-only fixture exception above, not a guest-bootability claim.
+    let l1_entries_per_cluster = cluster_size / 8;
+    let max_l1_entries =
+        required_l1_entries.div_ceil(l1_entries_per_cluster) * l1_entries_per_cluster;
+    if l1_size != 0 && u64::from(l1_size) > max_l1_entries {
+        return Err(WindowsVmError::InvalidPlan(
+            "qcow2 L1 table exceeds cluster-rounded virtual disk coverage",
+        ));
+    }
     // A coherent pointer/count pair can still alias the other table's
     // clusters. The L1 count is in 8-byte entries, while the refcount count
     // is in whole clusters. Reject overlap and address-space wrap without
