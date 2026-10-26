@@ -734,9 +734,20 @@ where
             return Err(ComponentAdmissionError::UnsafePackagePath);
         }
     }
-    if current_metadata.len() != original_metadata.len()
-        || sha256_file(package_path)? != observed_digest
+    // Callbacks can also rewrite identical bytes on the same inode. Bind
+    // final readback to the initial file metadata, not merely to its digest
+    // and inode number. Recheck the pathname after the final digest read.
+    let final_digest = sha256_file(package_path)?;
+    #[cfg(unix)]
     {
+        let final_metadata = fs::symlink_metadata(package_path)?;
+        if !stable_package_metadata(&original_metadata, &current_metadata)
+            || !stable_package_metadata(&original_metadata, &final_metadata)
+        {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
+    }
+    if current_metadata.len() != original_metadata.len() || final_digest != observed_digest {
         return Err(ComponentAdmissionError::PackageDigestMismatch);
     }
 
@@ -2511,6 +2522,41 @@ mod tests {
             result,
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_rejects_same_byte_in_place_rewrite_during_signature() {
+        use std::os::unix::fs::MetadataExt;
+        let bytes = b"origins-package-v2";
+        let (_dir, path) = write_package(bytes);
+        let manifest = manifest(bytes);
+        let before = fs::symlink_metadata(&path).unwrap();
+        let result = verify_offline_component_package(
+            &path,
+            &manifest,
+            &context(&[]),
+            |_| {
+                // Same bytes and inode must not launder a new package state.
+                fs::write(&path, bytes).unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_times(
+                        fs::FileTimes::new()
+                            .set_modified(std::time::SystemTime::UNIX_EPOCH),
+                    )
+                    .unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        let after = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_ne!(before.mtime(), after.mtime());
+        assert!(matches!(result, Err(ComponentAdmissionError::UnsafePackagePath)));
     }
 
     #[cfg(unix)]
