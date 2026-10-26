@@ -115,7 +115,9 @@ impl ComponentTransactionState {
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B
                                     | 0x200C | 0x200D | 0x2060..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
-                                    | 0xE0000..=0xE0FFF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
+                                    | 0xE0000..=0xE0FFF | 0x0600..=0x0605 | 0x06DD | 0x070F | 0x08E2
+                                    | 0x0890..=0x0891 | 0x110BD | 0x110CD | 0x13430..=0x1343F
+                                    | 0xFFF9..=0xFFFB | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
                     })
@@ -2208,6 +2210,57 @@ mod tests {
                     "reserved recovery reason allowed rollback: U+{point:06X}"
                 );
             }
+        }
+        assert!(State::Applying
+            .advance(State::Failed {
+                reason: "disk failure".into(),
+            })
+            .is_ok());
+    }
+
+    #[test]
+    fn transaction_reasons_reject_remaining_unicode_format_controls() {
+        use ComponentTransactionState as State;
+
+        // Match the manifest text boundary: these Unicode Cf controls are not
+        // necessarily whitespace or Rust control chars, yet can spoof durable
+        // failure/recovery evidence.
+        for point in (0x0600..=0x0605)
+            .chain([0x06DD, 0x070F, 0x08E2, 0x0890, 0x0891, 0x110BD, 0x110CD])
+            .chain(0x13430..=0x1343F)
+            .chain(0xFFF9..=0xFFFB)
+        {
+            let mark = char::from_u32(point).unwrap();
+            let reason = format!("disk{mark}failure");
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "format control admitted into new state: U+{point:04X}"
+                );
+            }
+            assert_eq!(
+                (State::Failed {
+                    reason: reason.clone(),
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore previous package".into(),
+                }),
+                Err(ComponentTransactionTransitionError),
+                "format control admitted from prior failure: U+{point:04X}"
+            );
+            assert_eq!(
+                (State::RecoveryRequired { reason }).advance(State::RolledBack),
+                Err(ComponentTransactionTransitionError),
+                "format control allowed rollback from recovery: U+{point:04X}"
+            );
         }
         assert!(State::Applying
             .advance(State::Failed {
