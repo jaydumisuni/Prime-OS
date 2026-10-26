@@ -173,12 +173,119 @@ fn paint_card(
     );
 }
 
+fn paint_ubuntu_host_preview(
+    canvas: &mut Canvas<'_>,
+    text: &mut TextSystem,
+    theme: &Theme,
+    view: QuickControlsView<'_>,
+) {
+    canvas.clear();
+    let alpha = (view.progress.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let body = Rect::new(
+        1,
+        1,
+        canvas.width.saturating_sub(2),
+        canvas.height.saturating_sub(2),
+    );
+    canvas.fill_rounded_rect(body, 24, theme.base_0.with_alpha(alpha.saturating_sub(18)));
+    canvas.stroke_rounded_rect(body, 24, 1, theme.cyan.with_alpha(alpha / 2));
+    text.draw(
+        canvas,
+        (21, 20),
+        "QUICK CONTROLS",
+        TextStyle {
+            size_px: 15,
+            weight: FontWeight::Semibold,
+        },
+        theme.text.with_alpha(alpha),
+    );
+    text.draw(
+        canvas,
+        (21, 45),
+        "UBUNTU HOST / PREVIEW",
+        TextStyle {
+            size_px: 11,
+            weight: FontWeight::Regular,
+        },
+        theme.cyan.with_alpha(alpha),
+    );
+    text.draw(
+        canvas,
+        (canvas.width as i32 - 85, 22),
+        "Close",
+        TextStyle {
+            size_px: 12,
+            weight: FontWeight::Regular,
+        },
+        theme.muted.with_alpha(alpha),
+    );
+    for (i, line) in view.lines.iter().take(4).enumerate() {
+        let y = 80 + i as i32 * 75;
+        let card = Rect::new(18, y, canvas.width.saturating_sub(36), 64);
+        canvas.fill_rounded_rect(card, 14, theme.panel.with_alpha(alpha / 2));
+        canvas.stroke_rounded_rect(card, 14, 1, theme.text.with_alpha(alpha / 7));
+        let (label, value) = line.split_once(':').unwrap_or(("STATUS", line.as_str()));
+        let icon = match i {
+            0 => Icon::Network,
+            1 => Icon::Audio,
+            2 => Icon::Storage,
+            _ => Icon::Status,
+        };
+        draw_icon(
+            canvas,
+            Rect::new(29, y + 17, 26, 26),
+            icon,
+            theme.cyan.with_alpha(alpha),
+        );
+        text.draw(
+            canvas,
+            (67, y + 7),
+            label.trim(),
+            TextStyle {
+                size_px: 11,
+                weight: FontWeight::Semibold,
+            },
+            theme.muted.with_alpha(alpha),
+        );
+        let trimmed = value.trim();
+        let value_short = if trimmed.chars().count() > 43 {
+            format!("{}…", trimmed.chars().take(42).collect::<String>())
+        } else {
+            trimmed.to_owned()
+        };
+        text.draw(
+            canvas,
+            (67, y + 29),
+            &value_short,
+            TextStyle {
+                size_px: 12,
+                weight: FontWeight::Regular,
+            },
+            theme.text.with_alpha(alpha),
+        );
+    }
+    text.draw(
+        canvas,
+        (22, canvas.height as i32 - 24),
+        "Host controls stay with Ubuntu until Prime is qualified",
+        TextStyle {
+            size_px: 10,
+            weight: FontWeight::Regular,
+        },
+        theme.muted.with_alpha(alpha),
+    );
+}
+
 pub(crate) fn paint_quick_controls_surface(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
     theme: &Theme,
     view: QuickControlsView<'_>,
 ) {
+    if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
+        paint_ubuntu_host_preview(canvas, text, theme, view);
+        return;
+    }
     canvas.clear();
     let QuickControlsView {
         lines,

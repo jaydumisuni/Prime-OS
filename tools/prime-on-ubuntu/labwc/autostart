@@ -1,0 +1,2 @@
+#!/bin/sh
+# Prime preview is supervised by labwc -S, not by autostart.

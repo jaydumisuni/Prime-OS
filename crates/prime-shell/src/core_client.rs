@@ -44,6 +44,18 @@ pub(crate) struct SystemStatusView {
     pub(crate) power_ready: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreviewFileResult {
+    pub(crate) name: String,
+    pub(crate) path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreviewWindow {
+    pub(crate) app_id: String,
+    pub(crate) title: String,
+}
+
 impl CoreClient {
     pub(crate) fn from_env() -> Self {
         let socket_path = env::var_os("PRIME_CORE_SOCKET")
@@ -63,6 +75,140 @@ impl CoreClient {
         );
         self.request("POST", "/v1/shell/launch", Some(body.as_bytes()))?;
         Ok(())
+    }
+
+    pub(crate) fn preview_windows(&self) -> Result<Vec<PreviewWindow>, CoreClientError> {
+        if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return Ok(Vec::new());
+        }
+        let bytes = self.request("GET", "/v1/preview/windows", None)?;
+        let value: Value =
+            serde_json::from_slice(&bytes).map_err(|err| CoreClientError::Json(err.to_string()))?;
+        if value.get("schema").and_then(Value::as_str) != Some("prime.ubuntu.windows.v1") {
+            return Err(CoreClientError::Protocol(
+                "Unexpected preview window schema".to_owned(),
+            ));
+        }
+        Ok(value
+            .get("windows")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(128)
+            .filter_map(|obj| {
+                Some(PreviewWindow {
+                    app_id: obj.get("app_id")?.as_str()?.to_owned(),
+                    title: obj.get("title")?.as_str()?.to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    pub(crate) fn focus_preview_window(&self, app_id: &str) -> Result<(), CoreClientError> {
+        if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return Err(CoreClientError::Protocol(
+                "Window focus is a preview-only action".to_owned(),
+            ));
+        }
+        let payload = serde_json::to_vec(&serde_json::json!({"app_id":app_id}))
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        self.request("POST", "/v1/preview/focus", Some(&payload))?;
+        Ok(())
+    }
+
+    pub(crate) fn search_preview_files(
+        &self,
+        query: &str,
+    ) -> Result<Vec<PreviewFileResult>, CoreClientError> {
+        if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() || query.trim().chars().count() < 2 {
+            return Ok(Vec::new());
+        }
+        let payload = serde_json::to_vec(&serde_json::json!({"query":query}))
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        let bytes = self.request("POST", "/v1/preview/search", Some(&payload))?;
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        if value.get("schema").and_then(Value::as_str) != Some("prime.ubuntu.file-search.v1") {
+            return Err(CoreClientError::Protocol(
+                "Unsupported Ubuntu file-search response".to_owned(),
+            ));
+        }
+        Ok(value
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(6)
+            .filter_map(|entry| {
+                let name = entry.get("name")?.as_str()?.to_owned();
+                let path = entry.get("path")?.as_str()?.to_owned();
+                Some(PreviewFileResult { name, path })
+            })
+            .collect())
+    }
+
+    pub(crate) fn open_preview_file(&self, path: &str) -> Result<(), CoreClientError> {
+        if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return Err(CoreClientError::Protocol(
+                "Not an Ubuntu preview session".to_owned(),
+            ));
+        }
+        let payload = serde_json::to_vec(&serde_json::json!({"path":path}))
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        self.request("POST", "/v1/preview/open-file", Some(&payload))?;
+        Ok(())
+    }
+
+    pub(crate) fn ubuntu_preview_status(&self) -> Result<Vec<String>, CoreClientError> {
+        if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return Err(CoreClientError::Protocol(
+                "Ubuntu preview status unavailable outside preview".to_owned(),
+            ));
+        }
+        let bytes = self.request("GET", "/v1/preview/host-status", None)?;
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        if value.get("schema").and_then(Value::as_str) != Some("prime.ubuntu.host-preview.v1") {
+            return Err(CoreClientError::Protocol(
+                "Unexpected Ubuntu preview status schema".to_owned(),
+            ));
+        }
+        let links = value
+            .get("network")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let network = links
+            .iter()
+            .filter_map(Value::as_str)
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let audio = value
+            .get("audio")
+            .and_then(Value::as_str)
+            .unwrap_or("Ubuntu managed");
+        let used = value
+            .get("storage_used_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let total = value
+            .get("storage_total_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        Ok(vec![
+            format!(
+                "NETWORK: {}",
+                if network.is_empty() {
+                    "No connected interfaces"
+                } else {
+                    &network
+                }
+            ),
+            format!("AUDIO: {audio}"),
+            format!("STORAGE: {} / {}", format_bytes(used), format_bytes(total)),
+            "POWER: Managed by Ubuntu, unavailable in preview".to_owned(),
+        ])
     }
 
     pub(crate) fn system_status(&self) -> Result<SystemStatusView, CoreClientError> {

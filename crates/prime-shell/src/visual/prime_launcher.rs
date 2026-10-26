@@ -1,70 +1,17 @@
+use super::wallpaper::{paint_icon_image, DecodedWallpaper};
+use crate::core_client::PreviewFileResult;
 use prime_contracts::ApplicationEntry;
+use std::collections::HashMap;
 
-use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
+use super::{
+    draw_icon, rail::draw_prime_mark, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem,
+    Theme,
+};
 
 pub(crate) const PRIME_LAUNCHER_WIDTH: u32 = 858;
 pub(crate) const PRIME_LAUNCHER_HEIGHT: u32 = 786;
 pub(crate) const PRIME_LAUNCHER_TOP_MARGIN: i32 = 140;
 pub(crate) const PRIME_LAUNCHER_LEFT_MARGIN: i32 = 210;
-const CARD_COLUMNS: u32 = 4;
-const CARD_GAP: u32 = 18;
-const CARD_HEIGHT: u32 = 208;
-const CARD_ROW_GAP: u32 = 18;
-pub(crate) const LAUNCHER_GLASS_ALPHA: u8 = 48;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PrimeLauncherLayout {
-    pub(crate) bounds: Rect,
-    pub(crate) search: Rect,
-    pub(crate) apps: Rect,
-    pub(crate) footer: Rect,
-}
-
-impl PrimeLauncherLayout {
-    pub(crate) fn new(width: u32, height: u32) -> Self {
-        let bounds = Rect::new(0, 0, width, height);
-        let search = Rect::new(42, 34, width.saturating_sub(214), 64);
-        let apps_y = 150;
-        let apps_height = height.saturating_sub(apps_y + 68);
-        let apps = Rect::new(42, apps_y as i32, width.saturating_sub(84), apps_height);
-        let footer = Rect::new(
-            42,
-            height.saturating_sub(36) as i32,
-            width.saturating_sub(84),
-            18,
-        );
-        Self {
-            bounds,
-            search,
-            apps,
-            footer,
-        }
-    }
-
-    pub(crate) fn card_rect(self, index: usize) -> Rect {
-        let card_width = self
-            .apps
-            .width
-            .saturating_sub(CARD_GAP * (CARD_COLUMNS - 1))
-            / CARD_COLUMNS;
-        let column = index as u32 % CARD_COLUMNS;
-        let row = index as u32 / CARD_COLUMNS;
-        Rect::new(
-            self.apps.x + (column * (card_width + CARD_GAP)) as i32,
-            self.apps.y + (row * (CARD_HEIGHT + CARD_ROW_GAP)) as i32,
-            card_width,
-            CARD_HEIGHT,
-        )
-    }
-
-    pub(crate) fn application_at(self, x: f64, y: f64, count: usize) -> Option<usize> {
-        (0..count.min(8)).find(|&index| {
-            self.card_rect(index)
-                .contains(x.floor() as i32, y.floor() as i32)
-        })
-    }
-}
-
 pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'static str> {
     if launch_ready {
         None
@@ -73,40 +20,221 @@ pub(crate) const fn application_state_label(launch_ready: bool) -> Option<&'stat
     }
 }
 
+pub(crate) const VISIBLE_APP_LIMIT: usize = 11;
+pub(crate) const LAUNCHER_GLASS_ALPHA: u8 = 48;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MenuHit {
+    App(usize),
+    LeftStack,
+    RightStack,
+    Search,
+    Outside,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrimeLauncherLayout {
+    pub(crate) bounds: Rect,
+    pub(crate) search: Rect,
+    pub(crate) left_stack: Rect,
+    pub(crate) right_stack: Rect,
+    pub(crate) center: (i32, i32),
+    pub(crate) icon_size: u32,
+}
+
+impl PrimeLauncherLayout {
+    pub(crate) fn new(width: u32, height: u32) -> Self {
+        let cx = width as i32 / 2;
+        let cy = (height as f32 * 0.53) as i32;
+        let icon_size = if height < 720 { 74 } else { 84 };
+        let stack_y = height.saturating_sub(106) as i32;
+        Self {
+            bounds: Rect::new(0, 0, width, height),
+            center: (cx, cy),
+            icon_size,
+            search: Rect::new(cx - 190, cy + (height as f32 * 0.16) as i32, 380, 44),
+            left_stack: Rect::new(cx - 292, stack_y, 136, 87),
+            right_stack: Rect::new(cx + 158, stack_y, 136, 87),
+        }
+    }
+
+    pub(crate) fn icon_rect(self, index: usize) -> Rect {
+        // Open-front orbit: left upper arc, crown, right side, and lower arc.
+        // The fixed 11 *positions* are a viewport into the complete app catalogue.
+        let angle = (160.0 + index.min(VISIBLE_APP_LIMIT - 1) as f32 * 22.0).to_radians();
+        let rx = (self.bounds.width as f32 * 0.25).min(340.0);
+        let ry = (self.bounds.height as f32 * 0.35).min(280.0);
+        let cx = self.center.0 as f32 + angle.cos() * rx;
+        let cy = self.center.1 as f32 + angle.sin() * ry;
+        Rect::new(
+            (cx - self.icon_size as f32 / 2.0) as i32,
+            (cy - self.icon_size as f32 / 2.0) as i32,
+            self.icon_size,
+            self.icon_size,
+        )
+    }
+
+    pub(crate) fn hit(self, x: f64, y: f64, count: usize, searching: bool) -> MenuHit {
+        let (x, y) = (x.floor() as i32, y.floor() as i32);
+        if self.search.contains(x, y) {
+            return MenuHit::Search;
+        }
+        if !searching && count > VISIBLE_APP_LIMIT {
+            if self.left_stack.contains(x, y) {
+                return MenuHit::LeftStack;
+            }
+            if self.right_stack.contains(x, y) {
+                return MenuHit::RightStack;
+            }
+        }
+        if searching {
+            // Search results are drawn as rows, not as orbit cards.
+            let rows = count.min(6);
+            for i in 0..rows {
+                let row = Rect::new(
+                    self.center.0 - 194,
+                    self.center.1 + 87 + (i as i32 * 47),
+                    388,
+                    43,
+                );
+                if row.contains(x, y) {
+                    return MenuHit::App(i);
+                }
+            }
+        } else {
+            for i in 0..count.min(VISIBLE_APP_LIMIT) {
+                let rect = self.icon_rect(i);
+                let hitbox = Rect::new(rect.x - 10, rect.y - 10, rect.width + 20, rect.height + 38);
+                if hitbox.contains(x, y) {
+                    return MenuHit::App(i);
+                }
+            }
+        }
+        MenuHit::Outside
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PrimeLauncherView<'a> {
     pub(crate) applications: &'a [ApplicationEntry],
+    pub(crate) icons: &'a HashMap<String, DecodedWallpaper>,
+    pub(crate) incoming_left: Option<&'a DecodedWallpaper>,
+    pub(crate) incoming_right: Option<&'a DecodedWallpaper>,
+    pub(crate) files: &'a [PreviewFileResult],
     pub(crate) selected: usize,
     pub(crate) query: &'a str,
     pub(crate) message: Option<&'a str>,
     pub(crate) progress: f32,
+    pub(crate) wallpaper_anchored: bool,
+    pub(crate) overflow: bool,
 }
 
-fn application_presentation(name: &str) -> (Icon, &'static str, &'static str) {
+fn application_icon(name: &str) -> Icon {
     let lower = name.to_ascii_lowercase();
-    if lower.contains("file") {
-        (Icon::Files, "Browse and manage", "system files")
-    } else if lower.contains("terminal") {
-        (Icon::Terminal, "Command line", "interface")
-    } else if lower.contains("diagnostic") || lower.contains("health") {
-        (Icon::Health, "System health", "and diagnostics")
-    } else if lower.contains("setting") {
-        (Icon::Settings, "System preferences", "and customization")
-    } else if lower.contains("network") || lower.contains("wifi") {
-        (Icon::Wifi, "Connections and", "network settings")
-    } else if lower.contains("browser") || lower.contains("web") {
-        (Icon::Browser, "Secure web", "experience")
-    } else if lower.contains("media") || lower.contains("player") {
-        (Icon::Media, "Media player and", "content hub")
-    } else if lower.contains("recovery") || lower.contains("backup") {
-        (Icon::Recovery, "Backup, restore,", "and recovery")
+    if lower.contains("machine") || lower.contains("computer") {
+        Icon::Storage
+    } else if lower.contains("file") || lower.contains("folder") {
+        Icon::Files
+    } else if lower.contains("terminal") || lower.contains("console") {
+        Icon::Terminal
+    } else if lower.contains("setting") || lower.contains("control") {
+        Icon::Settings
+    } else if lower.contains("browser")
+        || lower.contains("brave")
+        || lower.contains("firefox")
+        || lower.contains("chrome")
+    {
+        Icon::Browser
+    } else if lower.contains("music") || lower.contains("media") || lower.contains("video") {
+        Icon::Media
+    } else if lower.contains("health") || lower.contains("diagnostic") {
+        Icon::Health
+    } else if lower.contains("backup") || lower == "bin" {
+        Icon::Recovery
     } else {
-        (Icon::Applications, "Native Prime", "application")
+        Icon::Applications
     }
 }
 
-fn centered_text_x(text: &TextSystem, label: &str, style: TextStyle, rect: Rect) -> i32 {
-    rect.center_x().round() as i32 - text.measure(label, style).width as i32 / 2
+fn text_centered(
+    text: &mut TextSystem,
+    canvas: &mut Canvas<'_>,
+    label: &str,
+    rect: Rect,
+    y: i32,
+    size: u32,
+    color: Argb,
+) {
+    let style = TextStyle {
+        size_px: size as u16,
+        weight: FontWeight::Semibold,
+    };
+    let measured = text.measure(label, style).width as i32;
+    let max_chars = if rect.width < 70 { 10 } else { 18 };
+    let short = if label.chars().count() > max_chars {
+        let mut s = label.chars().take(max_chars - 1).collect::<String>();
+        s.push('…');
+        s
+    } else {
+        label.to_owned()
+    };
+    let width = text.measure(&short, style).width as i32;
+    let x = rect.center_x() as i32 - width / 2;
+    let _ = measured;
+    text.draw(canvas, (x.max(2), y), &short, style, color);
+}
+
+fn paint_stack(
+    canvas: &mut Canvas<'_>,
+    theme: &Theme,
+    bounds: Rect,
+    right: bool,
+    alpha: u8,
+    artwork: Option<&DecodedWallpaper>,
+) {
+    for layer in (0..4).rev() {
+        let indent = layer * 13;
+        let x = if right {
+            bounds.x + 12 + indent
+        } else {
+            bounds.x + 60 - indent
+        };
+        let y = bounds.y + layer * 4;
+        let tile = Rect::new(x, y, 57, 61);
+        canvas.fill_rounded_rect(
+            tile,
+            12,
+            theme
+                .base_2
+                .with_alpha(alpha.saturating_sub(layer as u8 * 25)),
+        );
+        canvas.stroke_rounded_rect(
+            tile,
+            12,
+            2,
+            if right {
+                theme
+                    .cyan
+                    .with_alpha(alpha.saturating_sub(layer as u8 * 18))
+            } else {
+                theme
+                    .violet
+                    .with_alpha(alpha.saturating_sub(layer as u8 * 18))
+            },
+        );
+        if layer == 0 {
+            if let Some(image) = artwork {
+                paint_icon_image(canvas, image, Rect::new(x + 7, y + 7, 43, 43), alpha);
+            } else {
+                draw_icon(
+                    canvas,
+                    Rect::new(x + 16, y + 15, 26, 26),
+                    Icon::Applications,
+                    theme.muted.with_alpha(alpha),
+                );
+            }
+        }
+    }
 }
 
 pub(crate) fn paint_prime_launcher_surface(
@@ -116,280 +244,263 @@ pub(crate) fn paint_prime_launcher_surface(
     view: PrimeLauncherView<'_>,
 ) {
     canvas.clear();
-    let PrimeLauncherView {
-        applications,
-        selected,
-        query,
-        message,
-        progress,
-    } = view;
-    let progress = progress.clamp(0.0, 1.0);
+    let alpha = (view.progress.clamp(0.0, 1.0) * 255.0) as u8;
     let layout = PrimeLauncherLayout::new(canvas.width, canvas.height);
-    let slide = ((1.0 - progress) * 30.0).round() as i32;
-    let alpha = (progress * 255.0).round() as u8;
-    let body = Rect::new(
-        1 + slide,
-        1,
-        canvas.width.saturating_sub(2 + slide.max(0) as u32),
-        canvas.height.saturating_sub(2),
-    );
+    let (cx, cy) = layout.center;
 
-    canvas.fill_rounded_rect(
-        body,
-        28,
-        Argb::from_u32(0xff0a1326)
-            .with_alpha(((u16::from(LAUNCHER_GLASS_ALPHA) * alpha as u16) / 255) as u8),
-    );
-    canvas.stroke_rounded_rect(
-        body,
-        28,
-        1,
-        theme.cyan.with_alpha(((105u16 * alpha as u16) / 255) as u8),
-    );
-    canvas.radial_glow(
-        150.0 + slide as f32,
-        canvas.height as f32 * 0.68,
-        290.0,
-        theme
-            .violet
-            .with_alpha(((70u16 * alpha as u16) / 255) as u8),
-    );
-    canvas.radial_glow(
-        canvas.width as f32 * 0.82,
-        210.0,
-        270.0,
-        theme.cyan.with_alpha(((38u16 * alpha as u16) / 255) as u8),
-    );
+    // Use the wallpaper's *existing* central logo on system-03. Other
+    // wallpapers receive the exact Prime PNG/RGBA-derived mark, not a new glyph.
+    if !view.wallpaper_anchored {
+        draw_prime_mark(canvas, Rect::new(cx - 100, cy - 141, 200, 200), theme, true);
+    }
+    let ring_color = theme.cyan.with_alpha(alpha / 3);
+    for segment in 0..90 {
+        let a = (segment as f32 * 4.0).to_radians();
+        let b = ((segment + 1) as f32 * 4.0).to_radians();
+        let rx = (layout.bounds.width as f32 * 0.25).min(340.0);
+        let ry = (layout.bounds.height as f32 * 0.35).min(280.0);
+        let from = (cx + (rx * a.cos()) as i32, cy + (ry * a.sin()) as i32);
+        let to = (cx + (rx * b.cos()) as i32, cy + (ry * b.sin()) as i32);
+        canvas.line(from, to, 1, ring_color);
+    }
 
-    let shifted = |rect: Rect| {
-        Rect::new(
-            rect.x + slide,
-            rect.y,
-            rect.width.saturating_sub(slide.max(0) as u32),
-            rect.height,
-        )
-    };
-
-    let search = shifted(layout.search);
+    let search = layout.search;
     canvas.fill_rounded_rect(
         search,
-        18,
-        Argb::from_u32(0xff0b1529).with_alpha(((52u16 * alpha as u16) / 255) as u8),
+        22,
+        theme.base_1.with_alpha(alpha.saturating_sub(25)),
     );
-    canvas.stroke_rounded_rect(
-        search,
-        18,
-        1,
-        theme.text.with_alpha(((30u16 * alpha as u16) / 255) as u8),
-    );
+    canvas.stroke_rounded_rect(search, 22, 2, theme.cyan.with_alpha(alpha));
     draw_icon(
         canvas,
-        Rect::new(search.x + 20, search.y + 20, 24, 24),
+        Rect::new(search.x + 14, search.y + 12, 20, 20),
         Icon::Search,
-        theme.text.with_alpha(((210u16 * alpha as u16) / 255) as u8),
+        theme.cyan.with_alpha(alpha),
     );
-    let search_style = TextStyle {
-        size_px: 14,
-        weight: FontWeight::Regular,
-    };
-    let search_text = if query.trim().is_empty() {
-        "Search admitted applications..."
+    let hint = if view.query.is_empty() {
+        "Search apps and files..."
     } else {
-        query
+        view.query
     };
     text.draw(
         canvas,
-        (search.x + 60, search.y + 20),
-        search_text,
-        search_style,
-        if query.trim().is_empty() {
-            theme.muted.with_alpha(alpha)
-        } else {
-            theme.text.with_alpha(alpha)
-        },
-    );
-    let badge = Rect::new(search.x + search.width as i32 - 43, search.y + 18, 26, 28);
-    canvas.fill_rounded_rect(
-        badge,
-        6,
-        theme.text.with_alpha(((16u16 * alpha as u16) / 255) as u8),
-    );
-    canvas.stroke_rounded_rect(
-        badge,
-        6,
-        1,
-        theme.text.with_alpha(((40u16 * alpha as u16) / 255) as u8),
-    );
-    text.draw(
-        canvas,
-        (badge.x + 9, badge.y + 5),
-        "K",
+        (search.x + 47, search.y + 11),
+        hint,
         TextStyle {
-            size_px: 12,
-            weight: FontWeight::Semibold,
-        },
-        theme.muted.with_alpha(alpha),
-    );
-
-    let section_style = TextStyle {
-        size_px: 13,
-        weight: FontWeight::Semibold,
-    };
-    text.draw(
-        canvas,
-        (layout.apps.x + slide, 118),
-        "CORE APPS",
-        section_style,
-        theme.text.with_alpha(((220u16 * alpha as u16) / 255) as u8),
-    );
-
-    for (index, application) in applications.iter().take(8).enumerate() {
-        let card = shifted(layout.card_rect(index));
-        let selected_card = index == selected;
-        let fill = if selected_card {
-            theme
-                .violet
-                .with_alpha(((42u16 * alpha as u16) / 255) as u8)
-        } else {
-            Argb::from_u32(0xff10203a).with_alpha(((46u16 * alpha as u16) / 255) as u8)
-        };
-        if selected_card {
-            canvas.radial_glow(
-                card.center_x() as f32,
-                card.center_y() as f32,
-                card.width.max(card.height) as f32 * 0.72,
-                theme.cyan.with_alpha(((18u16 * alpha as u16) / 255) as u8),
-            );
-        }
-        canvas.fill_rounded_rect(card, 18, fill);
-        canvas.stroke_rounded_rect(
-            card,
-            18,
-            1,
-            if selected_card {
-                theme.cyan.with_alpha(((132u16 * alpha as u16) / 255) as u8)
-            } else {
-                theme.text.with_alpha(((24u16 * alpha as u16) / 255) as u8)
-            },
-        );
-
-        let (icon, desc1, desc2) = application_presentation(&application.display_name);
-        let icon_color = if selected_card {
-            theme.cyan
-        } else if index % 3 == 1 {
-            theme.violet
-        } else {
-            theme.cyan_alt
-        };
-        let icon_rect = Rect::new(card.center_x().round() as i32 - 27, card.y + 28, 54, 54);
-        canvas.radial_glow(
-            icon_rect.center_x() as f32,
-            icon_rect.center_y() as f32,
-            46.0,
-            icon_color.with_alpha(((34u16 * alpha as u16) / 255) as u8),
-        );
-        draw_icon(canvas, icon_rect, icon, icon_color.with_alpha(alpha));
-
-        let title_style = TextStyle {
             size_px: 15,
-            weight: FontWeight::Semibold,
-        };
-        let title_x = centered_text_x(text, &application.display_name, title_style, card);
-        text.draw(
-            canvas,
-            (title_x, card.y + 101),
-            &application.display_name,
-            title_style,
-            theme.text.with_alpha(alpha),
-        );
-
-        let desc_style = TextStyle {
-            size_px: 12,
             weight: FontWeight::Regular,
-        };
-        let d1x = centered_text_x(text, desc1, desc_style, card);
-        let d2x = centered_text_x(text, desc2, desc_style, card);
-        text.draw(
-            canvas,
-            (d1x, card.y + 134),
-            desc1,
-            desc_style,
-            theme.muted.with_alpha(alpha),
-        );
-        text.draw(
-            canvas,
-            (d2x, card.y + 154),
-            desc2,
-            desc_style,
-            theme.muted.with_alpha(alpha),
-        );
+        },
+        theme.text.with_alpha(alpha),
+    );
 
-        if let Some(state) = application_state_label(application.launch_ready) {
-            let state_style = TextStyle {
-                size_px: 10,
-                weight: FontWeight::Regular,
+    if !view.query.is_empty() {
+        let app_count = view.applications.len().min(6);
+        let rows = (app_count + view.files.len()).min(6);
+        let height = (rows * 47 + 48).max(90) as u32;
+        let panel = Rect::new(cx - 205, cy + 74, 410, height);
+        canvas.fill_rounded_rect(panel, 20, theme.base_1.with_alpha(alpha.saturating_sub(7)));
+        canvas.stroke_rounded_rect(panel, 20, 1, theme.cyan.with_alpha(alpha / 2));
+        for i in 0..rows {
+            let row = Rect::new(cx - 194, cy + 87 + i as i32 * 47, 388, 43);
+            if i == view.selected {
+                canvas.fill_rounded_rect(row, 11, theme.violet.with_alpha(alpha / 3));
+            }
+            let (name, icon, subtype) = if i < app_count {
+                let app = &view.applications[i];
+                (
+                    &app.display_name,
+                    application_icon(&app.display_name),
+                    "App",
+                )
+            } else {
+                let file = &view.files[i - app_count];
+                (&file.name, Icon::Files, "File / indexed Ubuntu folders")
             };
-            let state_width = text.measure(state, state_style).width as i32;
-            let group_width = state_width + 10;
-            let group_x = card.center_x().round() as i32 - group_width / 2;
-            canvas.fill_rounded_rect(
-                Rect::new(group_x, card.y + 184, 4, 4),
-                2,
-                Argb::from_u32(0xfff59e0b).with_alpha(((168u16 * alpha as u16) / 255) as u8),
+            let small_rect = Rect::new(row.x + 7, row.y + 6, 29, 29);
+            let artwork = if i < app_count {
+                view.icons
+                    .get(&view.applications[i].application_id.to_string())
+            } else {
+                None
+            };
+            if let Some(image) = artwork {
+                paint_icon_image(canvas, image, small_rect, alpha);
+            } else {
+                draw_icon(canvas, small_rect, icon, theme.cyan.with_alpha(alpha));
+            }
+            let truncated = if name.chars().count() > 31 {
+                format!("{}…", name.chars().take(30).collect::<String>())
+            } else {
+                name.to_owned()
+            };
+            text.draw(
+                canvas,
+                (row.x + 45, row.y + 5),
+                &truncated,
+                TextStyle {
+                    size_px: 13,
+                    weight: FontWeight::Semibold,
+                },
+                theme.text.with_alpha(alpha),
             );
             text.draw(
                 canvas,
-                (group_x + 10, card.y + 179),
-                state,
-                state_style,
-                theme
-                    .muted
-                    .with_alpha(((190u16 * alpha as u16) / 255) as u8),
+                (row.x + 45, row.y + 25),
+                subtype,
+                TextStyle {
+                    size_px: 10,
+                    weight: FontWeight::Regular,
+                },
+                theme.muted.with_alpha(alpha),
             );
         }
+        if rows == 0 {
+            text.draw(
+                canvas,
+                (panel.x + 22, panel.y + 25),
+                "No matching applications",
+                TextStyle::body(),
+                theme.muted.with_alpha(alpha),
+            );
+        }
+        if let Some(message) = view.message {
+            text.draw(
+                canvas,
+                (panel.x + 16, panel.y + height as i32 - 27),
+                message,
+                TextStyle {
+                    size_px: 10,
+                    weight: FontWeight::Regular,
+                },
+                theme.muted.with_alpha(alpha),
+            );
+        }
+        return;
     }
 
-    if applications.is_empty() {
-        let empty = shifted(Rect::new(
-            layout.apps.x,
-            layout.apps.y,
-            layout.apps.width,
-            116,
-        ));
+    for (index, app) in view.applications.iter().take(VISIBLE_APP_LIMIT).enumerate() {
+        let box_rect = layout.icon_rect(index);
+        let color = if index % 2 == 0 {
+            theme.cyan
+        } else {
+            theme.violet
+        };
+        canvas.radial_glow(
+            box_rect.center_x() as f32,
+            box_rect.center_y() as f32,
+            box_rect.width as f32 * 0.78,
+            color.with_alpha(alpha / 4),
+        );
         canvas.fill_rounded_rect(
-            empty,
+            box_rect,
             18,
-            Argb::from_u32(0xff0b1222).with_alpha(((48u16 * alpha as u16) / 255) as u8),
+            theme.base_1.with_alpha(alpha.saturating_sub(13)),
         );
-        text.draw(
+        canvas.stroke_rounded_rect(box_rect, 18, 1, color.with_alpha(alpha));
+        let icon_size = box_rect.width.saturating_sub(12);
+        let icon_rect = Rect::new(
+            box_rect.x + (box_rect.width - icon_size) as i32 / 2,
+            box_rect.y + (box_rect.height - icon_size) as i32 / 2,
+            icon_size,
+            icon_size,
+        );
+        if let Some(image) = view.icons.get(&app.application_id.to_string()) {
+            paint_icon_image(canvas, image, icon_rect, alpha);
+        } else {
+            // Explicit missing-art fallback only; never impersonate a real application's icon.
+            draw_icon(
+                canvas,
+                icon_rect,
+                Icon::Applications,
+                theme.muted.with_alpha(alpha),
+            );
+        }
+        let label_box = Rect::new(
+            box_rect.x - 28,
+            box_rect.y,
+            box_rect.width + 56,
+            box_rect.height,
+        );
+        text_centered(
+            text,
             canvas,
-            (empty.x + 24, empty.y + 42),
-            if query.trim().is_empty() {
-                "No admitted applications"
-            } else {
-                "No matching applications"
-            },
-            TextStyle::body(),
-            theme.muted.with_alpha(alpha),
+            &app.display_name,
+            label_box,
+            box_rect.y + box_rect.height as i32 + 5,
+            12,
+            theme.text.with_alpha(alpha),
         );
     }
-
-    if let Some(message) = message {
-        let footer = Rect::new(
-            layout.footer.x + slide,
-            layout.footer.y,
-            layout.footer.width.saturating_sub(slide.max(0) as u32),
-            layout.footer.height,
+    if view.overflow {
+        paint_stack(
+            canvas,
+            theme,
+            layout.left_stack,
+            false,
+            alpha,
+            view.incoming_left,
         );
+        paint_stack(
+            canvas,
+            theme,
+            layout.right_stack,
+            true,
+            alpha,
+            view.incoming_right,
+        );
+    }
+    if let Some(message) = view.message {
+        let panel = Rect::new(cx - 205, cy + 83, 410, 40);
+        canvas.fill_rounded_rect(panel, 10, theme.base_0.with_alpha(alpha));
         text.draw(
             canvas,
-            (footer.x, footer.y),
+            (panel.x + 10, panel.y + 12),
             message,
             TextStyle {
-                size_px: 10,
+                size_px: 11,
                 weight: FontWeight::Regular,
             },
             theme.muted.with_alpha(alpha),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn exactly_eleven_visible_slots_are_hit_testable_and_distinct() {
+        let layout = PrimeLauncherLayout::new(1366, 768);
+        let mut centers = std::collections::HashSet::new();
+        for i in 0..11 {
+            let r = layout.icon_rect(i);
+            assert!(centers.insert((r.x, r.y)));
+            assert_eq!(
+                layout.hit(r.center_x(), r.center_y(), 20, false),
+                MenuHit::App(i)
+            );
+        }
+        assert_eq!(layout.hit(2.0, 740.0, 20, false), MenuHit::Outside);
+    }
+    #[test]
+    fn two_stacks_are_not_search_or_app_buttons() {
+        let l = PrimeLauncherLayout::new(1366, 768);
+        assert_eq!(
+            l.hit(l.left_stack.center_x(), l.left_stack.center_y(), 19, false),
+            MenuHit::LeftStack
+        );
+        assert_eq!(
+            l.hit(
+                l.right_stack.center_x(),
+                l.right_stack.center_y(),
+                19,
+                false
+            ),
+            MenuHit::RightStack
+        );
+        assert_eq!(
+            l.hit(l.left_stack.center_x(), l.left_stack.center_y(), 11, false),
+            MenuHit::Outside
         );
     }
 }
