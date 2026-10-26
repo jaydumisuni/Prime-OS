@@ -1,3 +1,4 @@
+pub mod component_package;
 pub mod exec;
 pub mod generation;
 pub mod hardware;
