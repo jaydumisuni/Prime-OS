@@ -841,7 +841,20 @@ fn private_package_inode(metadata: &fs::Metadata) -> bool {
 }
 
 #[cfg(unix)]
-fn private_package_ancestors(path: &Path) -> Result<Option<Vec<(u64, u64, u32, u32)>>, io::Error> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PackageAncestorIdentity {
+    dev: u64,
+    ino: u64,
+    uid: u32,
+    mode: u32,
+    mtime: i64,
+    mtime_nsec: i64,
+    ctime: i64,
+    ctime_nsec: i64,
+}
+
+#[cfg(unix)]
+fn private_package_ancestors(path: &Path) -> Result<Option<Vec<PackageAncestorIdentity>>, io::Error> {
     use std::os::unix::fs::MetadataExt;
     // A private package inode is insufficient when a peer can replace one
     // of its ancestor directories. Root/current-owner sticky directories
@@ -861,7 +874,19 @@ fn private_package_ancestors(path: &Path) -> Result<Option<Vec<(u64, u64, u32, u
         {
             return Ok(None);
         }
-        identities.push((metadata.dev(), metadata.ino(), metadata.uid(), metadata.mode()));
+        // An unchanged inode and mode do not prove its directory entries
+        // stayed unchanged during hashing. Include kernel-maintained times
+        // so in-place ancestor mutations cannot silently replay as stable.
+        identities.push(PackageAncestorIdentity {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            uid: metadata.uid(),
+            mode: metadata.mode(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+        });
         ancestor = directory.parent();
     }
     Ok(Some(identities))
@@ -2302,6 +2327,35 @@ mod tests {
         fs::write(&path, bytes).unwrap();
         let after = private_package_ancestors(&path).unwrap().unwrap();
         assert_ne!(before, after);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn offline_package_ancestor_snapshot_detects_same_inode_metadata_change() {
+        let bytes = b"p2-ancestor-directory-metadata-custody";
+        let (dir, _) = write_package(bytes);
+        let parent = dir.path().join("package-parent");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("component.primepkg");
+        fs::write(&path, bytes).unwrap();
+
+        let before = private_package_ancestors(&path).unwrap().unwrap();
+        // Change directory metadata without replacing the directory or
+        // package inode. A dev/ino/uid/mode-only snapshot would miss this.
+        let parent_file = fs::File::open(&parent).unwrap();
+        parent_file
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::SystemTime::UNIX_EPOCH),
+            )
+            .unwrap();
+        let after = private_package_ancestors(&path).unwrap().unwrap();
+        assert_eq!(before[0].dev, after[0].dev);
+        assert_eq!(before[0].ino, after[0].ino);
+        assert_eq!(before[0].uid, after[0].uid);
+        assert_eq!(before[0].mode, after[0].mode);
+        assert_ne!(before, after);
+        assert_eq!(sha256_file(&path).unwrap(), package_digest(bytes));
     }
 
     #[cfg(unix)]
