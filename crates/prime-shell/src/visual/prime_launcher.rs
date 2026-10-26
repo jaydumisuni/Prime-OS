@@ -82,7 +82,10 @@ pub(crate) struct PrimeLauncherView<'a> {
     pub(crate) progress: f32,
 }
 
-fn application_presentation(name: &str) -> (Icon, &'static str, &'static str) {
+fn application_presentation(
+    name: &str,
+    ubuntu_preview: bool,
+) -> (Icon, &'static str, &'static str) {
     let lower = name.to_ascii_lowercase();
     if lower.contains("file") {
         (Icon::Files, "Browse and manage", "system files")
@@ -100,6 +103,8 @@ fn application_presentation(name: &str) -> (Icon, &'static str, &'static str) {
         (Icon::Media, "Media player and", "content hub")
     } else if lower.contains("recovery") || lower.contains("backup") {
         (Icon::Recovery, "Backup, restore,", "and recovery")
+    } else if ubuntu_preview {
+        (Icon::Applications, "Ubuntu-hosted", "application")
     } else {
         (Icon::Applications, "Native Prime", "application")
     }
@@ -282,7 +287,8 @@ pub(crate) fn paint_prime_launcher_surface(
             },
         );
 
-        let (icon, desc1, desc2) = application_presentation(&application.display_name);
+        let (icon, desc1, desc2) =
+            application_presentation(&application.display_name, ubuntu_preview);
         let icon_color = if selected_card {
             theme.cyan
         } else if index % 3 == 1 {
@@ -400,5 +406,18 @@ pub(crate) fn paint_prime_launcher_surface(
             },
             theme.muted.with_alpha(alpha),
         );
+    }
+}
+
+#[cfg(test)]
+mod ubuntu_preview_copy_tests {
+    use super::application_presentation;
+
+    #[test]
+    fn generic_ubuntu_apps_do_not_claim_native_prime_origin() {
+        let (_, upper, lower) = application_presentation("Lumi DM", true);
+        assert_eq!((upper, lower), ("Ubuntu-hosted", "application"));
+        let (_, upper, lower) = application_presentation("Lumi DM", false);
+        assert_eq!((upper, lower), ("Native Prime", "application"));
     }
 }
