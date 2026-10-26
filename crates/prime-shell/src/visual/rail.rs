@@ -412,163 +412,274 @@ pub(crate) fn paint_rail_surface(
     }
 }
 
-/// Ubuntu-hosted task rail, backed by verified Wayland toplevel state.
-/// Native Prime P1 rail rendering remains untouched.
+/// Full-height preview taskbar. Native Prime rail remains independently available.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PreviewRailHit {
+    Prime,
+    Running(usize),
+    PreviousWindows,
+    NextWindows,
+    Pinned(usize),
+    QuickControls,
+    Outside,
+}
+
+pub(crate) const PREVIEW_RAIL_WIDTH: u32 = 86;
+
+pub(crate) fn preview_rail_hit(
+    x: f64,
+    y: f64,
+    width: u32,
+    height: u32,
+    windows: usize,
+    offset: usize,
+    pins: usize,
+) -> PreviewRailHit {
+    let (x, y) = (x.floor() as i32, y.floor() as i32);
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+        return PreviewRailHit::Outside;
+    }
+    if y < 103 {
+        return PreviewRailHit::Prime;
+    }
+    if (125..=390).contains(&y) {
+        if y >= 145 {
+            let index = (y - 145) / 48;
+            if (0..5).contains(&index) && offset + (index as usize) < windows {
+                return PreviewRailHit::Running(offset + index as usize);
+            }
+        }
+    }
+    if (392..421).contains(&y) && windows > 5 {
+        return if x < width as i32 / 2 {
+            PreviewRailHit::PreviousWindows
+        } else {
+            PreviewRailHit::NextWindows
+        };
+    }
+    let pinned_start = if height > 740 {
+        440
+    } else {
+        height.saturating_sub(271) as i32
+    };
+    if y >= pinned_start + 25 && y < pinned_start + 25 + ((pins.min(3)) as i32 * 44) {
+        return PreviewRailHit::Pinned(((y - pinned_start - 25) / 44) as usize);
+    }
+    if y >= height as i32 - 139 {
+        return PreviewRailHit::QuickControls;
+    }
+    PreviewRailHit::Outside
+}
+
+fn window_icon<'a>(
+    window: &crate::core_client::PreviewWindow,
+    entries: &'a [prime_contracts::ApplicationEntry],
+    icons: &'a std::collections::HashMap<String, super::wallpaper::DecodedWallpaper>,
+) -> Option<&'a super::wallpaper::DecodedWallpaper> {
+    let id = window.app_id.to_lowercase();
+    let name = if id.contains("thunar") {
+        "files"
+    } else if id.contains("settings") {
+        "settings"
+    } else if id.contains("ptyxis") || id.contains("terminal") {
+        "terminal"
+    } else if id.contains("brave") {
+        "browser"
+    } else if id.contains("firefox") {
+        "firefox"
+    } else if id.contains("chrome") {
+        "chrome"
+    } else {
+        id.as_str()
+    };
+    entries
+        .iter()
+        .find(|entry| entry.display_name.to_lowercase().contains(name))
+        .and_then(|entry| icons.get(&entry.application_id.to_string()))
+}
+
 pub(crate) fn paint_preview_rail_surface(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
     theme: &Theme,
     running: &[crate::core_client::PreviewWindow],
-    pins: &[RailAction],
+    apps: &[prime_contracts::ApplicationEntry],
+    icons: &std::collections::HashMap<String, super::wallpaper::DecodedWallpaper>,
+    pins: &[String],
     running_offset: usize,
 ) {
     canvas.clear();
     let h = canvas.height as i32;
-    let panel = Rect::new(
+    let width = canvas.width;
+    let center = width as i32 / 2;
+    let body = Rect::new(
         1,
         1,
-        canvas.width.saturating_sub(2),
+        width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(panel, 23, theme.base_0.with_alpha(177));
-    canvas.stroke_rounded_rect(panel, 23, 1, theme.cyan.with_alpha(114));
-    let mark = Rect::new((canvas.width as i32 - 65) / 2, 16, 65, 65);
-    draw_prime_mark(canvas, mark, theme, false);
-    let title = "PRIME OS";
-    let title_style = TextStyle {
+    canvas.fill_rounded_rect(body, 25, theme.base_0.with_alpha(220));
+    canvas.stroke_rounded_rect(body, 25, 1, theme.cyan.with_alpha(157));
+    let logo = Rect::new(center - 27, 7, 54, 53);
+    draw_prime_mark(canvas, logo, theme, true);
+    let label = "Prime OS";
+    let style = TextStyle {
         size_px: 11,
         weight: FontWeight::Semibold,
     };
-    let tx = (canvas.width as i32 - text.measure(title, title_style).width as i32) / 2;
-    text.draw(canvas, (tx, 82), title, title_style, theme.text);
+    text.draw(
+        canvas,
+        (center - text.measure(label, style).width as i32 / 2, 66),
+        label,
+        style,
+        theme.text,
+    );
+    let heading = TextStyle {
+        size_px: 10,
+        weight: FontWeight::Semibold,
+    };
+    text.draw(canvas, (15, 118), "Running", heading, theme.text);
 
-    let label_style = TextStyle {
-        size_px: 11,
-        weight: FontWeight::Semibold,
-    };
-    text.draw(canvas, (16, 113), "RUNNING", label_style, theme.muted);
     for (index, window) in running.iter().skip(running_offset).take(5).enumerate() {
-        let y = 140 + index as i32 * 51;
-        let tile = Rect::new(13, y, canvas.width.saturating_sub(26), 46);
-        canvas.fill_rounded_rect(tile, 12, theme.panel.with_alpha(94));
-        let label = window.app_id.as_str();
-        let icon = if label.contains("thunar") || label.contains("file") {
-            Icon::Files
-        } else if label.contains("term") || label.contains("ptyxis") {
-            Icon::Terminal
-        } else if label.contains("chrome") || label.contains("brave") || label.contains("firefox") {
-            Icon::Browser
-        } else if label.contains("settings") {
-            Icon::Settings
-        } else {
-            Icon::Applications
+        let y = 145 + index as i32 * 48;
+        let tile = Rect::new(center - 25, y, 50, 45);
+        canvas.fill_rounded_rect(tile, 11, theme.panel.with_alpha(70));
+        let custom = {
+            let app_id = window.app_id.to_lowercase();
+            let alias = if app_id.contains("thunar") {
+                "Files"
+            } else if app_id.contains("settings") {
+                "Settings"
+            } else if app_id.contains("ptyxis") || app_id.contains("terminal") {
+                "Terminal"
+            } else {
+                ""
+            };
+            super::reference_icons::system_icon_for(alias)
         };
-        draw_icon(
-            canvas,
-            Rect::new(tile.x + 12, y + 7, 31, 31),
-            icon,
-            theme.cyan,
-        );
-        let shortened = if label.chars().count() > 10 {
-            format!("{}…", label.chars().take(9).collect::<String>())
+        if let Some(icon) = custom.or_else(|| window_icon(window, apps, icons)) {
+            super::wallpaper::paint_icon_image(
+                canvas,
+                icon,
+                Rect::new(center - 20, y + 4, 40, 37),
+                255,
+            );
         } else {
-            label.to_owned()
-        };
-        text.draw(
-            canvas,
-            (tile.x + 49, y + 14),
-            &shortened,
-            TextStyle {
-                size_px: 10,
-                weight: FontWeight::Regular,
-            },
-            theme.text,
-        );
+            draw_icon(
+                canvas,
+                Rect::new(center - 17, y + 6, 34, 34),
+                Icon::Applications,
+                theme.muted,
+            );
+        }
+        canvas.fill_rounded_rect(Rect::new(9, y + 11, 3, 23), 2, theme.cyan.with_alpha(215));
     }
     if running.len() > 5 {
         let y = 397;
-        let pager = Rect::new(18, y, canvas.width.saturating_sub(36), 27);
-        canvas.stroke_rounded_rect(pager, 10, 1, theme.violet.with_alpha(170));
-        let count = format!("{} / {}", running_offset + 1, running.len());
         text.draw(
             canvas,
-            (pager.x + 15, y + 6),
-            &count,
+            (18, y),
+            "‹",
             TextStyle {
-                size_px: 11,
-                weight: FontWeight::Regular,
-            },
-            theme.text,
-        );
-        draw_icon(
-            canvas,
-            Rect::new(pager.x + pager.width as i32 - 22, y + 4, 17, 17),
-            Icon::Chevron,
-            theme.cyan,
-        );
-    }
-    let pinned_y = if h > 620 { 456 } else { 414 };
-    text.draw(canvas, (16, pinned_y), "PINNED", label_style, theme.muted);
-    let app_pins = pins
-        .iter()
-        .filter(|p| matches!(p, RailAction::Application(_)))
-        .take(3)
-        .collect::<Vec<_>>();
-    for (index, action) in app_pins.iter().enumerate() {
-        let y = pinned_y + 30 + index as i32 * 47;
-        let tile = Rect::new(13, y, canvas.width.saturating_sub(26), 42);
-        canvas.fill_rounded_rect(tile, 11, theme.panel.with_alpha(78));
-        draw_icon(
-            canvas,
-            Rect::new(tile.x + 12, y + 6, 28, 28),
-            Icon::Applications,
-            theme.violet,
-        );
-        if let RailAction::Application(id) = action {
-            let shortened = if id.len() > 8 {
-                format!("{}…", &id[..7])
-            } else {
-                id.to_owned()
-            };
-            text.draw(
-                canvas,
-                (tile.x + 46, y + 14),
-                &shortened,
-                TextStyle {
-                    size_px: 10,
-                    weight: FontWeight::Regular,
-                },
-                theme.text,
-            );
-        }
-    }
-    let quick_y = h - 87;
-    if quick_y > pinned_y + 40 {
-        canvas.fill_rect(
-            Rect::new(16, quick_y - 12, canvas.width.saturating_sub(32), 1),
-            theme.text.with_alpha(42),
-        );
-        draw_icon(
-            canvas,
-            Rect::new(20, quick_y, 29, 29),
-            Icon::Network,
-            theme.cyan,
-        );
-        draw_icon(
-            canvas,
-            Rect::new(canvas.width as i32 - 48, quick_y, 29, 29),
-            Icon::Audio,
-            theme.cyan,
-        );
-        text.draw(
-            canvas,
-            (22, quick_y + 37),
-            "Quick Controls",
-            TextStyle {
-                size_px: 10,
+                size_px: 18,
                 weight: FontWeight::Semibold,
             },
-            theme.text,
+            theme.cyan,
+        );
+        text.draw(
+            canvas,
+            (center + 13, y),
+            "›",
+            TextStyle {
+                size_px: 18,
+                weight: FontWeight::Semibold,
+            },
+            theme.cyan,
+        );
+    }
+    let py = if h > 740 { 440 } else { h.saturating_sub(271) };
+    canvas.fill_rect(
+        Rect::new(15, py - 14, width.saturating_sub(30), 1),
+        theme.text.with_alpha(52),
+    );
+    text.draw(canvas, (16, py), "Pinned", heading, theme.text);
+    for (index, id) in pins.iter().take(3).enumerate() {
+        let y = py + 25 + index as i32 * 44;
+        let art = apps
+            .iter()
+            .find(|item| item.application_id.to_string() == *id)
+            .and_then(|_app| icons.get(id));
+        let rect = Rect::new(center - 21, y + 2, 42, 42);
+        if let Some(image) = art {
+            super::wallpaper::paint_icon_image(canvas, image, rect, 255);
+        } else {
+            draw_icon(canvas, rect, Icon::Applications, theme.muted);
+        }
+    }
+    let quick = h - 139;
+    canvas.fill_rect(
+        Rect::new(14, quick - 9, width.saturating_sub(28), 1),
+        theme.text.with_alpha(44),
+    );
+    for (row, (name, fallback)) in [
+        ("Wi-Fi", Icon::Network),
+        ("Bluetooth", Icon::Audio),
+        ("Performance", Icon::Settings),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let rect = Rect::new(center - 16, quick + row as i32 * 34, 32, 32);
+        if let Some(image) = super::reference_icons::quick_icon_for(name) {
+            super::reference_icons::paint_icon(canvas, image, rect, 255);
+        } else {
+            draw_icon(canvas, rect, *fallback, theme.cyan);
+        }
+    }
+    let clock = "Quick";
+    text.draw(
+        canvas,
+        (
+            center - text.measure(clock, heading).width as i32 / 2,
+            h - 30,
+        ),
+        clock,
+        heading,
+        theme.muted,
+    );
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    #[test]
+    fn five_window_slots_are_bounded_and_both_overflow_halves_reachable() {
+        let w = PREVIEW_RAIL_WIDTH;
+        assert_eq!(
+            preview_rail_hit(40.0, 24.0, w, 718, 9, 0, 3),
+            PreviewRailHit::Prime
+        );
+        for i in 0..5 {
+            assert_eq!(
+                preview_rail_hit(40.0, 150.0 + i as f64 * 48.0, w, 718, 9, 0, 3),
+                PreviewRailHit::Running(i)
+            );
+        }
+        assert_eq!(
+            preview_rail_hit(12.0, 405.0, w, 718, 9, 0, 3),
+            PreviewRailHit::PreviousWindows
+        );
+        assert_eq!(
+            preview_rail_hit(75.0, 405.0, w, 718, 9, 0, 3),
+            PreviewRailHit::NextWindows
+        );
+        assert_eq!(
+            preview_rail_hit(75.0, 405.0, w, 718, 5, 0, 3),
+            PreviewRailHit::Outside
+        );
+        assert_eq!(
+            preview_rail_hit(41.0, 683.0, w, 718, 9, 0, 3),
+            PreviewRailHit::QuickControls
         );
     }
 }

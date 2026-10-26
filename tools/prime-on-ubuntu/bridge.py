@@ -16,7 +16,8 @@ APPS = (
     ("Terminal", "org.gnome.Ptyxis.desktop"),
     ("Browser", "brave-browser.desktop"),
     ("Settings", "xfce-settings-manager.desktop"),
-    ("Text Editor", "org.gnome.TextEditor.desktop"),
+    ("Notes", "org.gnome.TextEditor.desktop"),
+    ("Gallery", "org.gnome.Loupe.desktop"),
     ("ChatGPT", "chatgpt.desktop"),
     ("Lumi DM", "com.lumi.dm.desktop"),
     ("Oracle", "com.thetechguy.oracle.desktop"),
@@ -73,6 +74,17 @@ def approved_apps():
             continue
         _label, desktop_id, digest = standard.pop(desktop)
         apps[str(uuid.uuid5(NAMESPACE, desktop_id))] = (name, desktop_id, digest)
+    # Named system surfaces are real routes or explicitly not yet implemented;
+    # they are never passed to gtk-launch as invented .desktop applications.
+    for label,backend in (
+        ("Machine","prime-system:machine"),
+        ("Store","prime-pending:store"),
+        ("Music","prime-pending:music"),
+        ("Chat","prime-pending:chat"),
+        ("Tools","prime-pending:tools"),
+    ):
+        key=str(uuid.uuid5(NAMESPACE,backend))
+        apps[key]=(label,backend,hashlib.sha256(backend.encode()).hexdigest())
     for name, desktop, digest in standard.values():
         # Never recursively launch this temporary nested Prime preview.
         if desktop == "prime-on-ubuntu-preview.desktop":
@@ -89,8 +101,11 @@ def project(apps):
             {"application_id": key, "display_name": name,
              "profile_revision": 1, "profile_digest": "ubuntu-desktop-sha256:" + digest,
              "execution_backend": "NATIVE", "compatibility": {"state": "RECOGNIZED", "evidence_refs": []},
-             "launch_ready": True, "limitations": ["Ubuntu app passthrough, not Prime Exec admission"]}
-            for key, (name, _, digest) in apps.items()
+             "launch_ready": not desktop.startswith("prime-pending:"),
+             "limitations": (["Prime application backend not implemented"]
+                if desktop.startswith("prime-pending:")
+                else ["Ubuntu preview dispatch only, not native Prime Exec admission"])}
+            for key, (name, desktop, digest) in apps.items()
         ],
         "limitations": [
             "Ubuntu preview only; no real Prime Host identity or generation",
@@ -98,6 +113,29 @@ def project(apps):
             "System power, storage, and Prime system capability control disabled",
         ],
     }
+
+def read_host_control_state():
+    def run(args, timeout=2):
+        try:
+            result=subprocess.run(args,timeout=timeout,text=True,
+                                  capture_output=True,check=False)
+            return result.stdout.strip() if result.returncode==0 else None
+        except (OSError,subprocess.SubprocessError):
+            return None
+    wifi=run(["/usr/bin/nmcli","-t","-f","WIFI","g"])
+    profile=run(["/usr/bin/powerprofilesctl","get"])
+    volume=run(["/usr/bin/wpctl","get-volume","@DEFAULT_AUDIO_SINK@"])
+    volume_percent=None
+    if volume:
+        import re
+        match=re.search(r"(0\.\d+|1(?:\.0+)?)",volume)
+        if match:
+            volume_percent=min(100,max(0,round(float(match.group(1))*100)))
+    bluetooth=run(["/usr/bin/bluetoothctl","show"])
+    return {"wifi":wifi,"bluetooth":bluetooth if bluetooth else None,
+            "performance":profile,"volume_percent":volume_percent,
+            "brightness_percent":None,
+            "focus":None,"dark_mode":None,"night_light":None}
 
 def ubuntu_host_preview():
     """Read-only, explicitly Ubuntu-owned status; never native Prime authority."""
@@ -130,6 +168,7 @@ def ubuntu_host_preview():
         "audio":audio_name,
         "storage_used_bytes":used,
         "storage_total_bytes":total,
+        "controls":read_host_control_state(),
         "limitations":["Read-only Ubuntu host summary; Prime native controls unavailable"],
     }
 
@@ -209,6 +248,26 @@ def dispatch(method, path, body, apps, launcher, files=None, file_opener=None):
         return 200, project(apps)
     if method == "GET" and path == "/v1/preview/host-status":
         return 200, ubuntu_host_preview()
+    if method == "POST" and path == "/v1/preview/open-system":
+        try:
+            target=json.loads(body)["target"]
+        except (ValueError,TypeError,KeyError):
+            return 400,{"error":"Invalid system shortcut"}
+        known={"machine":"computer:///","bin":"trash:///"}
+        if target=="projects":
+            folder=Path.home()/"Projects"
+            if not folder.is_dir():
+                return 404,{"error":"Projects folder does not exist"}
+            destination=str(folder)
+        elif target in known:
+            destination=known[target]
+        else:
+            return 403,{"error":"Unknown system shortcut"}
+        try:
+            (file_opener or launch_file)(destination)
+        except OSError:
+            return 503,{"error":"Ubuntu system shortcut dispatch failed"}
+        return 202,{"state":"DISPATCHED_TO_UBUNTU","preview_only":True}
     if method == "GET" and path == "/v1/preview/windows":
         return 200, {"schema":"prime.ubuntu.windows.v1","windows":live_windows()}
     if method == "POST" and path == "/v1/preview/focus":
@@ -242,8 +301,14 @@ def dispatch(method, path, body, apps, launcher, files=None, file_opener=None):
             return 400, {"error": "Invalid launch request"}
         if key not in apps:
             return 403, {"error": "Not on the explicit Ubuntu application allowlist"}
+        backend=apps[key][1]
+        if backend.startswith("prime-pending:"):
+            return 403,{"error":"Prime application backend not implemented"}
         try:
-            launcher(apps[key][1])
+            if backend=="prime-system:machine":
+                (file_opener or launch_file)("computer:///")
+            else:
+                launcher(backend)
         except OSError as exc:
             return 503, {"error": "Ubuntu dispatch failed", "detail": str(exc)}
         return 202, {"state": "DISPATCHED_TO_UBUNTU", "prime_native_acceptance": False}
@@ -363,7 +428,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", type=Path, required=True)
     args = parser.parse_args()
-    home = Path(os.environ["XDG_RUNTIME_DIR"]) / "prime-on-ubuntu"
+    subdir=os.environ.get("PRIME_PREVIEW_SUBDIR","prime-on-ubuntu")
+    if subdir not in ("prime-on-ubuntu","prime-visual-workspace"):
+        parser.error("Unsupported preview runtime name")
+    home = Path(os.environ["XDG_RUNTIME_DIR"]) / subdir
     if args.socket.parent != home:
         parser.error("Socket must live in the user runtime directory")
     home.mkdir(mode=0o700, exist_ok=True)

@@ -1,3 +1,4 @@
+use super::reference_icons;
 use super::wallpaper::{paint_icon_image, DecodedWallpaper};
 use crate::core_client::PreviewFileResult;
 use prime_contracts::ApplicationEntry;
@@ -45,7 +46,7 @@ pub(crate) struct PrimeLauncherLayout {
 impl PrimeLauncherLayout {
     pub(crate) fn new(width: u32, height: u32) -> Self {
         let cx = width as i32 / 2;
-        let cy = (height as f32 * 0.53) as i32;
+        let cy = (height as f32 * 0.445) as i32;
         let icon_size = if height < 720 { 74 } else { 84 };
         let stack_y = height.saturating_sub(106) as i32;
         Self {
@@ -59,11 +60,14 @@ impl PrimeLauncherLayout {
     }
 
     pub(crate) fn icon_rect(self, index: usize) -> Rect {
-        // Open-front orbit: left upper arc, crown, right side, and lower arc.
-        // The fixed 11 *positions* are a viewport into the complete app catalogue.
-        let angle = (160.0 + index.min(VISIBLE_APP_LIMIT - 1) as f32 * 22.0).to_radians();
-        let rx = (self.bounds.width as f32 * 0.25).min(340.0);
-        let ry = (self.bounds.height as f32 * 0.35).min(280.0);
+        // Measured around the approved 11-icon ring: lower-left through
+        // upper crown, down the right arc, then across the lower arc.
+        let degrees = [
+            151.0f32, 177.0, 203.0, 233.0, 268.0, 307.0, 337.0, 363.0, 393.0, 430.0, 466.0,
+        ];
+        let angle = degrees[index.min(VISIBLE_APP_LIMIT - 1)].to_radians();
+        let rx = (self.bounds.width as f32 * 0.251).min(340.0);
+        let ry = (self.bounds.height as f32 * 0.302).min(248.0);
         let cx = self.center.0 as f32 + angle.cos() * rx;
         let cy = self.center.1 as f32 + angle.sin() * ry;
         Rect::new(
@@ -257,8 +261,8 @@ pub(crate) fn paint_prime_launcher_surface(
     for segment in 0..90 {
         let a = (segment as f32 * 4.0).to_radians();
         let b = ((segment + 1) as f32 * 4.0).to_radians();
-        let rx = (layout.bounds.width as f32 * 0.25).min(340.0);
-        let ry = (layout.bounds.height as f32 * 0.35).min(280.0);
+        let rx = (layout.bounds.width as f32 * 0.251).min(340.0);
+        let ry = (layout.bounds.height as f32 * 0.302).min(248.0);
         let from = (cx + (rx * a.cos()) as i32, cy + (ry * a.sin()) as i32);
         let to = (cx + (rx * b.cos()) as i32, cy + (ry * b.sin()) as i32);
         canvas.line(from, to, 1, ring_color);
@@ -323,7 +327,12 @@ pub(crate) fn paint_prime_launcher_surface(
             } else {
                 None
             };
-            if let Some(image) = artwork {
+            let branded = if i < app_count {
+                reference_icons::system_icon_for(&view.applications[i].display_name)
+            } else {
+                None
+            };
+            if let Some(image) = branded.or(artwork) {
                 paint_icon_image(canvas, image, small_rect, alpha);
             } else {
                 draw_icon(canvas, small_rect, icon, theme.cyan.with_alpha(alpha));
@@ -385,35 +394,39 @@ pub(crate) fn paint_prime_launcher_surface(
         } else {
             theme.violet
         };
-        canvas.radial_glow(
-            box_rect.center_x() as f32,
-            box_rect.center_y() as f32,
-            box_rect.width as f32 * 0.78,
-            color.with_alpha(alpha / 4),
-        );
-        canvas.fill_rounded_rect(
-            box_rect,
-            18,
-            theme.base_1.with_alpha(alpha.saturating_sub(13)),
-        );
-        canvas.stroke_rounded_rect(box_rect, 18, 1, color.with_alpha(alpha));
-        let icon_size = box_rect.width.saturating_sub(12);
-        let icon_rect = Rect::new(
-            box_rect.x + (box_rect.width - icon_size) as i32 / 2,
-            box_rect.y + (box_rect.height - icon_size) as i32 / 2,
-            icon_size,
-            icon_size,
-        );
-        if let Some(image) = view.icons.get(&app.application_id.to_string()) {
-            paint_icon_image(canvas, image, icon_rect, alpha);
+        if let Some(image) = reference_icons::system_icon_for(&app.display_name) {
+            reference_icons::paint_icon(canvas, image, box_rect, alpha);
         } else {
-            // Explicit missing-art fallback only; never impersonate a real application's icon.
-            draw_icon(
-                canvas,
-                icon_rect,
-                Icon::Applications,
-                theme.muted.with_alpha(alpha),
+            canvas.radial_glow(
+                box_rect.center_x() as f32,
+                box_rect.center_y() as f32,
+                box_rect.width as f32 * 0.78,
+                color.with_alpha(alpha / 4),
             );
+            canvas.fill_rounded_rect(
+                box_rect,
+                18,
+                theme.base_1.with_alpha(alpha.saturating_sub(13)),
+            );
+            canvas.stroke_rounded_rect(box_rect, 18, 1, color.with_alpha(alpha));
+            let icon_size = box_rect.width.saturating_sub(12);
+            let icon_rect = Rect::new(
+                box_rect.x + (box_rect.width - icon_size) as i32 / 2,
+                box_rect.y + (box_rect.height - icon_size) as i32 / 2,
+                icon_size,
+                icon_size,
+            );
+            if let Some(image) = view.icons.get(&app.application_id.to_string()) {
+                paint_icon_image(canvas, image, icon_rect, alpha);
+            } else {
+                // Explicit missing-art fallback only; never impersonate a real application's icon.
+                draw_icon(
+                    canvas,
+                    icon_rect,
+                    Icon::Applications,
+                    theme.muted.with_alpha(alpha),
+                );
+            }
         }
         let label_box = Rect::new(
             box_rect.x - 28,

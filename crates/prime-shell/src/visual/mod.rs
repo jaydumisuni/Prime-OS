@@ -5,6 +5,7 @@ pub(crate) mod primitives;
 mod proof;
 pub(crate) mod quick_controls;
 pub(crate) mod rail;
+pub(crate) mod reference_icons;
 pub(crate) mod text;
 pub(crate) mod theme;
 pub(crate) mod wallpaper;
@@ -694,13 +695,13 @@ mod tests {
 
         let card =
             PrimeLauncherLayout::new(PRIME_LAUNCHER_WIDTH, PRIME_LAUNCHER_HEIGHT).icon_rect(0);
-        let y = card.center_y().round() as i32;
-        let edge = canvas.pixel(card.x, y).unwrap();
-        let inner = canvas.pixel(card.x + 1, y).unwrap();
-        assert!(
-            edge.g > inner.g + 20,
-            "selected card should use one crisp edge pixel, edge={edge:?} inner={inner:?}"
-        );
+        let center = canvas
+            .pixel(card.center_x() as i32, card.center_y() as i32)
+            .unwrap();
+        assert!(center.a > 120, "owner reference Files icon must be visible");
+        // The owner reference icon carries its own border; do not draw a second
+        // generic card edge beneath it.
+        assert!(super::reference_icons::system_icon_for("Files").is_some());
 
         // Orbit design has no extraneous instruction footer.
         assert_eq!(

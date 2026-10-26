@@ -113,7 +113,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     let rail_actions = rail_configuration.actions().to_vec();
-    let rail_height = visual::rail_height_for_items(rail_actions.len());
+    let preview = std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some();
+    let rail_height = if preview {
+        0
+    } else {
+        visual::rail_height_for_items(rail_actions.len())
+    };
 
     let wallpaper_config_path = config_root
         .as_ref()
@@ -176,11 +181,27 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(RAIL_NAMESPACE),
         None,
     );
-    rail.set_anchor(Anchor::TOP | Anchor::LEFT);
-    rail.set_margin(visual::RAIL_TOP_MARGIN, 0, 0, visual::RAIL_LEFT_MARGIN);
+    rail.set_anchor(if preview {
+        Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT
+    } else {
+        Anchor::TOP | Anchor::LEFT
+    });
+    rail.set_margin(
+        if preview { 0 } else { visual::RAIL_TOP_MARGIN },
+        0,
+        0,
+        if preview { 0 } else { visual::RAIL_LEFT_MARGIN },
+    );
     rail.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
     rail.set_exclusive_zone(0);
-    rail.set_size(visual::RAIL_WIDTH, rail_height);
+    rail.set_size(
+        if preview {
+            visual::rail::PREVIEW_RAIL_WIDTH
+        } else {
+            visual::RAIL_WIDTH
+        },
+        rail_height,
+    );
     rail.commit();
 
     let status_surface = compositor.create_surface(&queue_handle);
@@ -224,6 +245,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         rail_width: 0,
         rail_height,
         rail_actions,
+        running_windows: Vec::new(),
+        running_offset: 0,
+        running_last_poll: Instant::now() - Duration::from_secs(2),
         background_configured: false,
         background_width: 0,
         background_height: 0,
@@ -257,6 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     eprintln!("PRIME_SHELL_CORE_BRIDGE=typed_application_id;quick_controls=truthful_status;power=typed_double_confirm");
 
+    let mut workspace_visual_capture_opened = false;
     while !shell.exit {
         event_queue.flush()?;
         event_queue.dispatch_pending(&mut shell)?;
@@ -284,6 +309,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         shell.redraw_background_motion(Instant::now());
+        shell.refresh_preview_windows();
+        if !workspace_visual_capture_opened
+            && std::env::var_os("PRIME_VISUAL_CAPTURE_MENU").is_some()
+            && shell.background_configured
+            && shell.rail_configured
+            && shell.status_configured
+        {
+            workspace_visual_capture_opened = true;
+            if std::env::var("PRIME_VISUAL_CAPTURE_MENU").ok().as_deref() == Some("quick") {
+                shell.toggle_quick_controls(&queue_handle, InteractionSource::Keyboard);
+                eprintln!("PRIME_VISUAL_CAPTURE_ONLY=quick_opened;interactive_acceptance_unproven");
+            } else {
+                shell.toggle_prime_launcher(&queue_handle, InteractionSource::Keyboard);
+                eprintln!("PRIME_VISUAL_CAPTURE_ONLY=menu_opened;interactive_acceptance_unproven");
+            }
+        }
     }
 
     Ok(())
@@ -421,6 +462,9 @@ struct PrimeShell {
     rail_width: u32,
     rail_height: u32,
     rail_actions: Vec<visual::RailAction>,
+    running_windows: Vec<core_client::PreviewWindow>,
+    running_offset: usize,
+    running_last_poll: Instant,
     background_configured: bool,
     background_width: u32,
     background_height: u32,
@@ -462,6 +506,11 @@ fn draw_visual_surface<F>(
 where
     F: FnOnce(&mut [u8], u32, u32),
 {
+    if width == 0 || height == 0 {
+        return Err(
+            io::Error::other("Zero-sized Prime Shell surface rejected before wl_shm").into(),
+        );
+    }
     let buffer_width = i32::try_from(width)?;
     let buffer_height = i32::try_from(height)?;
     let stride = buffer_width
@@ -549,6 +598,78 @@ impl PrimeShell {
         }
     }
 
+    fn load_preview_application_artwork(&mut self) {
+        if !self.applications.is_empty() || std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return;
+        }
+        let Ok(projection) = self.core.applications() else {
+            return;
+        };
+        self.applications = projection.applications;
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let root = std::path::PathBuf::from(runtime)
+                .join(
+                    std::env::var("PRIME_PREVIEW_SUBDIR")
+                        .unwrap_or_else(|_| "prime-on-ubuntu".to_owned()),
+                )
+                .join("icons");
+            for app in &self.applications {
+                let id = app.application_id.to_string();
+                if let Ok(bytes) = std::fs::read(root.join(format!("{id}.png"))) {
+                    if bytes.len() > 3 * 1024 * 1024 {
+                        continue;
+                    }
+                    if let Ok(image) = visual::wallpaper::decode_png(&bytes) {
+                        if image.width <= 512 && image.height <= 512 {
+                            self.icon_cache.insert(id, image);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn refresh_preview_windows(&mut self) {
+        if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none()
+            || self.running_last_poll.elapsed() < Duration::from_millis(1100)
+        {
+            return;
+        }
+        self.running_last_poll = Instant::now();
+        self.load_preview_application_artwork();
+        let new = self.core.preview_windows().unwrap_or_default();
+        if new != self.running_windows {
+            self.running_windows = new;
+            self.running_offset = self
+                .running_offset
+                .min(self.running_windows.len().saturating_sub(5));
+            self.redraw_rail();
+        }
+    }
+
+    fn preview_pins(&self) -> Vec<String> {
+        let mut pins = self
+            .rail_actions
+            .iter()
+            .filter_map(|action| {
+                if let visual::RailAction::Application(id) = action {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .take(3)
+            .collect::<Vec<_>>();
+        if pins.is_empty() {
+            for name in ["Browser", "Files", "Terminal"] {
+                if let Some(app) = self.applications.iter().find(|a| a.display_name == name) {
+                    pins.push(app.application_id.to_string());
+                }
+            }
+        }
+        pins
+    }
+
     fn redraw_rail(&mut self) {
         if self.rail_width == 0 {
             return;
@@ -564,13 +685,32 @@ impl PrimeShell {
         } else {
             None
         };
+        let pins = self.preview_pins();
         let text = &mut self.text;
         let rail_actions = &self.rail_actions;
+        let running = self.running_windows.clone();
+        let running_offset = self.running_offset;
+        let apps = self.applications.clone();
+        let icons = &self.icon_cache;
+        let preview = std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some();
         if let Err(error) =
             draw_visual_surface(&mut self.pool, &layer, width, height, |bytes, w, h| {
                 let mut canvas = visual::Canvas::new(bytes, w, h)
                     .expect("Prime rail buffer must match configured dimensions");
-                visual::paint_rail_surface(&mut canvas, text, &theme, rail_actions, active);
+                if preview {
+                    visual::rail::paint_preview_rail_surface(
+                        &mut canvas,
+                        text,
+                        &theme,
+                        &running,
+                        &apps,
+                        icons,
+                        &pins,
+                        running_offset,
+                    );
+                } else {
+                    visual::paint_rail_surface(&mut canvas, text, &theme, rail_actions, active);
+                }
             })
         {
             eprintln!("prime-shell could not redraw rail: {error}");
@@ -678,8 +818,12 @@ impl PrimeShell {
                 self.icon_cache.clear();
                 if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
                     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
-                        let folder =
-                            std::path::PathBuf::from(runtime).join("prime-on-ubuntu/icons");
+                        let folder = std::path::PathBuf::from(runtime)
+                            .join(
+                                std::env::var("PRIME_PREVIEW_SUBDIR")
+                                    .unwrap_or_else(|_| "prime-on-ubuntu".to_owned()),
+                            )
+                            .join("icons");
                         for entry in &self.applications {
                             let id = entry.application_id.to_string();
                             let path = folder.join(format!("{id}.png"));
@@ -700,11 +844,24 @@ impl PrimeShell {
                     self.icon_cache.len(),
                     self.applications.len()
                 );
-                self.applications.sort_by_key(|entry| {
-                    preference
-                        .iter()
-                        .position(|name| entry.display_name.to_lowercase() == *name)
-                        .unwrap_or(usize::MAX)
+                if preference.is_empty() && std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
+                    preference = [
+                        "Music", "Files", "Terminal", "Machine", "Browser", "Settings", "Store",
+                        "Notes", "Gallery", "Chat", "Tools",
+                    ]
+                    .iter()
+                    .map(|label| label.to_lowercase())
+                    .collect();
+                }
+                let mut already_preferred = std::collections::HashSet::new();
+                self.applications.sort_by_cached_key(|entry| {
+                    let name = entry.display_name.to_lowercase();
+                    if let Some(rank) = preference.iter().position(|item| item == &name) {
+                        if already_preferred.insert(name) {
+                            return rank;
+                        }
+                    }
+                    usize::MAX
                 });
                 self.selected_application = self
                     .selected_application
@@ -794,7 +951,7 @@ impl PrimeShell {
                 queue_handle,
                 QUICK_CONTROLS_NAMESPACE,
                 Anchor::BOTTOM | Anchor::LEFT,
-                (0, 0, 23, 23),
+                (0, 0, 23, (visual::rail::PREVIEW_RAIL_WIDTH as i32 + 13)),
                 455.min(self.background_width.saturating_sub(46).max(1)),
                 424.min(self.background_height.saturating_sub(70).max(1)),
             )
@@ -1498,7 +1655,16 @@ impl LayerShellHandler for PrimeShell {
                 } else {
                     visual::paint_background_base(&mut canvas, &theme);
                 }
-                visual::paint_top_status_strip(&mut canvas, &mut self.text, &theme, status);
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+                    visual::paint_top_status_strip(&mut canvas, &mut self.text, &theme, status);
+                }
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
+                    visual::background::paint_preview_desktop_icons(
+                        &mut canvas,
+                        &mut self.text,
+                        &theme,
+                    );
+                }
             }
 
             if let Err(error) =
@@ -1526,32 +1692,16 @@ impl LayerShellHandler for PrimeShell {
             self.background_motion_frames = 0;
             self.background_configured = true;
         } else if layer.wl_surface() == self.rail.wl_surface() {
+            // layer-shell may send 0 for a dimension the client must choose.
+            // A full-height rail requests height=0; 0 is never a wl_shm buffer size.
             let height = NonZeroU32::new(configure.new_size.1)
                 .map(NonZeroU32::get)
-                .unwrap_or(self.rail_height);
-            let theme = self.theme;
-            let active = if self.prime_launcher.is_some() {
-                Some(visual::RailAction::Prime)
-            } else if self.quick_controls.is_some() {
-                Some(visual::RailAction::Status)
-            } else {
-                None
-            };
-            let text = &mut self.text;
-            let rail_actions = &self.rail_actions;
-            if let Err(error) =
-                draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
-                    let mut canvas = visual::Canvas::new(bytes, w, h)
-                        .expect("Prime rail buffer must match configured dimensions");
-                    visual::paint_rail_surface(&mut canvas, text, &theme, rail_actions, active);
-                })
-            {
-                eprintln!("prime-shell could not draw rail: {error}");
-                self.exit = true;
-                return;
-            }
+                .unwrap_or(self.rail_height.max(self.background_height).max(1));
             self.rail_width = width;
+            self.rail_height = height;
             self.rail_configured = true;
+            // Use the same actual preview painter on initial configure and refresh.
+            self.redraw_rail();
         } else if layer.wl_surface() == self.status_cluster.wl_surface() {
             let height = NonZeroU32::new(configure.new_size.1)
                 .map(NonZeroU32::get)
@@ -1901,7 +2051,25 @@ impl PointerHandler for PrimeShell {
                 continue;
             }
 
-            if &event.surface == self.status_cluster.wl_surface() {
+            if &event.surface == self.background.wl_surface()
+                && std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some()
+            {
+                if let Some(target) = visual::background::preview_desktop_hit(
+                    self.background_width,
+                    event.position.0,
+                    event.position.1,
+                ) {
+                    let name = match target {
+                        visual::background::PreviewDesktopAction::Machine => "machine",
+                        visual::background::PreviewDesktopAction::Projects => "projects",
+                        visual::background::PreviewDesktopAction::Bin => "bin",
+                    };
+                    match self.core.open_preview_system(name) {
+                        Ok(()) => eprintln!("PRIME_DESKTOP_OPEN_DISPATCHED={name}"),
+                        Err(error) => eprintln!("PRIME_DESKTOP_OPEN_DENIED={name}:{error}"),
+                    }
+                }
+            } else if &event.surface == self.status_cluster.wl_surface() {
                 let layout = visual::StatusClusterLayout::for_surface(
                     visual::STATUS_CLUSTER_WIDTH,
                     visual::STATUS_CLUSTER_HEIGHT,
@@ -1910,6 +2078,54 @@ impl PointerHandler for PrimeShell {
                     self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
                 }
             } else if &event.surface == self.rail.wl_surface() {
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_some() {
+                    let pins = self.preview_pins();
+                    let hit = visual::rail::preview_rail_hit(
+                        event.position.0,
+                        event.position.1,
+                        self.rail_width,
+                        self.rail_height,
+                        self.running_windows.len(),
+                        self.running_offset,
+                        pins.len(),
+                    );
+                    match hit {
+                        visual::rail::PreviewRailHit::Prime => {
+                            self.toggle_prime_launcher(queue_handle, InteractionSource::Pointer);
+                        }
+                        visual::rail::PreviewRailHit::Running(index) => {
+                            if let Some(window) = self.running_windows.get(index) {
+                                if let Err(error) = self.core.focus_preview_window(&window.app_id) {
+                                    eprintln!("PRIME_WINDOW_FOCUS_DENIED={error}");
+                                }
+                            }
+                        }
+                        visual::rail::PreviewRailHit::PreviousWindows => {
+                            self.running_offset = self.running_offset.saturating_sub(1);
+                            self.redraw_rail();
+                        }
+                        visual::rail::PreviewRailHit::NextWindows => {
+                            self.running_offset = (self.running_offset + 1)
+                                .min(self.running_windows.len().saturating_sub(5));
+                            self.redraw_rail();
+                        }
+                        visual::rail::PreviewRailHit::Pinned(index) => {
+                            if let Some(id) = pins.get(index) {
+                                match self.core.launch(id) {
+                                    Ok(()) => {
+                                        eprintln!("PRIME_PIN_DISPATCHED={id};ubuntu_preview=1")
+                                    }
+                                    Err(error) => eprintln!("PRIME_PIN_DENIED={error}"),
+                                }
+                            }
+                        }
+                        visual::rail::PreviewRailHit::QuickControls => {
+                            self.toggle_quick_controls(queue_handle, InteractionSource::Pointer);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 let layout = visual::RailLayout::for_surface(
                     self.rail_width.max(visual::RAIL_WIDTH),
                     self.rail_height,

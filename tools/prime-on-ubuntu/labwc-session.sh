@@ -6,7 +6,7 @@ if [[ -e "$PRIME_CORE_SOCKET" ]]; then
   echo "Preview socket unexpectedly occupied: $PRIME_CORE_SOCKET" >&2
   exit 2
 fi
-python3 "$PRIME_UBUNTU_TOOLS/bridge.py" --socket "$PRIME_CORE_SOCKET" >>"$XDG_RUNTIME_DIR/prime-on-ubuntu/bridge.log" 2>&1 &
+python3 "$PRIME_UBUNTU_TOOLS/bridge.py" --socket "$PRIME_CORE_SOCKET" >>"$(dirname "$PRIME_CORE_SOCKET")/bridge.log" 2>&1 &
 bridge=$!
 cleanup() {
   kill "$bridge" 2>/dev/null || true
@@ -24,4 +24,4 @@ done
 [[ -S "$PRIME_CORE_SOCKET" ]] || { echo "Bridge startup timeout" >&2; exit 3; }
 echo "PRIME_ON_UBUNTU_WAYLAND=$WAYLAND_DISPLAY;DISPLAY=$DISPLAY;bridge_child=1" >&2
 # Foreground Shell. Labwc -S exits on this process's exit.
-"$PRIME_SHELL_BIN" >>"$XDG_RUNTIME_DIR/prime-on-ubuntu/shell.log" 2>&1
+"$PRIME_SHELL_BIN" >>"$(dirname "$PRIME_CORE_SOCKET")/shell.log" 2>&1

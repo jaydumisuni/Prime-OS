@@ -1,5 +1,6 @@
 use prime_contracts::SystemPowerAction;
 
+use super::reference_icons;
 use super::{draw_icon, Argb, Canvas, FontWeight, Icon, Rect, TextStyle, TextSystem, Theme};
 
 pub(crate) const QUICK_WIDTH: u32 = 600;
@@ -173,6 +174,9 @@ fn paint_card(
     );
 }
 
+/// Six-card compact system control panel, matching the approved reference
+/// grouping. Connected values are read from Ubuntu; unsupported control
+/// mutations are not falsely presented as completed.
 fn paint_ubuntu_host_preview(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
@@ -180,96 +184,201 @@ fn paint_ubuntu_host_preview(
     view: QuickControlsView<'_>,
 ) {
     canvas.clear();
-    let alpha = (view.progress.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let alpha = (view.progress.clamp(0.0, 1.0) * 255.0) as u8;
+    let w = canvas.width as i32;
+    let h = canvas.height as i32;
     let body = Rect::new(
         1,
         1,
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 24, theme.base_0.with_alpha(alpha.saturating_sub(18)));
-    canvas.stroke_rounded_rect(body, 24, 1, theme.cyan.with_alpha(alpha / 2));
+    canvas.fill_rounded_rect(body, 22, theme.base_0.with_alpha(alpha.saturating_sub(16)));
+    canvas.stroke_rounded_rect(body, 22, 1, theme.cyan.with_alpha(alpha / 2));
+    let heading = TextStyle {
+        size_px: 15,
+        weight: FontWeight::Semibold,
+    };
+    let regular = TextStyle {
+        size_px: 11,
+        weight: FontWeight::Regular,
+    };
+    let small = TextStyle {
+        size_px: 10,
+        weight: FontWeight::Semibold,
+    };
     text.draw(
         canvas,
-        (21, 20),
-        "QUICK CONTROLS",
-        TextStyle {
-            size_px: 15,
-            weight: FontWeight::Semibold,
-        },
+        (21, 18),
+        "Quick Controls",
+        heading,
         theme.text.with_alpha(alpha),
     );
     text.draw(
         canvas,
-        (21, 45),
-        "UBUNTU HOST / PREVIEW",
-        TextStyle {
-            size_px: 11,
-            weight: FontWeight::Regular,
-        },
-        theme.cyan.with_alpha(alpha),
-    );
-    text.draw(
-        canvas,
-        (canvas.width as i32 - 85, 22),
+        (w - 58, 20),
         "Close",
-        TextStyle {
-            size_px: 12,
-            weight: FontWeight::Regular,
-        },
+        regular,
         theme.muted.with_alpha(alpha),
     );
-    for (i, line) in view.lines.iter().take(4).enumerate() {
-        let y = 80 + i as i32 * 75;
-        let card = Rect::new(18, y, canvas.width.saturating_sub(36), 64);
-        canvas.fill_rounded_rect(card, 14, theme.panel.with_alpha(alpha / 2));
-        canvas.stroke_rounded_rect(card, 14, 1, theme.text.with_alpha(alpha / 7));
-        let (label, value) = line.split_once(':').unwrap_or(("STATUS", line.as_str()));
-        let icon = match i {
-            0 => Icon::Network,
-            1 => Icon::Audio,
-            2 => Icon::Storage,
-            _ => Icon::Status,
-        };
-        draw_icon(
-            canvas,
-            Rect::new(29, y + 17, 26, 26),
-            icon,
-            theme.cyan.with_alpha(alpha),
+    let fetch = |needle: &str| -> String {
+        view.lines
+            .iter()
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                key.eq_ignore_ascii_case(needle)
+                    .then(|| value.trim().to_owned())
+            })
+            .unwrap_or_else(|| "Unavailable".to_owned())
+    };
+    let top_labels = ["Wi-Fi", "Bluetooth", "Performance"];
+    let top_values = [fetch("WIFI"), fetch("BLUETOOTH"), fetch("PERFORMANCE")];
+    let top_icons = [Icon::Network, Icon::Status, Icon::Health];
+    let margin = 20i32;
+    let gap = 12i32;
+    let tile_w = ((w - 2 * margin - 2 * gap) / 3).max(48);
+    let top_y = 56;
+    for i in 0..3 {
+        let x = margin + i as i32 * (tile_w + gap);
+        let card = Rect::new(x, top_y, tile_w as u32, 98);
+        canvas.fill_rounded_rect(card, 15, theme.panel.with_alpha(alpha / 2));
+        canvas.stroke_rounded_rect(
+            card,
+            15,
+            1,
+            if top_values[i].eq_ignore_ascii_case("unavailable") {
+                theme.muted.with_alpha(alpha / 3)
+            } else {
+                theme.cyan.with_alpha(alpha / 2)
+            },
         );
+        let icon_rect = Rect::new(x + tile_w / 2 - 19, top_y + 10, 38, 38);
+        if let Some(image) = reference_icons::quick_icon_for(top_labels[i]) {
+            reference_icons::paint_icon(
+                canvas,
+                image,
+                Rect::new(icon_rect.x - 1, icon_rect.y - 2, 40, 40),
+                alpha,
+            );
+        } else {
+            canvas.fill_rounded_rect(icon_rect, 10, theme.violet.with_alpha(alpha / 3));
+            draw_icon(
+                canvas,
+                Rect::new(icon_rect.x + 7, icon_rect.y + 7, 24, 24),
+                top_icons[i],
+                theme.cyan.with_alpha(alpha),
+            );
+        }
+        let lab = top_labels[i];
+        let lab_width = text.measure(lab, small).width as i32;
         text.draw(
             canvas,
-            (67, y + 7),
-            label.trim(),
+            (x + (tile_w - lab_width) / 2, top_y + 53),
+            lab,
+            small,
+            theme.text.with_alpha(alpha),
+        );
+        let val = top_values[i].as_str();
+        let compact = if val.len() > 13 { &val[..13] } else { val };
+        let value_width = text.measure(compact, regular).width as i32;
+        text.draw(
+            canvas,
+            (x + (tile_w - value_width) / 2, top_y + 73),
+            compact,
+            regular,
+            theme.muted.with_alpha(alpha),
+        );
+    }
+    let divider_y = 171;
+    canvas.fill_rect(
+        Rect::new(21, divider_y, canvas.width.saturating_sub(42), 1),
+        theme.text.with_alpha(27),
+    );
+    let volume = fetch("VOLUME");
+    for (index, (label, val)) in [("Brightness", fetch("BRIGHTNESS")), ("Volume", volume)]
+        .iter()
+        .enumerate()
+    {
+        let y = 186 + index as i32 * 57;
+        text.draw(
+            canvas,
+            (23, y),
+            label,
+            regular,
+            theme.text.with_alpha(alpha),
+        );
+        let track_x = 137;
+        let track_w = (w - track_x - 31).max(36);
+        let track = Rect::new(track_x, y + 4, track_w as u32, 6);
+        canvas.fill_rounded_rect(track, 3, theme.muted.with_alpha(91));
+        if let Some(percentage) = val.strip_suffix('%').and_then(|v| v.parse::<i32>().ok()) {
+            let progress = track_w * percentage.clamp(0, 100) / 100;
+            if progress > 0 {
+                canvas.fill_rounded_rect(
+                    Rect::new(track_x, y + 4, progress as u32, 6),
+                    3,
+                    theme.cyan.with_alpha(alpha),
+                );
+                canvas.fill_rounded_rect(
+                    Rect::new(track_x + progress - 6, y, 12, 14),
+                    7,
+                    theme.text.with_alpha(alpha),
+                );
+            }
+        }
+        text.draw(
+            canvas,
+            (23, y + 19),
+            val,
             TextStyle {
-                size_px: 11,
-                weight: FontWeight::Semibold,
+                size_px: 10,
+                weight: FontWeight::Regular,
             },
             theme.muted.with_alpha(alpha),
         );
-        let trimmed = value.trim();
-        let value_short = if trimmed.chars().count() > 43 {
-            format!("{}…", trimmed.chars().take(42).collect::<String>())
+    }
+    let bottom_y = 310.min(h - 106);
+    let bottom = [
+        ("Focus", Icon::Status),
+        ("Dark Mode", Icon::Settings),
+        ("Night Light", Icon::Health),
+    ];
+    for (i, (label, icon)) in bottom.iter().enumerate() {
+        let x = margin + i as i32 * (tile_w + gap);
+        let card = Rect::new(x, bottom_y, tile_w as u32, 64);
+        canvas.fill_rounded_rect(card, 12, theme.panel.with_alpha(alpha / 2));
+        canvas.stroke_rounded_rect(card, 12, 1, theme.cyan.with_alpha(alpha / 3));
+        if let Some(image) = reference_icons::quick_icon_for(label) {
+            reference_icons::paint_icon(
+                canvas,
+                image,
+                Rect::new(x + tile_w / 2 - 25, bottom_y + 1, 50, 50),
+                alpha,
+            );
         } else {
-            trimmed.to_owned()
-        };
+            draw_icon(
+                canvas,
+                Rect::new(x + tile_w / 2 - 13, bottom_y + 9, 26, 26),
+                *icon,
+                theme.cyan.with_alpha(alpha),
+            );
+        }
+        let width = text.measure(label, small).width as i32;
         text.draw(
             canvas,
-            (67, y + 29),
-            &value_short,
-            TextStyle {
-                size_px: 12,
-                weight: FontWeight::Regular,
-            },
+            (x + (tile_w - width) / 2, bottom_y + 43),
+            label,
+            small,
             theme.text.with_alpha(alpha),
         );
     }
+    let footer = "Ubuntu-backed preview • controls require provider approval";
     text.draw(
         canvas,
-        (22, canvas.height as i32 - 24),
-        "Host controls stay with Ubuntu until Prime is qualified",
+        (19, h - 21),
+        footer,
         TextStyle {
-            size_px: 10,
+            size_px: 9,
             weight: FontWeight::Regular,
         },
         theme.muted.with_alpha(alpha),

@@ -115,5 +115,42 @@ class FileSearchTests(unittest.TestCase):
         self.assertEqual(result["schema"],"prime.ubuntu.file-search.v1")
         self.assertEqual(result["results"],[file])
 
+
+class PrimeSystemAppContracts(unittest.TestCase):
+    def test_pending_prime_system_entries_cannot_launch(self):
+        name="Store"
+        desktop="prime-pending:store"
+        key=str(b.uuid.uuid5(b.NAMESPACE,desktop))
+        apps={key:(name,desktop,"abcd")}
+        projection=b.project(apps)
+        self.assertFalse(projection["applications"][0]["launch_ready"])
+        launched=[]
+        body=json.dumps({"schema":"prime.shell-launch-request.v1","application_id":key}).encode()
+        status,_=b.dispatch("POST","/v1/shell/launch",body,apps,launched.append)
+        self.assertEqual(status,403)
+        self.assertEqual(launched,[])
+
+    def test_machine_has_single_explicit_ubuntu_target(self):
+        desktop="prime-system:machine"
+        key=str(b.uuid.uuid5(b.NAMESPACE,desktop))
+        apps={key:("Machine",desktop,"abcd")}
+        launched=[]
+        opened=[]
+        body=json.dumps({"schema":"prime.shell-launch-request.v1","application_id":key}).encode()
+        status,_=b.dispatch("POST","/v1/shell/launch",body,apps,launched.append,None,opened.append)
+        self.assertEqual(status,202)
+        self.assertEqual(opened,["computer:///"])
+        self.assertEqual(launched,[])
+
+    def test_desktop_icon_dispatch_only_allows_known_actions(self):
+        opened=[]
+        status,_=b.dispatch("POST","/v1/preview/open-system",
+            json.dumps({"target":"bin"}).encode(),{},lambda _:None,None,opened.append)
+        self.assertEqual(status,202)
+        self.assertEqual(opened,["trash:///"])
+        invalid,_=b.dispatch("POST","/v1/preview/open-system",
+            json.dumps({"target":"../../etc/shadow"}).encode(),{},lambda _:None,None,opened.append)
+        self.assertEqual(invalid,403)
+
 if __name__ == "__main__":
     unittest.main()

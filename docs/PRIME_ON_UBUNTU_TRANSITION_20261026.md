@@ -125,3 +125,15 @@ animation, small-screen layout, and Ubuntu Quick Controls outside-click
 recovery need systematic interaction proof. Some browser/compositor checks
 still demonstrate dispatch rather than a complete application workflow.
 No new default desktop, native boot identity, installer, or ISO admission.
+
+## Prime mockup acceptance worktree (2026-10-26) — NOT ACCEPTED
+
+Branch ui/prime-mockup-acceptance-20261026 is an isolated visual QA worktree based on the existing Prime-on-Ubuntu branch. The owner reference is Prime OS Neon Space Desktop UI(1).png (1672x941). No native Prime, boot, GDM default, Ubuntu replacement or ISO change is authorized.
+
+Implementation: 18 cropped Prime-only system/Quick Controls PNG icon assets, embedded reference-art renderer, branded desktop shortcuts (Machine, Projects, Bin), named 11-slot app orbit with duplicate-name priority suppression and matching lower-arc positions, two incoming app stacks, installed XDG app icons retained for unrelated apps, real Ubuntu-only shortcut dispatches, disabled/fail-closed unfinished system apps, six Quick Controls visual tiles, isolated runtime-name preview, full-height rail first-paint and zero-height SHM correction.
+
+Evidence: Rust 76/76, bridge 13/13 and release build passed. Live app orbit screenshot is stored at /home/kratos/.oracle/proof/prime-workspace-menu-pass2-20261026/menu-corrected-order.png. The desktop screenshot is under prime-visual-workspace-v2-20261026. The screenshot-derived tiles have baked glows and require clean high-resolution re-authoring before pixel acceptance.
+
+Blocked: current system-03 waves are not the cosmic mockup wallpaper; central mark alignment differs. Quick Controls has not passed graphical or behavioral acceptance; a capture failed/turned black and the second nested Wayland session exited with a broken pipe. Carousel movement timing, window focus, real app launching, full taskbar overflow, desktop shortcut usability, click-away, search and multiple resolutions require complete interactive proof.
+
+ACCEPTANCE STATUS: FAILED / OPEN. Keep existing Prime preview, Ubuntu XFCE, recovery and rollback unchanged. No merge and no KRATOS default-desktop promotion until owner visual signoff and system-function proofs.

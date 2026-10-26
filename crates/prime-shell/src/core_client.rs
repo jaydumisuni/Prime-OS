@@ -77,6 +77,23 @@ impl CoreClient {
         Ok(())
     }
 
+    pub(crate) fn open_preview_system(&self, name: &str) -> Result<(), CoreClientError> {
+        if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+            return Err(CoreClientError::Protocol(
+                "Not an Ubuntu preview".to_owned(),
+            ));
+        }
+        if !matches!(name, "machine" | "projects" | "bin") {
+            return Err(CoreClientError::Protocol(
+                "Unknown Prime system shortcut".to_owned(),
+            ));
+        }
+        let payload = serde_json::to_vec(&serde_json::json!({"target":name}))
+            .map_err(|error| CoreClientError::Json(error.to_string()))?;
+        self.request("POST", "/v1/preview/open-system", Some(&payload))?;
+        Ok(())
+    }
+
     pub(crate) fn preview_windows(&self) -> Result<Vec<PreviewWindow>, CoreClientError> {
         if env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
             return Ok(Vec::new());
@@ -196,7 +213,28 @@ impl CoreClient {
             .get("storage_total_bytes")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let controls = value.get("controls");
+        let text_status = |key: &str, fallback: &str| -> String {
+            controls
+                .and_then(|obj| obj.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| fallback.to_owned())
+        };
+        let volume = controls
+            .and_then(|c| c.get("volume_percent"))
+            .and_then(Value::as_u64)
+            .map(|percent| format!("{percent}%"))
+            .unwrap_or_else(|| "Unavailable".to_owned());
         Ok(vec![
+            format!("WIFI: {}", text_status("wifi", "Unavailable")),
+            format!("BLUETOOTH: {}", text_status("bluetooth", "Unavailable")),
+            format!("PERFORMANCE: {}", text_status("performance", "Unavailable")),
+            format!("VOLUME: {volume}"),
+            "BRIGHTNESS: Unavailable on current monitor".to_owned(),
+            "FOCUS: Ubuntu managed".to_owned(),
+            "DARK MODE: Ubuntu managed".to_owned(),
+            "NIGHT LIGHT: Ubuntu managed".to_owned(),
             format!(
                 "NETWORK: {}",
                 if network.is_empty() {

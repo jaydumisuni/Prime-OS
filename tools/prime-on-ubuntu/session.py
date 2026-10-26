@@ -38,7 +38,10 @@ def main():
         sys.exit("labwc compositor is not installed")
     if not os.environ.get("DISPLAY") or not Path("/tmp/.X11-unix/X0").exists():
         sys.exit("Existing Ubuntu/XFCE X11 session required")
-    folder = Path(runtime) / "prime-on-ubuntu"
+    subdir=os.environ.get("PRIME_PREVIEW_SUBDIR","prime-on-ubuntu")
+    if subdir not in ("prime-on-ubuntu","prime-visual-workspace"):
+        sys.exit("Unsupported preview runtime name")
+    folder = Path(runtime) / subdir
     folder.mkdir(mode=0o700, exist_ok=True)
     os.chmod(folder, 0o700)
     sock = folder / "core.sock"

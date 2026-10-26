@@ -416,3 +416,72 @@ pub(crate) fn paint_status_cluster(
     let clock = local_clock_label();
     text.draw(canvas, (409, 12), &clock, style, theme.text.with_alpha(230));
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PreviewDesktopAction {
+    Machine,
+    Projects,
+    Bin,
+}
+
+pub(crate) fn preview_desktop_hit(width: u32, x: f64, y: f64) -> Option<PreviewDesktopAction> {
+    let x = x.floor() as i32;
+    let y = y.floor() as i32;
+    let base = width as i32 - 200;
+    for (pos, action) in [
+        ((base, 65, 82, 84), PreviewDesktopAction::Machine),
+        ((base + 104, 65, 82, 84), PreviewDesktopAction::Projects),
+        ((base + 104, 154, 82, 84), PreviewDesktopAction::Bin),
+    ] {
+        let (left, top, w, h) = pos;
+        if x >= left && x < left + w && y >= top && y < top + h {
+            return Some(action);
+        }
+    }
+    None
+}
+
+pub(crate) fn paint_preview_desktop_icons(
+    canvas: &mut Canvas<'_>,
+    text: &mut TextSystem,
+    theme: &Theme,
+) {
+    let w = canvas.width as i32;
+    let items = [
+        ("Machine", w - 200, 65, "machine"),
+        ("Projects", w - 96, 65, "projects"),
+        ("Bin", w - 96, 154, "bin"),
+    ];
+    for (label, x, y, name) in items {
+        if let Some(asset) = super::reference_icons::system_icon_for(name) {
+            // Icon artwork lifted from the approved mockup, not Ubuntu's Windows-like monitor/trash.
+            super::reference_icons::paint_icon(canvas, asset, Rect::new(x + 13, y, 55, 55), 255);
+        }
+        let style = TextStyle {
+            size_px: 12,
+            weight: FontWeight::Semibold,
+        };
+        let tw = text.measure(label, style).width as i32;
+        text.draw(canvas, (x + 41 - tw / 2, y + 58), label, style, theme.text);
+    }
+}
+#[cfg(test)]
+mod preview_desktop_tests {
+    use super::*;
+    #[test]
+    fn hit_regions_are_bounded() {
+        assert_eq!(
+            preview_desktop_hit(1366, 1200.0, 90.0),
+            Some(PreviewDesktopAction::Machine)
+        );
+        assert_eq!(
+            preview_desktop_hit(1366, 1302.0, 90.0),
+            Some(PreviewDesktopAction::Projects)
+        );
+        assert_eq!(
+            preview_desktop_hit(1366, 1302.0, 190.0),
+            Some(PreviewDesktopAction::Bin)
+        );
+        assert_eq!(preview_desktop_hit(1366, 800.0, 190.0), None);
+    }
+}
