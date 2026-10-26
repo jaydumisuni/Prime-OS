@@ -138,6 +138,43 @@ class PrimePtahPreparationTests(unittest.TestCase):
         c["health"]["observed_at"] = NOW.isoformat()
         self.assertTrue(check(p, c)["candidate_compatible"])
 
+    def test_rfc3339_observation_admission_and_nanosecond_custody(self):
+        # fromisoformat alone accepts these non-RFC3339 spellings.
+        for invalid in (
+            "20261025T194900Z",
+            "2026-W43-7T19:49:00Z",
+            "2026-10-25 19:49:00Z",
+            "2026-10-25T19:49:00+0000",
+            "2026-10-25T19:49:00.1234567890Z",
+        ):
+            with self.subTest(invalid=invalid):
+                p, c = fixtures()
+                c["health"]["observed_at"] = invalid
+                with self.assertRaisesRegex(SnapshotRejected, "RFC3339"):
+                    check(p, c)
+
+        p, c = fixtures()
+        c["health"]["observed_at"] = "2026-10-25T19:50:00.000000001Z"
+        with self.assertRaisesRegex(SnapshotRejected, "future"):
+            check(p, c)
+
+        for value in (
+            "2026-10-25T19:49:00.123456789Z",
+            "2026-10-25T21:49:00.123456789+02:00",
+        ):
+            with self.subTest(value=value):
+                p, c = fixtures()
+                c["health"]["observed_at"] = value
+                result = check(p, c)
+                self.assertEqual(
+                    result["observed_at"], "2026-10-25T19:49:00.123456789+00:00"
+                )
+                self.assertFalse(result["execution_authorized"])
+
+        p, c = fixtures()
+        c["health"]["observed_at"] = "2026-10-25t19:49:00z"
+        self.assertTrue(check(p, c)["candidate_compatible"])
+
     def test_exact_five_minute_freshness_boundary(self):
         p, c = fixtures()
         c["health"]["observed_at"] = "2026-10-25T19:45:00Z"
