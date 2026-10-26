@@ -1084,6 +1084,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable is shared-writable",
         ));
     }
+    // A set-user-ID or set-group-ID QEMU executable may acquire a different
+    // process identity at exec. W8 has no authority to launch a privileged
+    // VM process merely because the executable inode is otherwise trusted.
+    if qemu_meta.permissions().mode() & 0o6000 != 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable has privileged set-id mode",
+        ));
+    }
     // Hardlink aliases can expose an otherwise private QEMU inode to
     // unrelated host paths after executable admission.
     if qemu_meta.nlink() != 1 {
