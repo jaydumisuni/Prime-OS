@@ -112,7 +112,7 @@ impl ComponentTransactionState {
                                 0x00AD | 0x034F | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B
                                     | 0x200C | 0x200D | 0x2060..=0x206F | 0x2800 | 0x3164
                                     | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8
-                                    | 0xE0000..=0xE0FFF | 0xE0100..=0xE01EF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
+                                    | 0xE0000..=0xE0FFF | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
                     })
@@ -669,9 +669,25 @@ where
 {
     validate_component_manifest(manifest)?;
     validate_package_path(package_path)?;
+    // Pin the parent directory through the callback window. A caller can
+    // move the exact same package inode into a replacement directory, so
+    // checking only the leaf inode and digest does not establish path custody.
+    #[cfg(unix)]
+    let (pinned_parent, original_parent_metadata) = {
+        let parent = package_path
+            .parent()
+            .ok_or(ComponentAdmissionError::UnsafePackagePath)?;
+        let handle = fs::File::open(parent)?;
+        let metadata = handle.metadata()?;
+        (handle, metadata)
+    };
     let original_metadata = fs::metadata(package_path)?;
 
     let observed_digest = sha256_file(package_path)?;
+    #[cfg(unix)]
+    if !same_package_parent(package_path, &original_parent_metadata)? {
+        return Err(ComponentAdmissionError::UnsafePackagePath);
+    }
     if observed_digest != manifest.package_digest {
         return Err(ComponentAdmissionError::PackageDigestMismatch);
     }
@@ -728,6 +744,9 @@ where
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        if !same_package_parent(package_path, &original_parent_metadata)? {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
         if current_metadata.dev() != original_metadata.dev()
             || current_metadata.ino() != original_metadata.ino()
         {
@@ -738,6 +757,14 @@ where
         || sha256_file(package_path)? != observed_digest
     {
         return Err(ComponentAdmissionError::PackageDigestMismatch);
+    }
+    #[cfg(unix)]
+    {
+        // Keep the original parent inode pinned until the final readback.
+        let _ = &pinned_parent;
+        if !same_package_parent(package_path, &original_parent_metadata)? {
+            return Err(ComponentAdmissionError::UnsafePackagePath);
+        }
     }
 
     if !manifest.base_system_requirements.is_empty() {
@@ -853,8 +880,24 @@ fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
 }
 
 #[cfg(unix)]
-fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+fn same_package_parent(
+    package_path: &Path,
+    pinned_parent: &fs::Metadata,
+) -> Result<bool, ComponentAdmissionError> {
     use std::os::unix::fs::MetadataExt;
+
+    let Some(parent) = package_path.parent() else {
+        return Ok(false);
+    };
+    let named_parent = fs::symlink_metadata(parent)?;
+    Ok(named_parent.is_dir()
+        && named_parent.dev() == pinned_parent.dev()
+        && named_parent.ino() == pinned_parent.ino())
+}
+
+#[cfg(unix)]
+fn stable_package_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     before.is_file()
         && after.is_file()
         && before.permissions().mode() & 0o022 == 0
@@ -1059,30 +1102,30 @@ mod tests {
         let item = manifest(bytes);
         for mode in [0o660, 0o606, 0o666] {
             fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
-            assert!(matches!(
-                verify_offline_component_package(
-                    &path,
-                    &item,
-                    &context(&[]),
-                    |_| true,
-                    |_, _| true,
+            assert!(
+                matches!(
+                    verify_offline_component_package(
+                        &path,
+                        &item,
+                        &context(&[]),
+                        |_| true,
+                        |_, _| true,
+                    ),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
                 ),
-                Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "peer-writable package mode {mode:o} was admitted");
-            assert!(matches!(
-                sha256_file(&path),
-                Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "direct hashing admitted peer-writable mode {mode:o}");
+                "peer-writable package mode {mode:o} was admitted"
+            );
+            assert!(
+                matches!(
+                    sha256_file(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "direct hashing admitted peer-writable mode {mode:o}"
+            );
         }
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         assert!(matches!(
-            verify_offline_component_package(
-                &path,
-                &item,
-                &context(&[]),
-                |_| true,
-                |_, _| true,
-            ),
+            verify_offline_component_package(&path, &item, &context(&[]), |_| true, |_, _| true,),
             Ok(ComponentAdmissionOutcome::Ready(_))
         ));
     }
@@ -2289,6 +2332,42 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn offline_package_rejects_parent_swap_even_when_leaf_inode_and_digest_match() {
+        use std::os::unix::fs::MetadataExt;
+
+        let bytes = b"p2-parent-custody";
+        let (dir, path) = write_package(bytes);
+        let item = manifest(bytes);
+        let parent = dir.path().to_path_buf();
+        let replacement = parent.with_extension("replacement");
+        let previous = parent.with_extension("previous");
+        let original_inode = fs::metadata(&path).unwrap().ino();
+        fs::create_dir(&replacement).unwrap();
+
+        let result = verify_offline_component_package(
+            &path,
+            &item,
+            &context(&[]),
+            |_| {
+                // Move the original inode, not a copy, into a replacement
+                // parent. A leaf-only identity/digest check still passes.
+                fs::rename(&path, replacement.join("component.primepkg")).unwrap();
+                fs::rename(&parent, &previous).unwrap();
+                fs::rename(&replacement, &parent).unwrap();
+                true
+            },
+            |_, _| true,
+        );
+        assert_eq!(fs::metadata(&path).unwrap().ino(), original_inode);
+        fs::remove_dir(&previous).unwrap();
+        assert!(matches!(
+            result,
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_path_rejects_symlinked_parent_and_dotdot_alias() {
         use std::os::unix::fs::symlink;
 
@@ -2597,7 +2676,8 @@ mod tests {
         candidate.dependencies.clear();
         assert!(matches!(
             plan_component_transaction_checked(&package, &installed, &manifests, &candidate)
-                .unwrap().kind,
+                .unwrap()
+                .kind,
             ComponentTransactionKind::Update { .. }
         ));
         for field in 0..4 {
