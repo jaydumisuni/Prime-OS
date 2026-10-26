@@ -151,3 +151,33 @@ Visual inspection confirms six icons/labels and two sliders, all unclipped.
 This is **only an offline painter proof**, NOT live network, Bluetooth,
 performance, brightness or power integrations; the compositor's earlier
 black capture/exit and outside-click behavior remain live acceptance gates.
+
+### Retry checkpoint — owner comparison is a hard gate
+
+This workspace is NOT visually accepted. The owner-supplied file named
+Prime OS Neon Space Desktop UI(1).png (1672x941) is the primary authority.
+Only its first 581 pixels in height are the desktop reference; the
+lower panels explain interactions and must not become wallpaper. The
+workspace uses the system-03 wave wallpaper and does NOT match the
+cosmic terrain, central logo position or reference rail. Do not pretend
+otherwise with a baked screenshot or a click-overlay.
+
+Evidence recovered:
+- Actual isolated menu screenshot at
+  /home/kratos/.oracle/proof/prime-workspace-menu-pass2-20261026/menu-corrected-order.png.
+- Actual six-control compositor screenshot at
+  /home/kratos/.oracle/proof/prime-workspace-quick-live-20261026/quick-live.png.
+- Native Rust 77 of 77; Python bridge 13 of 13 pass before this checkpoint.
+- The bridge's optional Bluetooth probe could block 2 seconds, exhausting
+  Prime's 2-second socket timeout and making ALL Quick Control statuses
+  appear unavailable. Adapter detection now skips absent devices and the
+  probe is capped to 0.25 seconds. Reverify the live status after this fix.
+- A separate Python visual comparison tool exists under
+  tools/prime-on-ubuntu/visual_acceptance.py. It requires the ORIGINAL
+  owner reference file and a genuine live compositor capture. Its output
+  is always unaccepted until manual review: numbers alone do not approve.
+
+Outstanding: a clean layered cosmic background, precise orbit/rail/
+shortcut geometry, working Quick Control interactions and status, exact
+app carousel motion, responsive checks and window workflows.
+NO MERGE. NO KRATOS DEFAULT DESKTOP CHANGE. NO PRIME IMAGE ADMISSION.

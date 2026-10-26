@@ -131,8 +131,18 @@ def read_host_control_state():
         match=re.search(r"(0\.\d+|1(?:\.0+)?)",volume)
         if match:
             volume_percent=min(100,max(0,round(float(match.group(1))*100)))
-    bluetooth=run(["/usr/bin/bluetoothctl","show"])
-    return {"wifi":wifi,"bluetooth":bluetooth if bluetooth else None,
+    # bluetoothctl may hang for two seconds when BlueZ is absent. Never let an
+    # optional panel probe exceed Prime Shell's 2 s IPC timeout.
+    bluetooth=None
+    adapter_dir=Path("/sys/class/bluetooth")
+    if adapter_dir.is_dir() and any(adapter_dir.iterdir()):
+        status=run(["/usr/bin/bluetoothctl","show"],timeout=0.25)
+        if status:
+            for line in status.splitlines():
+                if "Powered:" in line:
+                    bluetooth="On" if line.split("Powered:",1)[1].strip().lower()=="yes" else "Off"
+                    break
+    return {"wifi":wifi,"bluetooth":bluetooth,
             "performance":profile,"volume_percent":volume_percent,
             "brightness_percent":None,
             "focus":None,"dark_mode":None,"night_light":None}
