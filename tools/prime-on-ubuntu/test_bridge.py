@@ -152,5 +152,24 @@ class PrimeSystemAppContracts(unittest.TestCase):
             json.dumps({"target":"../../etc/shadow"}).encode(),{},lambda _:None,None,opened.append)
         self.assertEqual(invalid,403)
 
+
+class PreviewTerminalDispatchTests(unittest.TestCase):
+    def test_ptyxis_singleton_is_isolated_into_natively_supported_standalone(self):
+        actual=b.desktop_dispatch_argv("org.gnome.Ptyxis.desktop")
+        self.assertIn(actual[0],("/usr/bin/ptyxis","/usr/bin/gtk-launch"))
+        if actual[0] == "/usr/bin/ptyxis":
+            self.assertEqual(actual[1:],["--standalone"])
+
+    def test_arbitrary_application_does_not_gain_special_arguments(self):
+        self.assertEqual(b.desktop_dispatch_argv("thunar.desktop"),
+                         ["/usr/bin/gtk-launch","thunar.desktop"])
+
+
+class DesktopLabelTests(unittest.TestCase):
+    def test_distinct_installed_file_managers_keep_distinct_names(self):
+        self.assertEqual(b.disambiguate_desktop_label("Files","org.gnome.Nautilus.desktop"),"GNOME Files")
+        self.assertEqual(b.disambiguate_desktop_label("Settings","org.gnome.Settings.desktop"),"GNOME Settings")
+        self.assertEqual(b.disambiguate_desktop_label("Files","thunar.desktop"),"Files")
+
 if __name__ == "__main__":
     unittest.main()

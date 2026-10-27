@@ -64,6 +64,15 @@ def discover_desktops(directories, *, cap=2048):
     return known
 
 
+def disambiguate_desktop_label(name, desktop_id):
+    """Keep distinct installed providers identifiable without fake duplicate rows."""
+    overrides={
+        "org.gnome.Nautilus.desktop":"GNOME Files",
+        "org.gnome.Settings.desktop":"GNOME Settings",
+    }
+    return overrides.get(desktop_id,name)
+
+
 def approved_apps():
     user_apps = Path.home() / ".local/share/applications"
     standard = discover_desktops([user_apps, Path("/usr/local/share/applications"), APP_DIR])
@@ -89,7 +98,9 @@ def approved_apps():
         # Never recursively launch this temporary nested Prime preview.
         if desktop == "prime-on-ubuntu-preview.desktop":
             continue
-        apps[str(uuid.uuid5(NAMESPACE, desktop))] = (name, desktop, digest)
+        apps[str(uuid.uuid5(NAMESPACE, desktop))] = (
+            disambiguate_desktop_label(name,desktop), desktop, digest
+        )
     return apps
 
 def project(apps):
@@ -361,8 +372,20 @@ class Handler(socketserver.StreamRequestHandler):
         header = "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % (status, reason, len(wire))
         self.wfile.write(header.encode() + wire)
 
+def desktop_dispatch_argv(desktop_id):
+    # Ptyxis is a D-Bus-activated singleton by default. In nested Prime
+    # preview sessions its old owner can be the XFCE parent, which causes
+    # a successful dispatch with NO window in Prime. The app's documented
+    # --standalone flag creates a native separate instance under this
+    # preview's WAYLAND_DISPLAY without changing the host default app.
+    if desktop_id == "org.gnome.Ptyxis.desktop" and Path("/usr/bin/ptyxis").is_file():
+        return ["/usr/bin/ptyxis", "--standalone"]
+    return ["/usr/bin/gtk-launch", desktop_id]
+
+
 def launch(desktop_id):
-    subprocess.Popen(["/usr/bin/gtk-launch", desktop_id], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    subprocess.Popen(desktop_dispatch_argv(desktop_id), stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 def launch_file(path):
     subprocess.Popen(["/usr/bin/gio","open",path],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)

@@ -218,6 +218,38 @@ wallpaper texture/illumination, real installed browser vs reference icon,
 some stack/rail visual detail, full Quick Controls function proof and
 other resolution behaviors. These are acceptance blockers.
 
+
+### Same-checkpoint correction: high-resolution emblem and live UI interaction
+
+The earlier 144x131 source was temporary. The owner reference's 390x355
+Menu-closed emblem is now used as separate artwork with verified WebP hash:
+2ed192ce8c4c31b2daa0ae97c60c1c99bb431a7977667875d09f28e5b29abb28.
+Actual nested screenshot:
+~/.oracle/proof/prime-highres-emblem-r8-20261027/menu.png.
+The background no longer impersonates the live search or app controls.
+
+Native interaction evidence:
+- Right stack click rotates eleven visible applications.
+- Left stack click reverses to exact initial app orbit (0.0 RMS in a
+  375x433 pixels comparison region).
+- Typing 'file' finds actual apps and locally indexed filenames.
+- Click-away closes both launcher and Quick Controls.
+- Two real Ptyxis compositor windows appeared in the running-app rail.
+- Ptyxis desktop launching now requests its documented --standalone mode
+  in this isolated preview instead of reusing an existing XFCE singleton.
+- Machine/Projects/Bin shortcuts use the mockup's scaled positions.
+
+Latest tests: 78/78 Rust; 16/16 Python bridge; release build and diff
+checks pass. Pixel difference remains nonzero at [21.16,23.24,37.77]
+(RGB means). Evidence: ~/.oracle/proof/prime-gate-highres-r8-20261027/
+visual-gate.json. 100% per-pixel equivalence is NOT established.
+
+Remaining: exact reference scene reconstruction, some clipped/glowing
+icon details and native-vs-flattened control raster differences, and
+full end-to-end proof for unsupported host-control operations.
+Pixel acceptance FAILED; no merge, default desktop promotion, or image
+admission is authorized.
+
 **Freeze:** Do not merge this review branch, switch KRATOS's default XFCE
 desktop, overwrite the prior Prime preview, or admit an OS image/ISO.
 Visual and interaction gates remain open.

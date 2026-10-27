@@ -35,8 +35,14 @@ for _ in range(530):
 mask=Image.new("L",(w,h),0)
 d=ImageDraw.Draw(mask)
 d.ellipse((317,-2,1347,588),fill=255)
-# Keep the approved reference's central luminous blue wallpaper mark visible.
-d.ellipse((665,136,999,444),fill=0)
+# Force-remove every flattened launcher search/text fragment in the central
+# reference; the clean Menu-closed emblem is composited as a separate asset.
+# A soft mask edge preserves the surrounding star field.
+d.rounded_rectangle((548,75,1118,545),radius=70,fill=255)
+# The flattened top mockup has app labels and search glass across the emblem.
+# Remove its entire center; the logo is restored below from the separate
+# owner-supplied Menu-closed reference art, never from placeholder geometry.
+d.ellipse((665,136,999,444),fill=255)
 d.rectangle((0,0,95,581),fill=255)
 d.rectangle((1472,0,1671,232),fill=255)
 d.rectangle((168,449,454,581),fill=255)
@@ -46,6 +52,23 @@ d.rectangle((1116,311,1306,550),fill=255)
 d.rectangle((657,308,1019,354),fill=255)
 mask=mask.filter(ImageFilter.MaxFilter(19)).filter(ImageFilter.GaussianBlur(13))
 strength=np.asarray(mask).astype(np.float32)/255.0
+# The flattened mockup embeds text *inside* its central logo preservation
+# ellipse. Remove those remnants without erasing the luminous A/ring.
+# Apply full alpha to actual unwanted glyph/search interiors. The broadened
+# outline remains feathered by the original mask above.
+strong=Image.new("L",(w,h),0)
+glyphs=ImageDraw.Draw(strong)
+for bounds in [
+    (755,111,915,173),   # flattened Browser name, NOT the logo tip
+    (642,171,745,225),   # Machine name near left ring
+    (931,166,1056,226),  # Settings name near right ring
+    (644,299,1032,362),  # duplicate search glass and lettering
+    (613,453,762,504),   # menu labels near lower-left ring
+    (878,451,1075,512),  # menu labels near lower-right ring
+]:
+    glyphs.rectangle(bounds,fill=255)
+strong=strong.filter(ImageFilter.GaussianBlur(3))
+strength=np.maximum(strength,np.asarray(strong).astype(np.float32)/255.0)
 rgb=np.clip(data*(1-strength[:,:,None])+base*strength[:,:,None],0,255).astype(np.uint8)
 image=Image.fromarray(rgb).convert("RGBA")
 # Do not redraw or replace the central artwork embedded in the approved
@@ -55,6 +78,31 @@ image=Image.fromarray(rgb).convert("RGBA")
 scale=1366 / 1672
 upper_height=round(582*scale)
 upper=image.convert("RGB").resize((1366,upper_height),Image.Resampling.LANCZOS)
+emblem_path=ASSETS/"reference-icons/clean_menu_closed_emblem_highres.webp"
+emblem=Image.open(emblem_path).convert("RGBA")
+assert emblem.size==(390,355),f"Unexpected emblem asset: {emblem.size}"
+emblem=emblem.resize((300,273),Image.Resampling.LANCZOS)
+# A source panel is not a square wallpaper tile. Fade its peripheral
+# background away, keeping the bright central mark and rings, and sharpen
+# the inherited mini-panel artwork without sharpening the transparency.
+from PIL import ImageEnhance
+emblem_rgb=emblem.convert("RGB").filter(
+    ImageFilter.UnsharpMask(radius=1.1, percent=165, threshold=2)
+)
+emblem_alpha=np.asarray(emblem.getchannel("A"),dtype=np.float32)
+eh,ew=emblem_alpha.shape
+ey,ex=np.mgrid[0:eh,0:ew]
+radial=np.sqrt(((ex-ew/2)/(ew/2))**2+((ey-eh/2)/(eh/2))**2)
+feather=np.clip((1.02-radial)/.24,0,1)
+feather=feather*feather*(3-2*feather)
+adjusted=np.clip(emblem_alpha*feather,0,255).astype(np.uint8)
+emblem_rgb.putalpha(Image.fromarray(adjusted,"L"))
+emblem=emblem_rgb
+# The owner's wallpaper mark remains embedded in the *wallpaper* layer.
+# Prime's real launcher/search is a separate Shell overlay.
+layer=upper.convert("RGBA")
+layer.alpha_composite(emblem,(533,105))
+upper=layer.convert("RGB")
 lower_height=718-upper_height
 ground=Image.open(ASSETS/"reference-icons/ground_extension.webp").convert("RGB")
 if ground.size != (1366,lower_height):

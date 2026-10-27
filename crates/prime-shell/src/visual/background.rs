@@ -429,9 +429,9 @@ pub(crate) fn preview_desktop_hit(width: u32, x: f64, y: f64) -> Option<PreviewD
     let y = y.floor() as i32;
     let base = width as i32 - 200;
     for (pos, action) in [
-        ((base, 65, 82, 84), PreviewDesktopAction::Machine),
-        ((base + 104, 65, 82, 84), PreviewDesktopAction::Projects),
-        ((base + 104, 154, 82, 84), PreviewDesktopAction::Bin),
+        ((base + 15, 14, 82, 84), PreviewDesktopAction::Machine),
+        ((base + 93, 14, 82, 84), PreviewDesktopAction::Projects),
+        ((base + 93, 102, 82, 84), PreviewDesktopAction::Bin),
     ] {
         let (left, top, w, h) = pos;
         if x >= left && x < left + w && y >= top && y < top + h {
@@ -448,9 +448,9 @@ pub(crate) fn paint_preview_desktop_icons(
 ) {
     let w = canvas.width as i32;
     let items = [
-        ("Machine", w - 200, 65, "machine"),
-        ("Projects", w - 96, 65, "projects"),
-        ("Bin", w - 96, 154, "bin"),
+        ("Machine", w - 185, 14, "machine"),
+        ("Projects", w - 107, 14, "projects"),
+        ("Bin", w - 107, 102, "bin"),
     ];
     for (label, x, y, name) in items {
         if let Some(asset) = super::reference_icons::system_icon_for(name) {
@@ -471,15 +471,15 @@ mod preview_desktop_tests {
     #[test]
     fn hit_regions_are_bounded() {
         assert_eq!(
-            preview_desktop_hit(1366, 1200.0, 90.0),
+            preview_desktop_hit(1366, 1205.0, 45.0),
             Some(PreviewDesktopAction::Machine)
         );
         assert_eq!(
-            preview_desktop_hit(1366, 1302.0, 90.0),
+            preview_desktop_hit(1366, 1302.0, 45.0),
             Some(PreviewDesktopAction::Projects)
         );
         assert_eq!(
-            preview_desktop_hit(1366, 1302.0, 190.0),
+            preview_desktop_hit(1366, 1302.0, 142.0),
             Some(PreviewDesktopAction::Bin)
         );
         assert_eq!(preview_desktop_hit(1366, 800.0, 190.0), None);
