@@ -1934,6 +1934,51 @@ fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
         )
         .is_err());
     }
+
+    // Exercise the JSON entry point, not just the lower-level validator:
+    // decoding a valid but unauthorized hello must never bypass identity custody.
+    let mismatches = [
+        (
+            "guest_id",
+            GuestAgentHello {
+                guest_id: "different-guest".to_owned(),
+                ..hello.clone()
+            },
+        ),
+        (
+            "guest_revision",
+            GuestAgentHello {
+                guest_revision: hello.guest_revision + 1,
+                ..hello.clone()
+            },
+        ),
+        (
+            "guest_sha256",
+            GuestAgentHello {
+                guest_sha256: "b".repeat(64),
+                ..hello.clone()
+            },
+        ),
+        (
+            "workload_arch",
+            GuestAgentHello {
+                workload_arch: "x86".to_owned(),
+                ..hello.clone()
+            },
+        ),
+    ];
+    for (field, mismatched) in mismatches {
+        let payload = serde_json::to_vec(&mismatched).unwrap();
+        let error = parse_guest_agent_hello_json(
+            &payload,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("mismatch"), "{field}: {error}");
+    }
 }
 
 #[test]
