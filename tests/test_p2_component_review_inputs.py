@@ -946,3 +946,44 @@ def test_rejects_late_git_control_lock_after_final_probe(
     with pytest.raises(module.ReviewInputError, match="pending Git control update"):
         module.build_manifest(root, head)
     assert injected and head_reads == 2
+
+
+
+def test_rejects_late_linked_worktree_commondir_redirection(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A post-probe commondir redirect must invalidate exact-head custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    alternate = tmp_path / "alternate"
+    subprocess.check_call(
+        ["git", "clone", "-q", "--no-hardlinks", str(root), str(alternate)]
+    )
+    assert git(alternate, "rev-parse", "HEAD") == head
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(str(alternate / ".git") + "\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|HEAD.*changed"):
+            module.build_manifest(linked, head)
+        assert injected and head_reads == 2
+    finally:
+        commondir.write_bytes(original)

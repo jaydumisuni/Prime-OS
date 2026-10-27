@@ -198,6 +198,24 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     pointer = capture_gitdir_pointer_epoch(root, head_path)
     if pointer is not None:
         files.append(pointer)
+        # A linked worktree's gitdir points at its private HEAD, but the
+        # separate commondir file controls which repository supplies branch
+        # refs and objects. Pin that second pointer as part of the same epoch.
+        commondir = head_path.parent / "commondir"
+        common_epoch, common_digest, common_data = control_file_epoch(commondir, 4096)
+        common_line = common_data.rstrip(b"\n")
+        if (not common_line or b"\n" in common_line
+                or b"\r" in common_line or b"\x00" in common_line):
+            raise ReviewInputError("invalid linked worktree commondir control")
+        common_target = Path(os.fsdecode(common_line))
+        if not common_target.is_absolute():
+            common_target = head_path.parent / common_target
+        expected_common = head_path.parent.parent.parent
+        if common_target.resolve() != expected_common.resolve():
+            raise ReviewInputError("linked worktree commondir differs from Git authority")
+        require_private_directory(expected_common)
+        require_protected_ancestors(expected_common)
+        files.append((commondir, 4096, common_epoch, common_digest))
     if symbolic == "HEAD":
         if head_data.strip() != expected_head.encode():
             raise ReviewInputError("detached HEAD control differs from expected commit")
