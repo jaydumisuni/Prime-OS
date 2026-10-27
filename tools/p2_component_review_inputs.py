@@ -11,12 +11,15 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import stat
 import sys
 
 MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
 GIT_READ_TIMEOUT_SECONDS = 30
+# Resolve Git only from the host system path, never caller-controlled PATH.
+SYSTEM_GIT = shutil.which("git", path=os.defpath)
 
 INPUTS = (
     "Cargo.lock",
@@ -45,9 +48,13 @@ def git(repo: Path, *args: str) -> bytes:
     # Missing partial-clone objects are not permission to run a repository-
     # configured remote upload-pack helper during read-only review custody.
     trusted_env["GIT_NO_LAZY_FETCH"] = "1"
+    # Git may itself invoke helpers; keep those off the ambient search path.
+    trusted_env["PATH"] = os.defpath
+    if SYSTEM_GIT is None:
+        raise ReviewInputError("system Git executable unavailable")
     try:
         result = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
+            [SYSTEM_GIT, "-c", "core.fsmonitor=false", "-C", str(repo), *args],
             capture_output=True, check=False, env=trusted_env,
             timeout=GIT_READ_TIMEOUT_SECONDS,
         )
