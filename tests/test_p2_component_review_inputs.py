@@ -687,3 +687,47 @@ def test_rejects_prior_input_mutation_during_last_index_probe_without_head_chang
         module.build_manifest(root, head)
     assert last_index_reads == 3
     assert git(root, "rev-parse", "HEAD") == head
+
+
+def test_rejects_index_only_restage_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A post-probe staged-only edit must invalidate review-input authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    blob = subprocess.check_output(
+        ["git", "-C", str(root), "hash-object", "-w", "--stdin"],
+        input=b"late index-only replacement\n",
+    ).decode().strip()
+    original_git = module.git
+    original_private_directory = module.require_private_directory
+    head_reads = 0
+    after_final_git = False
+    injected = False
+
+    def observe_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, after_final_git
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                after_final_git = True
+        return result
+
+    def restage_after_git(directory: Path) -> None:
+        nonlocal injected
+        if after_final_git and not injected:
+            git(root, "update-index", "--cacheinfo", f"100644,{blob},{relative}")
+            injected = True
+        original_private_directory(directory)
+
+    monkeypatch.setattr(module, "git", observe_final_head)
+    monkeypatch.setattr(module, "require_private_directory", restage_after_git)
+    with pytest.raises(module.ReviewInputError, match="index changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+    assert (root / relative).read_text() == f"p2 committed input: {relative}\n"
+    assert git(root, "rev-parse", "HEAD") == head
+    assert git(root, "rev-parse", f":{relative}") == blob
