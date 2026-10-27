@@ -54,6 +54,8 @@ def main():
                PRIME_UBUNTU_TOOLS=str(TOOLS), PRIME_UBUNTU_PREVIEW="1",
                WLR_BACKENDS="x11", WLR_X11_OUTPUTS="1",
                XDG_CURRENT_DESKTOP="Prime-Ubuntu-Preview")
+    if subdir == "prime-visual-workspace":
+        env["PRIME_VISUAL_COSMIC"] = "1"
     print("PRIME_UBUNTU_SESSION=nested;parent_xfce_unchanged=1", flush=True)
     try:
         return subprocess.call(["labwc", "-C", str(TOOLS / "labwc"),

@@ -12,10 +12,15 @@ def compare(reference,candidate,out):
     if not reference.is_file(): raise FileNotFoundError(f"Missing owner reference: {reference}")
     if not candidate.is_file(): raise FileNotFoundError(f"Missing compositor proof: {candidate}")
     with Image.open(reference) as src,Image.open(candidate) as actual:
-        if src.size!=OWNER_SIZE:raise ValueError(f"Unexpected reference dimensions: {src.size}")
-        wanted=src.convert("RGB").crop((0,0,OWNER_SIZE[0],DESKTOP_TOP))
+        if src.width!=OWNER_SIZE[0] or src.height not in (582, OWNER_SIZE[1]):
+            raise ValueError(f"Unexpected reference dimensions: {src.size}")
+        reference_top=src.convert("RGB").crop((0,0,OWNER_SIZE[0],min(DESKTOP_TOP,src.height)))
         actual=actual.convert("RGB")
-        wanted=wanted.resize(actual.size,Image.Resampling.LANCZOS)
+        # Preserve pixel geometry from the approved mockup's 1672 px-wide
+        # desktop region. Its lower panels are explanatory states, not wallpaper.
+        compare_height=min(actual.height, round(reference_top.height*actual.width/OWNER_SIZE[0]))
+        wanted=reference_top.resize((actual.width,compare_height),Image.Resampling.LANCZOS)
+        actual=actual.crop((0,0,actual.width,compare_height))
         diff=ImageChops.difference(wanted,actual)
         score=[round(x,2) for x in ImageStat.Stat(diff).mean]
         display=Image.new("RGB",(actual.width*2,actual.height+48),"#081426")
@@ -28,7 +33,11 @@ def compare(reference,candidate,out):
         diff.save(out/"difference.png")
     result={"schema":"prime.visual-gate.v1","reference":str(reference),
             "candidate":str(candidate),"viewport":list(actual.size),
-            "mean_difference_rgb":score,"owner_visual_accepted":False,
+            "mean_difference_rgb":score,
+            "comparison_region":"owner_main_desktop_only_uniform_horizontal_scale",
+            "reference_contains_instructional_callouts":True,
+            "exact_pixel_match_expected":False,
+            "owner_visual_accepted":False,
             "system_accepted":False,"merge_permitted":False,
             "default_desktop_permitted":False,
             "note":"Raster metrics are diagnostic, not an approval. Require manual UI and functional acceptance."}

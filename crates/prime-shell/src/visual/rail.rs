@@ -424,7 +424,7 @@ pub(crate) enum PreviewRailHit {
     Outside,
 }
 
-pub(crate) const PREVIEW_RAIL_WIDTH: u32 = 86;
+pub(crate) const PREVIEW_RAIL_WIDTH: u32 = 69;
 
 pub(crate) fn preview_rail_hit(
     x: f64,
@@ -605,10 +605,12 @@ pub(crate) fn paint_preview_rail_surface(
     text.draw(canvas, (16, py), "Pinned", heading, theme.text);
     for (index, id) in pins.iter().take(3).enumerate() {
         let y = py + 25 + index as i32 * 44;
-        let art = apps
+        let app = apps
             .iter()
-            .find(|item| item.application_id.to_string() == *id)
-            .and_then(|_app| icons.get(id));
+            .find(|item| item.application_id.to_string() == *id);
+        let art = app
+            .and_then(|item| super::reference_icons::system_icon_for(&item.display_name))
+            .or_else(|| app.and_then(|_item| icons.get(id)));
         let rect = Rect::new(center - 21, y + 2, 42, 42);
         if let Some(image) = art {
             super::wallpaper::paint_icon_image(canvas, image, rect, 255);
@@ -670,11 +672,11 @@ mod preview_tests {
             PreviewRailHit::PreviousWindows
         );
         assert_eq!(
-            preview_rail_hit(75.0, 405.0, w, 718, 9, 0, 3),
+            preview_rail_hit(60.0, 405.0, w, 718, 9, 0, 3),
             PreviewRailHit::NextWindows
         );
         assert_eq!(
-            preview_rail_hit(75.0, 405.0, w, 718, 5, 0, 3),
+            preview_rail_hit(60.0, 405.0, w, 718, 5, 0, 3),
             PreviewRailHit::Outside
         );
         assert_eq!(

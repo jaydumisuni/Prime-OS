@@ -134,7 +134,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    let (wallpaper_selection, system_wallpaper) = match requested_wallpaper {
+    let (mut wallpaper_selection, mut system_wallpaper) = match requested_wallpaper {
         visual::wallpaper::WallpaperSelection::Animated => {
             eprintln!("PRIME_SHELL_WALLPAPER=animated-first-light");
             (visual::wallpaper::WallpaperSelection::Animated, None)
@@ -158,6 +158,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
+
+    // Only the independent owner visual-acceptance workspace gets this
+    // reconstructed cosmic wallpaper. It is never applied to the daily
+    // Prime preview or host XFCE wallpaper implicitly.
+    let preview_cosmic = preview && std::env::var_os("PRIME_VISUAL_COSMIC").is_some();
+    if preview_cosmic {
+        let image = visual::wallpaper::decode_png(include_bytes!(
+            "../assets/reference-icons/cosmic_clean_1366.png"
+        ))
+        .expect("Frozen visual workspace cosmic wallpaper must decode");
+        system_wallpaper = Some(image);
+        wallpaper_selection = visual::wallpaper::WallpaperSelection::System(2);
+        eprintln!("PRIME_WORKSPACE_WALLPAPER=owner-cosmic-reference-reconstruction");
+    }
 
     let background_surface = compositor.create_surface(&queue_handle);
     let background = layer_shell.create_layer_surface(
@@ -661,7 +675,7 @@ impl PrimeShell {
             .take(3)
             .collect::<Vec<_>>();
         if pins.is_empty() {
-            for name in ["Browser", "Files", "Terminal"] {
+            for name in ["Store", "Chat", "Gallery"] {
                 if let Some(app) = self.applications.iter().find(|a| a.display_name == name) {
                     pins.push(app.application_id.to_string());
                 }
@@ -1141,16 +1155,28 @@ impl PrimeShell {
         }
         let applications = self.filtered_applications();
         let (left_index, right_index) = self.incoming_menu_indices();
-        let incoming_left = left_index.and_then(|i| {
-            self.icon_cache
-                .get(&self.applications[i].application_id.to_string())
-        });
-        let incoming_right = right_index.and_then(|i| {
-            self.icon_cache
-                .get(&self.applications[i].application_id.to_string())
-        });
-        let wallpaper_anchored =
-            self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
+        let count = self.applications.len();
+        let depth = count.saturating_sub(visual::VISIBLE_APP_LIMIT).min(4);
+        let incoming_left = (0..depth)
+            .map(|layer| {
+                left_index.and_then(|first| {
+                    let index = (first + count - layer) % count;
+                    self.icon_cache
+                        .get(&self.applications[index].application_id.to_string())
+                })
+            })
+            .collect::<Vec<_>>();
+        let incoming_right = (0..depth)
+            .map(|layer| {
+                right_index.and_then(|first| {
+                    let index = (first + layer) % count;
+                    self.icon_cache
+                        .get(&self.applications[index].application_id.to_string())
+                })
+            })
+            .collect::<Vec<_>>();
+        let wallpaper_anchored = std::env::var_os("PRIME_VISUAL_COSMIC").is_some()
+            || self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
         let overflow = self.applications.len() > visual::VISIBLE_APP_LIMIT;
         let theme = self.theme;
         let text = &mut self.text;
@@ -1165,8 +1191,8 @@ impl PrimeShell {
                     visual::PrimeLauncherView {
                         applications: &applications,
                         icons: &self.icon_cache,
-                        incoming_left,
-                        incoming_right,
+                        incoming_left: &incoming_left,
+                        incoming_right: &incoming_right,
                         files: &self.file_results,
                         selected: self.selected_application,
                         query: &self.launcher_query,
@@ -1297,16 +1323,28 @@ impl PrimeShell {
     ) -> bool {
         let filtered_applications = self.filtered_applications();
         let (left_index, right_index) = self.incoming_menu_indices();
-        let incoming_left = left_index.and_then(|i| {
-            self.icon_cache
-                .get(&self.applications[i].application_id.to_string())
-        });
-        let incoming_right = right_index.and_then(|i| {
-            self.icon_cache
-                .get(&self.applications[i].application_id.to_string())
-        });
-        let wallpaper_anchored =
-            self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
+        let count = self.applications.len();
+        let depth = count.saturating_sub(visual::VISIBLE_APP_LIMIT).min(4);
+        let incoming_left = (0..depth)
+            .map(|layer| {
+                left_index.and_then(|first| {
+                    let index = (first + count - layer) % count;
+                    self.icon_cache
+                        .get(&self.applications[index].application_id.to_string())
+                })
+            })
+            .collect::<Vec<_>>();
+        let incoming_right = (0..depth)
+            .map(|layer| {
+                right_index.and_then(|first| {
+                    let index = (first + layer) % count;
+                    self.icon_cache
+                        .get(&self.applications[index].application_id.to_string())
+                })
+            })
+            .collect::<Vec<_>>();
+        let wallpaper_anchored = std::env::var_os("PRIME_VISUAL_COSMIC").is_some()
+            || self.wallpaper_selection == visual::wallpaper::WallpaperSelection::System(2);
         let overflow = self.applications.len() > visual::VISIBLE_APP_LIMIT;
         if let Some(prime_launcher) = self.prime_launcher.as_mut() {
             if layer.wl_surface() == prime_launcher.layer.wl_surface() {
@@ -1347,8 +1385,8 @@ impl PrimeShell {
                             visual::PrimeLauncherView {
                                 applications: &filtered_applications,
                                 icons: &self.icon_cache,
-                                incoming_left,
-                                incoming_right,
+                                incoming_left: &incoming_left,
+                                incoming_right: &incoming_right,
                                 files: &self.file_results,
                                 selected: self.selected_application,
                                 query: &self.launcher_query,
@@ -1684,8 +1722,26 @@ impl LayerShellHandler for PrimeShell {
                 self.exit = true;
                 return;
             }
+            let output_changed = self.background_width != width || self.background_height != height;
             self.background_width = width;
             self.background_height = height;
+            if output_changed {
+                // Wayland fullscreen transient sizes are negotiated separately from
+                // background. A stale overlay hit region must not remain at the
+                // previous display size after the user resizes the nested preview.
+                if let Some(overlay) = self.prime_launcher.as_mut() {
+                    overlay.layer.set_size(width, height);
+                    overlay.layer.commit();
+                }
+                if let Some(backdrop) = self.quick_backdrop.as_mut() {
+                    backdrop.set_size(width, height);
+                    backdrop.commit();
+                }
+                eprintln!(
+                    "PRIME_PREVIEW_OUTPUT_RESIZED={}x{};overlay_reconfigured=1",
+                    width, height
+                );
+            }
             self.background_static = static_bytes;
             self.background_started = Instant::now();
             self.background_last_render = Instant::now();
@@ -1717,7 +1773,13 @@ impl LayerShellHandler for PrimeShell {
                 draw_visual_surface(&mut self.pool, layer, width, height, |bytes, w, h| {
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime status buffer must match configured dimensions");
-                    visual::paint_status_cluster(&mut canvas, text, &theme, status);
+                    if std::env::var_os("PRIME_VISUAL_COSMIC").is_some() {
+                        // Quick Controls live on the left rail in the owner mockup;
+                        // the old top-right status strip would be duplicate chrome.
+                        canvas.clear();
+                    } else {
+                        visual::paint_status_cluster(&mut canvas, text, &theme, status);
+                    }
                 })
             {
                 eprintln!("prime-shell could not draw status cluster: {error}");

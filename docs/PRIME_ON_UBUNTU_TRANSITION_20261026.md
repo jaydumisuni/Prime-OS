@@ -181,3 +181,43 @@ Outstanding: a clean layered cosmic background, precise orbit/rail/
 shortcut geometry, working Quick Control interactions and status, exact
 app carousel motion, responsive checks and window workflows.
 NO MERGE. NO KRATOS DEFAULT DESKTOP CHANGE. NO PRIME IMAGE ADMISSION.
+
+
+## 27 October 2026 — Cosmic visual acceptance checkpoint (isolated workspace)
+
+**Reference:** Owner-provided Prime OS Neon Space Desktop UI, 1672x941.
+This is a composite. The top ~582 pixels depict the desktop; lower panels
+explain interactions and must not be treated as wallpaper or actual controls.
+An exact live-raster match is NOT established.
+
+**Implementation evidence:** The isolated branch
+ui/prime-mockup-acceptance-20261026 uses a nested labwc compositor and the
+PRIME_PREVIEW_SUBDIR=prime-visual-workspace socket. PRIME_VISUAL_COSMIC only
+applies there, not the existing Prime preview or Ubuntu desktop. The owner
+reference is staged as cosmic_scene_reference.webp and the separately trimmed
+ground_extension.webp. generate_cosmic_preview_wallpaper.py reconstructs
+cosmic_clean_1366.png. Wallpaper remains separate from Shell buttons.
+
+The native 11-app orbit and Prime artwork match measured scaled coordinates
+more closely. Both four-layer app stacks remain interactive Shell components.
+Pinned system apps use their custom image assets. Quick Controls display
+truthful preview host status. An actual outside click produced
+PRIME_SHELL_TRANSIENT_CLOSE=pointer. A row-shape bug that painted the lower
+wallpaper black was corrected, and a sanity assertion now catches regression.
+
+**Gates:** 78/78 Rust tests; 13/13 bridge tests; release build, formatting and
+diff checks PASS. Actual 1366x718 menu evidence:
+~/.oracle/proof/prime-visual-ground-r6-20261027/live-menu.png.
+Quick Controls evidence: ~/.oracle/proof/prime-quick-v6-20261027/live-quick.png.
+Visual comparison: ~/.oracle/proof/prime-visual-gate-r6-20261027/visual-gate.json.
+Its mean RGB differences were [20.03, 20.91, 35.52], so the result
+is not pixel-equal and is not accepted.
+
+**Remaining mismatches:** Flattened source UI ghosts in the wallpaper,
+wallpaper texture/illumination, real installed browser vs reference icon,
+some stack/rail visual detail, full Quick Controls function proof and
+other resolution behaviors. These are acceptance blockers.
+
+**Freeze:** Do not merge this review branch, switch KRATOS's default XFCE
+desktop, overwrite the prior Prime preview, or admit an OS image/ISO.
+Visual and interaction gates remain open.

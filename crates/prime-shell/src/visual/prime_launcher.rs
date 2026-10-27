@@ -46,33 +46,47 @@ pub(crate) struct PrimeLauncherLayout {
 impl PrimeLauncherLayout {
     pub(crate) fn new(width: u32, height: u32) -> Self {
         let cx = width as i32 / 2;
-        let cy = (height as f32 * 0.445) as i32;
-        let icon_size = if height < 720 { 74 } else { 84 };
-        let stack_y = height.saturating_sub(106) as i32;
+        let cy = (height as f32 * 0.50) as i32;
+        let icon_size = if height < 720 { 74 } else { 76 };
+        let stack_y = (height as f32 * 0.400) as i32;
         Self {
             bounds: Rect::new(0, 0, width, height),
             center: (cx, cy),
             icon_size,
-            search: Rect::new(cx - 190, cy + (height as f32 * 0.16) as i32, 380, 44),
-            left_stack: Rect::new(cx - 292, stack_y, 136, 87),
-            right_stack: Rect::new(cx + 158, stack_y, 136, 87),
+            search: Rect::new(
+                (width as f32 * 0.394) as i32,
+                (height as f32 * 0.346) as i32,
+                (width as f32 * 0.212) as u32,
+                (height as f32 * 0.066).max(39.0) as u32,
+            ),
+            left_stack: Rect::new((width as f32 * 0.253) as i32, stack_y, 136, 87),
+            right_stack: Rect::new((width as f32 * 0.675) as i32, stack_y, 136, 87),
         }
     }
 
     pub(crate) fn icon_rect(self, index: usize) -> Rect {
-        // Measured around the approved 11-icon ring: lower-left through
-        // upper crown, down the right arc, then across the lower arc.
-        let degrees = [
-            151.0f32, 177.0, 203.0, 233.0, 268.0, 307.0, 337.0, 363.0, 393.0, 430.0, 466.0,
+        // Pixel-measured application centers in the owner-approved 1672 x 582
+        // desktop viewport. Normalized coordinates adapt to the output size.
+        // They define 11 visible slots, not eleven total installed applications.
+        const POINTS: [(f32, f32); VISIBLE_APP_LIMIT] = [
+            (0.367, 0.480), // Music
+            (0.330, 0.356), // Files
+            (0.352, 0.227), // Terminal
+            (0.409, 0.128), // Machine
+            (0.492, 0.072), // Browser
+            (0.579, 0.130), // Settings
+            (0.637, 0.233), // Store
+            (0.661, 0.352), // Notes
+            (0.624, 0.478), // Gallery
+            (0.552, 0.553), // Chat
+            (0.434, 0.553), // Tools
         ];
-        let angle = degrees[index.min(VISIBLE_APP_LIMIT - 1)].to_radians();
-        let rx = (self.bounds.width as f32 * 0.251).min(340.0);
-        let ry = (self.bounds.height as f32 * 0.302).min(248.0);
-        let cx = self.center.0 as f32 + angle.cos() * rx;
-        let cy = self.center.1 as f32 + angle.sin() * ry;
+        let (nx, ny) = POINTS[index.min(VISIBLE_APP_LIMIT - 1)];
+        let cx = (self.bounds.width as f32 * nx).round() as i32;
+        let cy = (self.bounds.height as f32 * ny).round() as i32;
         Rect::new(
-            (cx - self.icon_size as f32 / 2.0) as i32,
-            (cy - self.icon_size as f32 / 2.0) as i32,
+            cx - self.icon_size as i32 / 2,
+            cy - self.icon_size as i32 / 2,
             self.icon_size,
             self.icon_size,
         )
@@ -97,7 +111,7 @@ impl PrimeLauncherLayout {
             for i in 0..rows {
                 let row = Rect::new(
                     self.center.0 - 194,
-                    self.center.1 + 87 + (i as i32 * 47),
+                    self.search.y + self.search.height as i32 + 14 + (i as i32 * 47),
                     388,
                     43,
                 );
@@ -122,8 +136,8 @@ impl PrimeLauncherLayout {
 pub(crate) struct PrimeLauncherView<'a> {
     pub(crate) applications: &'a [ApplicationEntry],
     pub(crate) icons: &'a HashMap<String, DecodedWallpaper>,
-    pub(crate) incoming_left: Option<&'a DecodedWallpaper>,
-    pub(crate) incoming_right: Option<&'a DecodedWallpaper>,
+    pub(crate) incoming_left: &'a [Option<&'a DecodedWallpaper>],
+    pub(crate) incoming_right: &'a [Option<&'a DecodedWallpaper>],
     pub(crate) files: &'a [PreviewFileResult],
     pub(crate) selected: usize,
     pub(crate) query: &'a str,
@@ -194,7 +208,7 @@ fn paint_stack(
     bounds: Rect,
     right: bool,
     alpha: u8,
-    artwork: Option<&DecodedWallpaper>,
+    artwork: &[Option<&DecodedWallpaper>],
 ) {
     for layer in (0..4).rev() {
         let indent = layer * 13;
@@ -226,17 +240,17 @@ fn paint_stack(
                     .with_alpha(alpha.saturating_sub(layer as u8 * 18))
             },
         );
-        if layer == 0 {
-            if let Some(image) = artwork {
-                paint_icon_image(canvas, image, Rect::new(x + 7, y + 7, 43, 43), alpha);
-            } else {
-                draw_icon(
-                    canvas,
-                    Rect::new(x + 16, y + 15, 26, 26),
-                    Icon::Applications,
-                    theme.muted.with_alpha(alpha),
-                );
-            }
+        let image = artwork.get(layer as usize).copied().flatten();
+        if let Some(image) = image {
+            let image_alpha = alpha.saturating_sub(layer as u8 * 20);
+            paint_icon_image(canvas, image, Rect::new(x + 7, y + 7, 43, 43), image_alpha);
+        } else if layer == 0 {
+            draw_icon(
+                canvas,
+                Rect::new(x + 16, y + 15, 26, 26),
+                Icon::Applications,
+                theme.muted.with_alpha(alpha),
+            );
         }
     }
 }
@@ -258,14 +272,42 @@ pub(crate) fn paint_prime_launcher_surface(
         draw_prime_mark(canvas, Rect::new(cx - 100, cy - 141, 200, 200), theme, true);
     }
     let ring_color = theme.cyan.with_alpha(alpha / 3);
-    for segment in 0..90 {
-        let a = (segment as f32 * 4.0).to_radians();
-        let b = ((segment + 1) as f32 * 4.0).to_radians();
-        let rx = (layout.bounds.width as f32 * 0.251).min(340.0);
-        let ry = (layout.bounds.height as f32 * 0.302).min(248.0);
-        let from = (cx + (rx * a.cos()) as i32, cy + (ry * a.sin()) as i32);
-        let to = (cx + (rx * b.cos()) as i32, cy + (ry * b.sin()) as i32);
-        canvas.line(from, to, 1, ring_color);
+    // Smooth, closed Catmull-Rom orbit; the former straight-edged eleven-sided
+    // polygon was a visible mismatch with the owner's neon app ring.
+    let positions = (0..VISIBLE_APP_LIMIT)
+        .map(|i| {
+            let rect = layout.icon_rect(i);
+            (rect.center_x() as f32, rect.center_y() as f32)
+        })
+        .collect::<Vec<_>>();
+    for segment in 0..positions.len() {
+        let n = positions.len();
+        let p0 = positions[(segment + n - 1) % n];
+        let p1 = positions[segment];
+        let p2 = positions[(segment + 1) % n];
+        let p3 = positions[(segment + 2) % n];
+        let at = |t: f32| {
+            let t2 = t * t;
+            let t3 = t2 * t;
+            let f = |a: f32, b: f32, c: f32, d: f32| {
+                0.5 * ((2.0 * b)
+                    + (-a + c) * t
+                    + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2
+                    + (-a + 3.0 * b - 3.0 * c + d) * t3)
+            };
+            (
+                f(p0.0, p1.0, p2.0, p3.0) as i32,
+                f(p0.1, p1.1, p2.1, p3.1) as i32,
+            )
+        };
+        for step in 0..16 {
+            canvas.line(
+                at(step as f32 / 16.0),
+                at((step + 1) as f32 / 16.0),
+                1,
+                ring_color,
+            );
+        }
     }
 
     let search = layout.search;
@@ -301,11 +343,16 @@ pub(crate) fn paint_prime_launcher_surface(
         let app_count = view.applications.len().min(6);
         let rows = (app_count + view.files.len()).min(6);
         let height = (rows * 47 + 48).max(90) as u32;
-        let panel = Rect::new(cx - 205, cy + 74, 410, height);
+        let panel = Rect::new(cx - 205, search.y + search.height as i32 + 1, 410, height);
         canvas.fill_rounded_rect(panel, 20, theme.base_1.with_alpha(alpha.saturating_sub(7)));
         canvas.stroke_rounded_rect(panel, 20, 1, theme.cyan.with_alpha(alpha / 2));
         for i in 0..rows {
-            let row = Rect::new(cx - 194, cy + 87 + i as i32 * 47, 388, 43);
+            let row = Rect::new(
+                cx - 194,
+                search.y + search.height as i32 + 14 + i as i32 * 47,
+                388,
+                43,
+            );
             if i == view.selected {
                 canvas.fill_rounded_rect(row, 11, theme.violet.with_alpha(alpha / 3));
             }
@@ -395,6 +442,14 @@ pub(crate) fn paint_prime_launcher_surface(
             theme.violet
         };
         if let Some(image) = reference_icons::system_icon_for(&app.display_name) {
+            // The owner artwork includes the glyph and glass border. Light
+            // passes around its edge; no extra generic drawn icon is added.
+            canvas.radial_glow(
+                box_rect.center_x() as f32,
+                box_rect.center_y() as f32,
+                box_rect.width as f32 * 0.94,
+                color.with_alpha(alpha / 4),
+            );
             reference_icons::paint_icon(canvas, image, box_rect, alpha);
         } else {
             canvas.radial_glow(
@@ -481,6 +536,25 @@ pub(crate) fn paint_prime_launcher_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn approved_reference_anchor_positions_scale_to_target_output() {
+        let l = PrimeLauncherLayout::new(1366, 718);
+        let browser = l.icon_rect(4);
+        let music = l.icon_rect(0);
+        let chat = l.icon_rect(9);
+        // Approved mockup's top desktop uses a 1672 px-wide coordinate
+        // system. Scaling its artwork to the 1366 px output must preserve
+        // that horizontal scale for BOTH axes, rather than vertically
+        // stretching its 582 px viewport to the full screen.
+        assert!((browser.center_x() as i32 - 672).abs() <= 2);
+        assert!((browser.center_y() as i32 - 52).abs() <= 2);
+        assert!((music.center_x() as i32 - 501).abs() <= 2);
+        assert!((chat.center_y() as i32 - 397).abs() <= 2);
+        assert!((l.search.center_x() as i32 - 684).abs() <= 4);
+        assert!((l.left_stack.y - 287).abs() <= 2);
+        assert!(l.icon_rect(4).y < l.icon_rect(9).y);
+    }
+
     #[test]
     fn exactly_eleven_visible_slots_are_hit_testable_and_distinct() {
         let layout = PrimeLauncherLayout::new(1366, 768);

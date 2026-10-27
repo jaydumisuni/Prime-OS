@@ -227,8 +227,8 @@ fn production_surfaces_can_be_dumped_for_machine_visual_review() {
                 PrimeLauncherView {
                     applications: &applications,
                     icons: &std::collections::HashMap::new(),
-                    incoming_left: None,
-                    incoming_right: None,
+                    incoming_left: &[],
+                    incoming_right: &[],
                     files: &[],
                     selected: 0,
                     query: "",

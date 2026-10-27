@@ -631,8 +631,8 @@ mod tests {
             PrimeLauncherView {
                 applications: &[],
                 icons: &std::collections::HashMap::new(),
-                incoming_left: None,
-                incoming_right: None,
+                incoming_left: &[],
+                incoming_right: &[],
                 files: &[],
                 selected: 0,
                 query: "",
@@ -681,8 +681,8 @@ mod tests {
             PrimeLauncherView {
                 applications: &applications,
                 icons: &std::collections::HashMap::new(),
-                incoming_left: None,
-                incoming_right: None,
+                incoming_left: &[],
+                incoming_right: &[],
                 files: &[],
                 selected: 0,
                 query: "",
@@ -724,8 +724,8 @@ mod tests {
             PrimeLauncherView {
                 applications: &applications,
                 icons: &std::collections::HashMap::new(),
-                incoming_left: None,
-                incoming_right: None,
+                incoming_left: &[],
+                incoming_right: &[],
                 files: &[],
                 selected: 0,
                 query: "",
