@@ -549,3 +549,32 @@ def test_rejects_ancestor_becoming_shared_writable_during_input_read(
             module.build_manifest(root, head)
     finally:
         tmp_path.chmod(original_mode)
+
+
+def test_rejects_review_root_becoming_shared_writable_during_final_git_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The final Git read must not outlive private worktree-root custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    original_mode = root.stat().st_mode & 0o777
+    head_reads = 0
+
+    def change_root_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                root.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", change_root_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="shared-writable review path"):
+            module.build_manifest(root, head)
+        assert head_reads == 2, "final Git HEAD read was not exercised"
+    finally:
+        root.chmod(original_mode)

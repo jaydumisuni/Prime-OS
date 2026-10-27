@@ -217,8 +217,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         })
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
-    # Git reads are another untrusted interval; never emit a manifest if
-    # the worktree ancestry lost its original protected-path property.
+    # Git reads are another untrusted interval. Recheck the worktree root
+    # itself as well as its ancestors: the ancestor walk only inspects root
+    # ownership for sticky-parent admission, not root write permissions.
+    require_private_directory(root)
     require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
