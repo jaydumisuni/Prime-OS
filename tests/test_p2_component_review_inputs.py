@@ -799,3 +799,25 @@ def test_head_epoch_supports_packed_detached_and_linked_worktrees(
     linked = tmp_path / "linked-review"
     git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
     assert module.build_manifest(linked, head)["candidate_head"] == head
+
+
+def test_rejects_dangling_loose_ref_after_packed_head_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A dangling symlink is an existing loose ref inode, despite exists() false."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    git(root, "pack-refs", "--all")
+    snapshot = module.capture_head_epoch(root, head)
+    _, absent_ref = snapshot
+    assert absent_ref is not None, "fixture must use a packed branch ref"
+    assert not absent_ref.exists()
+
+    # The packed branch was valid at capture time. A late untrusted loose-ref
+    # pathname must invalidate the snapshot even if its symlink target is absent.
+    absent_ref.symlink_to(tmp_path / "nonexistent-ref-target")
+    assert absent_ref.is_symlink()
+    assert not absent_ref.exists()
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.verify_head_epoch(snapshot)

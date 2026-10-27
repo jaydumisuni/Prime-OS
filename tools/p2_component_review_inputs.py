@@ -209,8 +209,16 @@ def verify_head_epoch(snapshot: tuple) -> None:
             current, current_digest, _ = control_file_epoch(path, limit)
             if current != epoch or current_digest != digest:
                 raise ReviewInputError("HEAD ref changed after final Git probe")
-        if absent_ref is not None and absent_ref.exists():
-            raise ReviewInputError("HEAD ref changed from packed to loose")
+        if absent_ref is not None:
+            # Path.exists() follows symlinks and misses a newly introduced
+            # dangling loose-ref symlink. Any inode at the formerly absent
+            # ref pathname invalidates the packed-ref snapshot.
+            try:
+                absent_ref.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                raise ReviewInputError("HEAD ref changed from packed to loose")
     except OSError as exc:
         raise ReviewInputError("HEAD ref changed after final Git probe") from exc
 
