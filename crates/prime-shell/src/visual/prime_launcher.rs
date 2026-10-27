@@ -447,8 +447,8 @@ pub(crate) fn paint_prime_launcher_surface(
             canvas.radial_glow(
                 box_rect.center_x() as f32,
                 box_rect.center_y() as f32,
-                box_rect.width as f32 * 0.94,
-                color.with_alpha(alpha / 4),
+                box_rect.width as f32 * 1.12,
+                color.with_alpha(alpha / 2),
             );
             reference_icons::paint_icon(canvas, image, box_rect, alpha);
         } else {

@@ -81,7 +81,7 @@ upper=image.convert("RGB").resize((1366,upper_height),Image.Resampling.LANCZOS)
 emblem_path=ASSETS/"reference-icons/clean_menu_closed_emblem_highres.webp"
 emblem=Image.open(emblem_path).convert("RGBA")
 assert emblem.size==(390,355),f"Unexpected emblem asset: {emblem.size}"
-emblem=emblem.resize((300,273),Image.Resampling.LANCZOS)
+emblem=emblem.resize((333,303),Image.Resampling.LANCZOS)
 # A source panel is not a square wallpaper tile. Fade its peripheral
 # background away, keeping the bright central mark and rings, and sharpen
 # the inherited mini-panel artwork without sharpening the transparency.
@@ -101,8 +101,22 @@ emblem=emblem_rgb
 # The owner's wallpaper mark remains embedded in the *wallpaper* layer.
 # Prime's real launcher/search is a separate Shell overlay.
 layer=upper.convert("RGBA")
-layer.alpha_composite(emblem,(533,105))
+layer.alpha_composite(emblem,(516,96))
 upper=layer.convert("RGB")
+# Retain the actual owner-scene mountain silhouettes in the unoccluded
+# bottom-center strip. The former full-width procedural replacement erased
+# those peaks, making the sky/lake junction unnaturally flat.
+reference_scaled=src.resize((1366,upper_height),Image.Resampling.LANCZOS)
+mountain_start=round(572*scale)
+mountain_end=upper_height
+import numpy as _np
+alpha_mask=Image.new("L",(1366,upper_height),0)
+from PIL import ImageDraw as _ImageDraw
+_a=_ImageDraw.Draw(alpha_mask)
+_a.rectangle((round(470*scale),mountain_start,round(1215*scale),mountain_end),fill=255)
+alpha_mask=alpha_mask.filter(ImageFilter.GaussianBlur(11))
+# A narrow alpha window avoids reintroducing flattened launcher controls.
+upper=Image.composite(reference_scaled,upper,alpha_mask)
 lower_height=718-upper_height
 ground=Image.open(ASSETS/"reference-icons/ground_extension.webp").convert("RGB")
 if ground.size != (1366,lower_height):
@@ -133,5 +147,19 @@ path=ASSETS/"reference-icons/cosmic_clean_1366.png"
 # before any build can embed an opaque black half-screen.
 lower=np.asarray(out.convert("RGB"))[520:700,175:1180]
 assert float(lower.mean()) > 12.0, "Cosmic lower-scene reconstruction unexpectedly blank"
+# Reintroduce the owner mockup's outer orbital halo. The central emblem
+# remains genuine extracted art; these are decorative glow strokes behind
+# the live application sprites, not replacement clickable controls.
+orbit=Image.new("RGBA",(1366*3,718*3),(0,0,0,0))
+od=ImageDraw.Draw(orbit)
+for bounds,rgba,thickness in (
+    ((529,143,849,414),(8,134,255,55),3),
+    ((541,152,842,404),(91,40,249,38),2),
+    ((548,164,830,395),(18,100,241,18),2),
+):
+    od.ellipse(tuple(coord*3 for coord in bounds),outline=rgba,width=thickness*3)
+orbit=orbit.resize((1366,718),Image.Resampling.LANCZOS)
+out=Image.alpha_composite(out.convert("RGBA"),orbit.filter(ImageFilter.GaussianBlur(10)))
+out=Image.alpha_composite(out,orbit).convert("RGB")
 out.save(path,optimize=True)
 print("GENERATED",path, path.stat().st_size,out.size)

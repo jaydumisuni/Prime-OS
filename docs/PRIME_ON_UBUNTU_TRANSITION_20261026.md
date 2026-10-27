@@ -288,3 +288,36 @@ production Prime preview and Ubuntu XFCE desktop remain unchanged.
 
 **Acceptance remains OPEN / FAILED.** Do not merge, replace the old preview,
 change KRATOS default Ubuntu desktop or admit the Prime OS image.
+
+
+### Further 27 October visual review — scaled emblem and orbital lighting
+
+Work continued on existing isolated branch after owner rejected premature stopping.
+This is NOT final acceptance.
+
+- Enlarged the owner-derived 390x355 Menu-closed emblem proportionally and
+  repositioned it to better align with the 1366x718 scaled reference.
+- Corrected an experimental reference mountain-strip composite that exposed
+  ghosted Tools/Chat text beneath real interactive app labels. Only source
+  rows after the flattened labels are now eligible for the mountain layer.
+- Increased cyan/violet branded app-card halo rather than replacing icons
+  with generic line drawings. Third-party XDG apps retain their own art.
+- Added a soft outer orbital glow from reproducible code in the cosmetic
+  wallpaper generator, separately inspected against the old output; the
+  chosen candidate hash exactly matches the regenerated artifact:
+  72ea9b32deca696b0f81d7b549e24104b705115e82f85ec90824aed8988fbd0e.
+- Rejected the small-mask inpainting candidate: it introduced geometric
+  smears and was NOT installed in the Prime workspace.
+- Verified live compositor screenshot after the duplicate text fix:
+  ~/.oracle/proof/prime-no-ghost-20261027/second-frame.png.
+  The first immediate compositor capture was blank; a later full frame was
+  confirmed RGB and captured before accepting it as evidence.
+- Rust Shell 78/78, Python bridge 16/16, release build and fmt PASS.
+  Earlier diagnostic visual gate still nonzero [19.92,22.41,36.06]
+  (RGB means), so NO full-pixel visual acceptance is claimed.
+- The accessible user reference is flattened; a clean layered original
+  cosmic scene was not found among available referenced assets. The pixels
+  hidden under baked-in mockup UI cannot be recovered exactly from this
+  image alone. Any reconstruction is an approximation and must be labeled.
+- Preserve active Ubuntu XFCE and separate previous Prime preview.
+  No merge, default-desktop switch, image/ISO release or fake 100% claim.
