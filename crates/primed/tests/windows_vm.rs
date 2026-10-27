@@ -2067,6 +2067,81 @@ fn guest_agent_length_delimited_reader_admits_only_one_bounded_frame() {
 }
 
 #[test]
+fn guest_agent_length_delimited_reader_preserves_split_frames_and_io_failures() {
+    use primed::windows_vm::{read_guest_agent_hello_frame, GuestAgentHello, WindowsVmError};
+    use std::io::{self, Cursor, Read};
+
+    // A socket-like reader may deliver a complete frame in arbitrarily small
+    // chunks. The first admission must not borrow bytes from the next frame.
+    struct Fragmented(Cursor<Vec<u8>>);
+    impl Read for Fragmented {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let limit = buf.len().min(3);
+            self.0.read(&mut buf[..limit])
+        }
+    }
+
+    let x86 = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "guest-x86".to_owned(),
+        guest_revision: 3,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let mut x64 = x86.clone();
+    x64.guest_id = "guest-x64".to_owned();
+    x64.guest_revision = 4;
+    x64.guest_sha256 = "b".repeat(64);
+    x64.workload_arch = "x86_64".to_owned();
+    let first = serde_json::to_vec(&x86).unwrap();
+    let second = serde_json::to_vec(&x64).unwrap();
+    let mut reader = Fragmented(Cursor::new([first.as_slice(), second.as_slice()].concat()));
+
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut reader,
+            first.len(),
+            &x86.guest_id,
+            x86.guest_revision,
+            &x86.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        x86,
+    );
+    assert_eq!(reader.0.position() as usize, first.len());
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut reader,
+            second.len(),
+            &x64.guest_id,
+            x64.guest_revision,
+            &x64.guest_sha256,
+            "x86_64",
+        )
+        .unwrap(),
+        x64,
+    );
+    assert_eq!(reader.0.position() as usize, first.len() + second.len());
+
+    // A transport permission failure is not a malformed guest identity and
+    // must remain an I/O failure for the future socket owner to handle.
+    struct Denied;
+    impl Read for Denied {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    assert!(matches!(
+        read_guest_agent_hello_frame(
+            &mut Denied, first.len(), "guest-x86", 3, &"a".repeat(64), "x86",
+        ),
+        Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
+    ));
+}
+
+#[test]
 fn guest_agent_json_rejects_invalid_caller_expectations() {
     use primed::windows_vm::GuestAgentHello;
 
