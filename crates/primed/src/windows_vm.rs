@@ -190,6 +190,36 @@ pub fn parse_guest_agent_hello_json(
     Ok(hello)
 }
 
+/// Construct deterministic, bounded hello JSON for a non-production guest
+/// harness. This is only fixture construction: it does not attest a guest,
+/// open a transport, or authorize Windows execution. The caller retains
+/// ownership of the frame length and any transport framing.
+pub fn encode_guest_agent_hello_json(
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<Vec<u8>, WindowsVmError> {
+    // Reuse the same fail-closed host and guest identity admission as the
+    // decoder. A harness must not serialize an unauthorized guest identity.
+    validate_guest_agent_hello(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let encoded = serde_json::to_vec(hello)
+        .map_err(|_| WindowsVmError::InvalidGuest("cannot encode guest-agent hello JSON"))?;
+    if encoded.len() > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    Ok(encoded)
+}
+
 // Caller-owned expectations must be valid before consuming an untrusted
 // transport frame. A failed host preflight must leave the stream untouched.
 fn validate_expected_guest_agent_authority(

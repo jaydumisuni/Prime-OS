@@ -1982,6 +1982,70 @@ fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
 }
 
 #[test]
+fn guest_agent_harness_json_encoder_is_deterministic_and_authority_checked() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, parse_guest_agent_hello_json, GuestAgentHello,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES,
+    };
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-harness-x64".to_owned(),
+        guest_revision: 7,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let encode = |candidate: &GuestAgentHello| {
+        encode_guest_agent_hello_json(
+            candidate,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+    };
+    let encoded = encode(&hello).unwrap();
+    assert_eq!(encoded, serde_json::to_vec(&hello).unwrap());
+    assert!(encoded.len() <= WINDOWS_VM_AGENT_HELLO_MAX_BYTES);
+    assert_eq!(encode(&hello).unwrap(), encoded);
+    assert_eq!(
+        parse_guest_agent_hello_json(
+            &encoded,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .unwrap(),
+        hello
+    );
+
+    // A local harness must not manufacture a plausible hello for a different
+    // guest, protocol, digest, or architecture. This is not guest attestation.
+    let mut invalid = hello.clone();
+    invalid.guest_id = "other-guest".to_owned();
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.protocol_revision = 2;
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.guest_sha256 = "d".repeat(64);
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.workload_arch = "x86".to_owned();
+    assert!(encode(&invalid).is_err());
+    assert!(encode_guest_agent_hello_json(
+        &hello,
+        &hello.guest_id,
+        0,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_err());
+}
+
+#[test]
 fn guest_agent_length_delimited_reader_admits_only_one_bounded_frame() {
     use primed::windows_vm::{
         read_guest_agent_hello_frame, GuestAgentHello, WINDOWS_VM_AGENT_HELLO_MAX_BYTES,
