@@ -3657,3 +3657,78 @@ fn guest_agent_harness_payload_writer_is_bounded_and_fail_closed() {
         assert_eq!(partial.bytes, expected[..3]);
     }
 }
+
+#[test]
+fn guest_agent_harness_payload_writer_handles_interrupted_and_zero_progress_io() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    #[derive(Default)]
+    struct InterruptedOrZeroWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        zero_progress: bool,
+    }
+    impl Write for InterruptedOrZeroWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            if self.zero_progress {
+                return Ok(0);
+            }
+            let count = bytes.len().min(2);
+            self.bytes.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "harness-guest".to_owned(),
+        guest_revision: 7,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let expected = serde_json::to_vec(&hello).unwrap();
+
+    let mut interrupted = InterruptedOrZeroWriter::default();
+    let written = write_guest_agent_hello_payload(
+        &mut interrupted,
+        &hello,
+        &hello.guest_id,
+        7,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap();
+    assert_eq!(written, expected.len());
+    assert_eq!(interrupted.bytes, expected);
+    assert!(
+        interrupted.calls > 2,
+        "interrupted and fragmented I/O was not exercised"
+    );
+
+    let mut zero = InterruptedOrZeroWriter {
+        zero_progress: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        write_guest_agent_hello_payload(
+            &mut zero, &hello, &hello.guest_id, 7, &hello.guest_sha256, "x86_64",
+        ),
+        Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::WriteZero
+    ));
+    assert_eq!(zero.calls, 2);
+    assert!(
+        zero.bytes.is_empty(),
+        "zero-progress writer must not be accepted"
+    );
+}
