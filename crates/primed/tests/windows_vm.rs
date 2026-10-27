@@ -2047,6 +2047,74 @@ fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
 }
 
 #[test]
+fn guest_agent_json_x86_handoff_is_arch_and_digest_bound() {
+    use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
+
+    // Gate 6 explicitly requires both x86 and x86_64 workload handoff.
+    // The x86 JSON path must admit its own identity while refusing an x64
+    // expectation, an x64 wire identity, or a different pinned image digest.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-x86".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let wire = serde_json::to_vec(&hello).unwrap();
+    assert_eq!(
+        parse_guest_agent_hello_json(
+            &wire,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        hello
+    );
+
+    let wrong_expected_arch = parse_guest_agent_hello_json(
+        &wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap_err();
+    assert!(wrong_expected_arch
+        .to_string()
+        .contains("architecture mismatch"));
+
+    let wrong_expected_digest = parse_guest_agent_hello_json(
+        &wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &"d".repeat(64),
+        "x86",
+    )
+    .unwrap_err();
+    assert!(wrong_expected_digest
+        .to_string()
+        .contains("digest mismatch"));
+
+    let mut wrong_wire_arch = hello.clone();
+    wrong_wire_arch.workload_arch = "x86_64".to_owned();
+    let wrong_wire = serde_json::to_vec(&wrong_wire_arch).unwrap();
+    let wrong_wire_arch_error = parse_guest_agent_hello_json(
+        &wrong_wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(wrong_wire_arch_error
+        .to_string()
+        .contains("architecture mismatch"));
+}
+
+#[test]
 fn guest_agent_handshake_rejects_undeclared_protocol_fields() {
     use primed::windows_vm::{GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA};
 
