@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -43,6 +45,29 @@ def test_exact_head_manifest_is_deterministic_and_not_a_certificate(tmp_path: Pa
     assert first["authority"] == "REVIEW_INPUT_ONLY"
     assert len(first["inputs"]) == len(module.INPUTS)
     assert all(len(item["sha256"]) == 64 for item in first["inputs"])
+
+
+def test_ambient_path_cannot_replace_review_git_binary(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root, head = sample_repo(tmp_path)
+    system_git = shutil.which("git", path=os.defpath)
+    assert system_git is not None
+    shadow_bin = tmp_path / "shadow-bin"
+    shadow_bin.mkdir()
+    marker = tmp_path / "shadow-git-was-executed"
+    shadow_git = shadow_bin / "git"
+    shadow_git.write_text(
+        "#!/bin/sh\n"
+        + "printf invoked > " + shlex.quote(str(marker)) + "\n"
+        + "exec " + shlex.quote(system_git) + " \"$@\"\n",
+        encoding="utf-8",
+    )
+    shadow_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(shadow_bin) + os.pathsep + os.environ.get("PATH", ""))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert not marker.exists(), "ambient PATH must not run a shadow Git executable"
 
 
 def test_rejects_wrong_head(tmp_path: Path) -> None:
