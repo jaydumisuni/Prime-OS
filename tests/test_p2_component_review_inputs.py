@@ -889,3 +889,60 @@ def test_rejects_duplicate_packed_head_ref_entries(tmp_path: Path) -> None:
             assert "ambiguous packed HEAD ref" in str(error)
         else:
             raise AssertionError("duplicate packed HEAD ref admitted")
+
+
+def test_rejects_pending_git_control_lockfiles(tmp_path: Path) -> None:
+    """A pending Git update must not be presented as a stable review epoch."""
+    import pytest
+
+    for kind in ("index", "HEAD", "branch", "packed-refs"):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        gitdir = root / ".git"
+        if kind == "branch":
+            ref = git(root, "symbolic-ref", "HEAD")
+            lock = gitdir / (ref + ".lock")
+        else:
+            lock = gitdir / (kind + ".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"pending update\n")
+        with pytest.raises(module.ReviewInputError, match="pending Git control update"):
+            module.build_manifest(root, head)
+
+
+def test_rejects_late_git_control_lock_after_final_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A lock arriving after final Git probes invalidates the review manifest."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    lock = root / ".git" / "index.lock"
+    original_git = module.git
+    original_private = module.require_private_directory
+    head_reads = 0
+    after_final_git = False
+    injected = False
+
+    def observe_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, after_final_git
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                after_final_git = True
+        return result
+
+    def introduce_pending_update(directory: Path) -> None:
+        nonlocal injected
+        if after_final_git and not injected:
+            lock.write_bytes(b"pending update\n")
+            injected = True
+        original_private(directory)
+
+    monkeypatch.setattr(module, "git", observe_head)
+    monkeypatch.setattr(module, "require_private_directory", introduce_pending_update)
+    with pytest.raises(module.ReviewInputError, match="pending Git control update"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2

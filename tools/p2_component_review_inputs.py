@@ -255,6 +255,18 @@ def verify_head_epoch(snapshot: tuple) -> None:
     except OSError as exc:
         raise ReviewInputError("HEAD ref changed after final Git probe") from exc
 
+def require_no_pending_git_control_locks(paths: tuple[Path, ...]) -> None:
+    """Reject in-flight Git metadata writes, including dangling lock symlinks."""
+    for lock in paths:
+        try:
+            lock.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ReviewInputError("cannot inspect pending Git control update") from exc
+        raise ReviewInputError(f"pending Git control update: {lock}")
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -361,6 +373,18 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if not index_path.is_absolute():
         index_path = root / index_path
     index_epoch = require_index_epoch(index_path)
+    # Git writes metadata via adjacent *.lock files before atomically
+    # replacing the authoritative pathname. A stable current inode alone
+    # cannot prove that no pending update is already underway.
+    head_files, absent_ref = head_epoch
+    control_paths = [index_path, git_control_path(root, "packed-refs")]
+    control_paths.extend(path for path, _, _, _ in head_files)
+    if absent_ref is not None:
+        control_paths.append(absent_ref)
+    lock_paths = tuple(dict.fromkeys(
+        path.with_name(path.name + ".lock") for path in control_paths
+    ))
+    require_no_pending_git_control_locks(lock_paths)
     # Complete every final index probe before the final HEAD check. A Git
     # subprocess can overlap a concurrent mutation of an earlier input;
     # performing probes after final filesystem checks could admit stale
@@ -390,6 +414,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if require_index_epoch(index_path) != index_epoch:
         raise ReviewInputError("review index changed after final Git probe")
     verify_head_epoch(head_epoch)
+    require_no_pending_git_control_locks(lock_paths)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
