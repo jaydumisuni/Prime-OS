@@ -578,3 +578,53 @@ def test_rejects_review_root_becoming_shared_writable_during_final_git_read(
         assert head_reads == 2, "final Git HEAD read was not exercised"
     finally:
         root.chmod(original_mode)
+
+
+
+def test_rejects_earlier_input_changed_after_last_input_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A prior accepted input cannot change while a later input is read."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    original_read = module.read_bounded_working_input
+
+    def change_earlier_after_later_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
+        if file == last:
+            earlier.write_bytes(b"late replacement of earlier review input\n")
+        return content
+
+    monkeypatch.setattr(module, "read_bounded_working_input",
+                        change_earlier_after_later_read)
+    with pytest.raises(module.ReviewInputError, match="changed|local changes"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_earlier_index_restage_after_last_input_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late staged-only replacement must not retain clean review authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    committed = earlier.read_bytes()
+    original_read = module.read_bounded_working_input
+
+    def stage_earlier_after_later_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
+        if file == last:
+            earlier.write_bytes(b"late staged review input\n")
+            git(root, "add", "--", module.INPUTS[0])
+            earlier.write_bytes(committed)
+        return content
+
+    monkeypatch.setattr(module, "read_bounded_working_input",
+                        stage_earlier_after_later_read)
+    with pytest.raises(module.ReviewInputError, match="changed|local changes"):
+        module.build_manifest(root, head)
