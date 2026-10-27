@@ -189,6 +189,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
             raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
         working = read_bounded_working_input(file, before)
+        # An ancestor may become replaceable after the initial path preflight.
+        # Recheck before accepting bytes from the opened descriptor.
+        require_protected_ancestors(root)
         directory = root
         require_private_directory(directory)
         for component in Path(relative).parts[:-1]:
@@ -214,6 +217,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         })
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
+    # Git reads are another untrusted interval; never emit a manifest if
+    # the worktree ancestry lost its original protected-path property.
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

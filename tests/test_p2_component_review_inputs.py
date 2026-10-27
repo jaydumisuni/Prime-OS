@@ -524,3 +524,28 @@ def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> N
         assert "Git verification timed out" in str(error)
     else:
         raise AssertionError("timed-out Git probe admitted review evidence")
+
+
+def test_rejects_ancestor_becoming_shared_writable_during_input_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Review authority must not outlive the protected worktree ancestry."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    original_read = module.read_bounded_working_input
+    original_mode = tmp_path.stat().st_mode & 0o777
+
+    def change_ancestor_after_read(file: Path, before) -> bytes:
+        content = original_read(file, before)
+        if file == target:
+            tmp_path.chmod(0o777)
+        return content
+
+    monkeypatch.setattr(module, "read_bounded_working_input", change_ancestor_after_read)
+    try:
+        with pytest.raises(module.ReviewInputError, match="ancestor"):
+            module.build_manifest(root, head)
+    finally:
+        tmp_path.chmod(original_mode)
