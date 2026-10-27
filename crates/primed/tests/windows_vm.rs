@@ -1982,6 +1982,74 @@ fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
 }
 
 #[test]
+fn guest_agent_json_rejects_invalid_caller_expectations() {
+    use primed::windows_vm::GuestAgentHello;
+
+    // The frame may be authentic JSON while the host's claimed authority is
+    // malformed. Exercise the parser boundary, not only the inner validator.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+
+    for invalid_id in ["", "guest/alias", " leading", "guest\nname"] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                invalid_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "invalid host guest identity {invalid_id:?} was accepted"
+        );
+    }
+
+    assert!(parse_guest_agent_hello_json(
+        &frame,
+        &hello.guest_id,
+        0,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_err());
+
+    for invalid_digest in ["A".repeat(64), "a".repeat(63)] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                &hello.guest_id,
+                hello.guest_revision,
+                &invalid_digest,
+                "x86_64",
+            )
+            .is_err(),
+            "invalid host digest was accepted"
+        );
+    }
+
+    for invalid_arch in ["arm64", "X86_64", ""] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                invalid_arch,
+            )
+            .is_err(),
+            "invalid host workload architecture {invalid_arch:?} was accepted"
+        );
+    }
+}
+
+#[test]
 fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
     use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
 
