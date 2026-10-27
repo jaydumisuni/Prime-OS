@@ -628,3 +628,62 @@ def test_rejects_earlier_index_restage_after_last_input_read(
                         stage_earlier_after_later_read)
     with pytest.raises(module.ReviewInputError, match="changed|local changes"):
         module.build_manifest(root, head)
+
+
+def test_rejects_head_and_prior_input_mutation_during_final_index_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late Git subprocess must not invalidate already-finalized evidence."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = module.INPUTS[-1]
+    original_git = module.git
+    last_index_reads = 0
+
+    def mutate_during_last_index_probe(repo: Path, *args: str) -> bytes:
+        nonlocal last_index_reads
+        result = original_git(repo, *args)
+        if args == ("ls-files", "--stage", "--", last):
+            last_index_reads += 1
+            if last_index_reads == 3:
+                earlier.write_bytes(b"changed during final Git probe\n")
+                git(root, "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit",
+                    "--allow-empty", "-qm", "test: concurrent HEAD advance")
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_during_last_index_probe)
+    with pytest.raises(module.ReviewInputError, match="HEAD changed|changed after verification|local changes"):
+        module.build_manifest(root, head)
+    assert last_index_reads == 3, "adversarial final Git probe was not exercised"
+    assert git(root, "rev-parse", "HEAD") != head
+
+
+def test_rejects_prior_input_mutation_during_last_index_probe_without_head_change(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The last index subprocess must precede the final filesystem sweep."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = module.INPUTS[-1]
+    original_git = module.git
+    last_index_reads = 0
+
+    def mutate_earlier_during_last_probe(repo: Path, *args: str) -> bytes:
+        nonlocal last_index_reads
+        result = original_git(repo, *args)
+        if args == ("ls-files", "--stage", "--", last):
+            last_index_reads += 1
+            if last_index_reads == 3:
+                earlier.write_bytes(b"changed during final Git probe\n")
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_earlier_during_last_probe)
+    with pytest.raises(module.ReviewInputError, match="changed after verification"):
+        module.build_manifest(root, head)
+    assert last_index_reads == 3
+    assert git(root, "rev-parse", "HEAD") == head
