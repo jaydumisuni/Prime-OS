@@ -195,31 +195,46 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     symbolic = git(root, "rev-parse", "--symbolic-full-name", "HEAD").decode().strip()
     head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
     files = [(head_path, 4096, head_epoch, head_digest)]
+    absent_commondir = None
     pointer = capture_gitdir_pointer_epoch(root, head_path)
     if pointer is not None:
         files.append(pointer)
-        # A linked worktree's gitdir points at its private HEAD, but the
-        # separate commondir file controls which repository supplies branch
-        # refs and objects. Pin that second pointer as part of the same epoch.
+        # A gitfile can point to a linked worktree or a standalone separate
+        # Git directory. Only the linked form has a commondir pointer.
         commondir = head_path.parent / "commondir"
-        common_epoch, common_digest, common_data = control_file_epoch(commondir, 4096)
-        common_line = common_data.rstrip(b"\n")
-        if (not common_line or b"\n" in common_line
-                or b"\r" in common_line or b"\x00" in common_line):
-            raise ReviewInputError("invalid linked worktree commondir control")
-        common_target = Path(os.fsdecode(common_line))
-        if not common_target.is_absolute():
-            common_target = head_path.parent / common_target
-        expected_common = head_path.parent.parent.parent
-        if common_target.resolve() != expected_common.resolve():
-            raise ReviewInputError("linked worktree commondir differs from Git authority")
-        require_private_directory(expected_common)
-        require_protected_ancestors(expected_common)
-        files.append((commondir, 4096, common_epoch, common_digest))
+        try:
+            commondir.lstat()
+        except FileNotFoundError:
+            # A --separate-git-dir repository has a .git pointer but no
+            # commondir. Verify Git resolves its common dir to this HEAD
+            # directory and pin the absence against late introduction.
+            common_name = git(
+                root, "rev-parse", "--path-format=absolute", "--git-common-dir"
+            ).decode().strip()
+            if Path(common_name).resolve() != head_path.parent.resolve():
+                raise ReviewInputError("separate gitdir differs from HEAD authority")
+            absent_commondir = commondir
+        else:
+            common_epoch, common_digest, common_data = control_file_epoch(
+                commondir, 4096
+            )
+            common_line = common_data.rstrip(b"\n")
+            if (not common_line or b"\n" in common_line
+                    or b"\r" in common_line or b"\x00" in common_line):
+                raise ReviewInputError("invalid linked worktree commondir control")
+            common_target = Path(os.fsdecode(common_line))
+            if not common_target.is_absolute():
+                common_target = head_path.parent / common_target
+            expected_common = head_path.parent.parent.parent
+            if common_target.resolve() != expected_common.resolve():
+                raise ReviewInputError("linked worktree commondir differs from Git authority")
+            require_private_directory(expected_common)
+            require_protected_ancestors(expected_common)
+            files.append((commondir, 4096, common_epoch, common_digest))
     if symbolic == "HEAD":
         if head_data.strip() != expected_head.encode():
             raise ReviewInputError("detached HEAD control differs from expected commit")
-        return files, None
+        return files, None, absent_commondir
     if (not symbolic.startswith("refs/heads/")
             or any(part in ("", ".", "..") for part in symbolic.split("/"))):
         raise ReviewInputError("unsupported symbolic HEAD control")
@@ -245,31 +260,34 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         if matches[0] != expected_head.encode():
             raise ReviewInputError("packed HEAD ref differs from expected commit")
         files.append((packed, MAX_REVIEW_INPUT_BYTES, packed_epoch, packed_digest))
-        return files, ref_path
+        return files, ref_path, absent_commondir
     if ref_data.strip() != expected_head.encode():
         raise ReviewInputError("loose HEAD ref differs from expected commit")
     files.append((ref_path, 4096, ref_epoch, ref_digest))
-    return files, None
+    return files, None, absent_commondir
 
 
 def verify_head_epoch(snapshot: tuple) -> None:
     """No Git subprocess follows the final HEAD probe; verify pinned ref files."""
-    files, absent_ref = snapshot
+    files, absent_ref, absent_commondir = snapshot
     try:
         for path, limit, epoch, digest in files:
             current, current_digest, _ = control_file_epoch(path, limit)
             if current != epoch or current_digest != digest:
                 raise ReviewInputError("HEAD ref changed after final Git probe")
-        if absent_ref is not None:
-            # Path.exists() follows symlinks and misses a newly introduced
-            # dangling loose-ref symlink. Any inode at the formerly absent
-            # ref pathname invalidates the packed-ref snapshot.
+        # Both packed-ref absence and standalone gitdir commondir absence
+        # are inode claims: even a dangling symlink invalidates the epoch.
+        for missing in (absent_ref, absent_commondir):
+            if missing is None:
+                continue
             try:
-                absent_ref.lstat()
+                missing.lstat()
             except FileNotFoundError:
                 pass
             else:
-                raise ReviewInputError("HEAD ref changed from packed to loose")
+                if missing == absent_ref:
+                    raise ReviewInputError("HEAD ref changed from packed to loose")
+                raise ReviewInputError("HEAD commondir appeared after final Git probe")
     except OSError as exc:
         raise ReviewInputError("HEAD ref changed after final Git probe") from exc
 
@@ -394,11 +412,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # Git writes metadata via adjacent *.lock files before atomically
     # replacing the authoritative pathname. A stable current inode alone
     # cannot prove that no pending update is already underway.
-    head_files, absent_ref = head_epoch
+    head_files, absent_ref, absent_commondir = head_epoch
     control_paths = [index_path, git_control_path(root, "packed-refs")]
     control_paths.extend(path for path, _, _, _ in head_files)
     if absent_ref is not None:
         control_paths.append(absent_ref)
+    if absent_commondir is not None:
+        control_paths.append(absent_commondir)
     lock_paths = tuple(dict.fromkeys(
         path.with_name(path.name + ".lock") for path in control_paths
     ))

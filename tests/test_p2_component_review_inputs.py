@@ -810,7 +810,7 @@ def test_rejects_dangling_loose_ref_after_packed_head_snapshot(
     root, head = sample_repo(tmp_path)
     git(root, "pack-refs", "--all")
     snapshot = module.capture_head_epoch(root, head)
-    _, absent_ref = snapshot
+    _, absent_ref, _ = snapshot
     assert absent_ref is not None, "fixture must use a packed branch ref"
     assert not absent_ref.exists()
 
@@ -987,3 +987,46 @@ def test_rejects_late_linked_worktree_commondir_redirection(
         assert injected and head_reads == 2
     finally:
         commondir.write_bytes(original)
+
+
+def test_separate_git_directory_is_valid_without_commondir(tmp_path: Path) -> None:
+    """A gitfile can point to a standalone separate gitdir, not a linked worktree."""
+    root, head = sample_repo(tmp_path)
+    external_gitdir = tmp_path / "external-gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(external_gitdir))
+    assert (root / ".git").is_file()
+    assert not (external_gitdir / "commondir").exists()
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+
+def test_rejects_late_commondir_creation_in_separate_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An absent commondir must remain absent after the final Git probe."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    external_gitdir = tmp_path / "external-gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(external_gitdir))
+    commondir = external_gitdir / "commondir"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def introduce_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(".\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|control|HEAD"):
+            module.build_manifest(root, head)
+        assert injected and head_reads == 2
+    finally:
+        commondir.unlink(missing_ok=True)
