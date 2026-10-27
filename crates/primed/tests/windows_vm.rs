@@ -3982,3 +3982,83 @@ fn guest_agent_harness_packet_stream_two_packets_are_independently_admitted() {
     reader.read_exact(&mut trailer).unwrap();
     assert_eq!(&trailer, b"TRAILER");
 }
+
+#[test]
+fn guest_agent_harness_rejected_packet_preserves_following_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    let authorized = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "authorized-harness".to_owned(),
+        guest_revision: 13,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let wrong_identity = GuestAgentHello {
+        guest_id: "untrusted-harness".to_owned(),
+        ..authorized.clone()
+    };
+    // Both a structurally valid but unauthorized frame and malformed JSON
+    // must be rejected without consuming the next independently framed hello.
+    for (case, rejected) in [
+        (
+            "wrong identity",
+            serde_json::to_vec(&wrong_identity).unwrap(),
+        ),
+        ("malformed JSON", b"{invalid".to_vec()),
+    ] {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(rejected.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&rejected);
+        let next_frame_start = wire.len();
+        let next_frame_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &authorized,
+            &authorized.guest_id,
+            authorized.guest_revision,
+            &authorized.guest_sha256,
+            &authorized.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &authorized.guest_id,
+                authorized.guest_revision,
+                &authorized.guest_sha256,
+                &authorized.workload_arch,
+            )
+            .is_err(),
+            "{case} must not be admitted"
+        );
+        assert_eq!(reader.position() as usize, next_frame_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &authorized.guest_id,
+                authorized.guest_revision,
+                &authorized.guest_sha256,
+                &authorized.workload_arch,
+            )
+            .unwrap(),
+            authorized,
+            "{case}"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            next_frame_start + next_frame_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
