@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::CStr;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -218,6 +218,32 @@ pub fn encode_guest_agent_hello_json(
         ));
     }
     Ok(encoded)
+}
+
+/// Write exactly one validated, bounded JSON payload for a non-production
+/// W8 harness. The caller owns the length delimiter and transport; this
+/// function does not open a socket, start a guest, or grant runtime authority.
+///
+/// Invalid host or guest authority is rejected before any writer call. A
+/// transport error may leave a partial payload on the caller-owned stream;
+/// the caller must discard that frame rather than treating it as admitted.
+pub fn write_guest_agent_hello_payload<W: Write>(
+    writer: &mut W,
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<usize, WindowsVmError> {
+    let payload = encode_guest_agent_hello_json(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    writer.write_all(&payload)?;
+    Ok(payload.len())
 }
 
 // Caller-owned expectations must be valid before consuming an untrusted

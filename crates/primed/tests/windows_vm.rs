@@ -3530,3 +3530,130 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     serialized["authority"] = serde_json::json!("guest-attested");
     assert!(serde_json::from_value::<VmRuntimeProofObservation>(serialized).is_err());
 }
+
+#[test]
+fn guest_agent_harness_payload_writer_is_bounded_and_fail_closed() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct CountedWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        fail: bool,
+    }
+    impl Write for CountedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.fail {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            // Model a fragmented transport, without owning its framing.
+            let count = buf.len().min(3);
+            self.bytes.extend_from_slice(&buf[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "harness-guest".to_owned(),
+            guest_revision: 7,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut writer = CountedWriter {
+            bytes: Vec::new(),
+            calls: 0,
+            fail: false,
+        };
+        let expected =
+            encode_guest_agent_hello_json(&hello, &hello.guest_id, 7, &hello.guest_sha256, arch)
+                .unwrap();
+        let written = write_guest_agent_hello_payload(
+            &mut writer,
+            &hello,
+            &hello.guest_id,
+            7,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(written, expected.len());
+        assert_eq!(writer.bytes, expected);
+        assert!(writer.calls > 1, "fragmented writer was not exercised");
+
+        for (id, revision, digest, workload_arch) in [
+            ("guest/invalid", 7, "a".repeat(64), arch),
+            ("harness-guest", 0, "a".repeat(64), arch),
+            ("harness-guest", 7, "A".repeat(64), arch),
+            ("harness-guest", 7, "a".repeat(64), "arm64"),
+            ("foreign-guest", 7, "a".repeat(64), arch),
+        ] {
+            let mut denied = CountedWriter {
+                bytes: Vec::new(),
+                calls: 0,
+                fail: false,
+            };
+            assert!(write_guest_agent_hello_payload(
+                &mut denied,
+                &hello,
+                id,
+                revision,
+                &digest,
+                workload_arch,
+            )
+            .is_err());
+            assert_eq!(denied.calls, 0, "invalid authority touched the writer");
+            assert!(denied.bytes.is_empty());
+        }
+
+        let mut denied = CountedWriter {
+            bytes: Vec::new(),
+            calls: 0,
+            fail: true,
+        };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut denied, &hello, &hello.guest_id, 7, &hello.guest_sha256, arch,
+            ),
+            Err(WindowsVmError::Io(error))
+                if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(denied.calls, 1);
+        assert!(denied.bytes.is_empty());
+
+        // A transport failure after a partial write must not report success.
+        struct PartialThenDenied {
+            bytes: Vec<u8>,
+        }
+        impl Write for PartialThenDenied {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if self.bytes.is_empty() {
+                    self.bytes.extend_from_slice(&buf[..buf.len().min(3)]);
+                    return Ok(buf.len().min(3));
+                }
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut partial = PartialThenDenied { bytes: Vec::new() };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut partial, &hello, &hello.guest_id, 7, &hello.guest_sha256, arch,
+            ),
+            Err(WindowsVmError::Io(error))
+                if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(partial.bytes, expected[..3]);
+    }
+}
