@@ -165,12 +165,39 @@ def control_file_epoch(path: Path, limit: int) -> tuple[tuple[int, ...], bytes, 
     return stat_identity(before), hashlib.sha256(data).digest(), data
 
 
+def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
+    """Pin the linked-worktree .git pointer to the HEAD metadata directory."""
+    dotgit = root / ".git"
+    state = dotgit.lstat()
+    if stat.S_ISDIR(state.st_mode):
+        require_private_directory(dotgit)
+        return None
+    if not stat.S_ISREG(state.st_mode):
+        raise ReviewInputError("untrusted worktree gitdir control")
+    epoch, digest, data = control_file_epoch(dotgit, 4096)
+    # Git worktree pointers may be relative to the worktree. Do not trust a
+    # different gitdir merely because it resolves the same commit and inputs.
+    line = data.rstrip(b"\n")
+    if (not line.startswith(b"gitdir: ") or not line[8:]
+            or b"\n" in line or b"\r" in line):
+        raise ReviewInputError("invalid worktree gitdir control")
+    target = Path(os.fsdecode(line[8:]))
+    if not target.is_absolute():
+        target = root / target
+    if target.resolve() != head_path.parent.resolve():
+        raise ReviewInputError("worktree gitdir control differs from HEAD authority")
+    return (dotgit, 4096, epoch, digest)
+
+
 def capture_head_epoch(root: Path, expected_head: str) -> tuple:
-    """Pin HEAD and its loose or packed branch ref without granting release authority."""
+    """Pin HEAD, linked gitdir and branch refs without granting release authority."""
     head_path = git_control_path(root, "HEAD")
     symbolic = git(root, "rev-parse", "--symbolic-full-name", "HEAD").decode().strip()
     head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
     files = [(head_path, 4096, head_epoch, head_digest)]
+    pointer = capture_gitdir_pointer_epoch(root, head_path)
+    if pointer is not None:
+        files.append(pointer)
     if symbolic == "HEAD":
         if head_data.strip() != expected_head.encode():
             raise ReviewInputError("detached HEAD control differs from expected commit")

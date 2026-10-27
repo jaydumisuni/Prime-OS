@@ -821,3 +821,44 @@ def test_rejects_dangling_loose_ref_after_packed_head_snapshot(
     assert not absent_ref.exists()
     with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
         module.verify_head_epoch(snapshot)
+
+
+
+def test_rejects_linked_worktree_gitdir_pointer_swap_after_final_git(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late .git redirection cannot rebind an already verified worktree."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    first = tmp_path / "linked-first"
+    second = tmp_path / "linked-second"
+    git(root, "worktree", "add", "-q", "-b", "linked-first", str(first), head)
+    git(root, "worktree", "add", "-q", "-b", "linked-second", str(second), head)
+    pointer = first / ".git"
+    original = pointer.read_bytes()
+    alternate = (second / ".git").read_bytes()
+    assert original != alternate
+    assert module.build_manifest(first, head)["candidate_head"] == head
+
+    original_git = module.git
+    head_reads = 0
+    swapped = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, swapped
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.write_bytes(alternate)
+                swapped = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="gitdir|control|changed"):
+            module.build_manifest(first, head)
+        assert swapped and head_reads == 2
+    finally:
+        pointer.write_bytes(original)
