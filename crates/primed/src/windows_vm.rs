@@ -182,6 +182,36 @@ pub fn parse_guest_agent_hello_json(
     Ok(hello)
 }
 
+// Caller-owned expectations must be valid before consuming an untrusted
+// transport frame. A failed host preflight must leave the stream untouched.
+fn validate_expected_guest_agent_authority(
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<(), WindowsVmError> {
+    if expected_guest_id.is_empty()
+        || expected_guest_id.len() > 128
+        || !expected_guest_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || expected_guest_revision == 0
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "invalid expected guest identity",
+        ));
+    }
+    if !canonical_sha256_hex(expected_guest_sha256) {
+        return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
+    }
+    if !matches!(expected_workload_arch, "x86" | "x86_64") {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent workload architecture mismatch",
+        ));
+    }
+    Ok(())
+}
+
 /// Admit one explicitly length-delimited hello frame from a caller-owned reader.
 ///
 /// The transport must establish `frame_len` independently; this function
@@ -206,6 +236,12 @@ pub fn read_guest_agent_hello_frame<R: Read>(
             "guest-agent hello exceeds JSON size limit",
         ));
     }
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
     let mut frame = vec![0u8; frame_len];
     reader.read_exact(&mut frame).map_err(|error| {
         if error.kind() == io::ErrorKind::UnexpectedEof {
@@ -230,18 +266,12 @@ pub fn validate_guest_agent_hello(
     expected_guest_sha256: &str,
     expected_workload_arch: &str,
 ) -> Result<(), WindowsVmError> {
-    // Expected identity is caller-supplied; matching an invalid expectation is not authority.
-    if expected_guest_id.is_empty()
-        || expected_guest_id.len() > 128
-        || !expected_guest_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        || expected_guest_revision == 0
-    {
-        return Err(WindowsVmError::InvalidGuest(
-            "invalid expected guest identity",
-        ));
-    }
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
     if hello.schema != WINDOWS_VM_AGENT_SCHEMA || hello.protocol_revision != 1 {
         return Err(WindowsVmError::InvalidGuest(
             "unsupported guest-agent protocol",
@@ -252,10 +282,7 @@ pub fn validate_guest_agent_hello(
             "guest-agent identity mismatch",
         ));
     }
-    if !canonical_sha256_hex(&hello.guest_sha256)
-        || !canonical_sha256_hex(expected_guest_sha256)
-        || hello.guest_sha256 != expected_guest_sha256
-    {
+    if !canonical_sha256_hex(&hello.guest_sha256) || hello.guest_sha256 != expected_guest_sha256 {
         return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
     }
     if !matches!(hello.workload_arch.as_str(), "x86" | "x86_64")

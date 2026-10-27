@@ -2142,6 +2142,77 @@ fn guest_agent_length_delimited_reader_preserves_split_frames_and_io_failures() 
 }
 
 #[test]
+fn guest_agent_reader_rejects_invalid_host_authority_before_consuming_frame() {
+    use primed::windows_vm::{read_guest_agent_hello_frame, GuestAgentHello};
+    use std::io::{self, Cursor, Read};
+
+    struct Counted(Cursor<Vec<u8>>, usize);
+    impl Read for Counted {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.1 += 1;
+            self.0.read(buffer)
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "guest-x86".to_owned(),
+        guest_revision: 3,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+    for (case, guest_id, revision, digest, arch) in [
+        ("invalid ID", "guest/alias", 3, "a".repeat(64), "x86"),
+        ("zero revision", "guest-x86", 0, "a".repeat(64), "x86"),
+        ("noncanonical digest", "guest-x86", 3, "A".repeat(64), "x86"),
+        (
+            "unsupported architecture",
+            "guest-x86",
+            3,
+            "a".repeat(64),
+            "arm64",
+        ),
+    ] {
+        let mut reader = Counted(Cursor::new(frame.clone()), 0);
+        assert!(
+            read_guest_agent_hello_frame(
+                &mut reader,
+                frame.len(),
+                guest_id,
+                revision,
+                &digest,
+                arch,
+            )
+            .is_err(),
+            "{case}: invalid caller authority must fail closed"
+        );
+        assert_eq!(
+            reader.1, 0,
+            "{case}: invalid host authority consumed a frame"
+        );
+        assert_eq!(reader.0.position(), 0, "{case}: stream position changed");
+    }
+
+    let mut valid = Counted(Cursor::new(frame.clone()), 0);
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut valid,
+            frame.len(),
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        hello
+    );
+    assert!(valid.1 > 0);
+    assert_eq!(valid.0.position() as usize, frame.len());
+}
+
+#[test]
 fn guest_agent_json_rejects_invalid_caller_expectations() {
     use primed::windows_vm::GuestAgentHello;
 
