@@ -170,6 +170,14 @@ pub fn parse_guest_agent_hello_json(
             "guest-agent hello exceeds JSON size limit",
         ));
     }
+    // Caller-owned host expectations must be admitted before spending any
+    // parsing work on an untrusted guest payload, even at the direct JSON API.
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
     let hello: GuestAgentHello = serde_json::from_slice(bytes)
         .map_err(|_| WindowsVmError::InvalidGuest("malformed guest-agent hello JSON"))?;
     validate_guest_agent_hello(

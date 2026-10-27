@@ -2281,6 +2281,56 @@ fn guest_agent_json_rejects_invalid_caller_expectations() {
 }
 
 #[test]
+fn guest_agent_json_parser_preflights_host_authority_before_untrusted_decode() {
+    use primed::windows_vm::parse_guest_agent_hello_json;
+
+    // Malformed guest input must not determine the admission outcome when
+    // the host's own claimed identity, digest, or architecture is invalid.
+    let malformed_wire = br#"{not-a-json-document"#;
+    for (case, id, revision, digest, arch, expected_error) in [
+        (
+            "invalid id",
+            "guest/name",
+            1,
+            "a".repeat(64),
+            "x86_64",
+            "invalid expected guest identity",
+        ),
+        (
+            "zero revision",
+            "guest-test",
+            0,
+            "a".repeat(64),
+            "x86_64",
+            "invalid expected guest identity",
+        ),
+        (
+            "invalid digest",
+            "guest-test",
+            1,
+            "A".repeat(64),
+            "x86_64",
+            "guest-agent digest mismatch",
+        ),
+        (
+            "invalid arch",
+            "guest-test",
+            1,
+            "a".repeat(64),
+            "arm64",
+            "guest-agent workload architecture mismatch",
+        ),
+    ] {
+        let error =
+            parse_guest_agent_hello_json(malformed_wire, id, revision, &digest, arch).unwrap_err();
+        assert!(
+            error.to_string().contains(expected_error),
+            "{case}: {error}"
+        );
+    }
+}
+
+#[test]
 fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
     use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
 
