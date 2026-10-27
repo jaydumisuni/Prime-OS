@@ -945,8 +945,10 @@ pub fn validate_guest_definition(
                 "base image directory is not a real directory",
             ));
         }
-        let mode = parent.permissions().mode();
-        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+        // Reject foreign-owned read-only parents before digest I/O, not
+        // only in the post-read identity check. Their owner can chmod and
+        // replace the image entry while the digest is being computed.
+        if !trusted_runtime_ancestor(parent.uid(), parent.permissions().mode(), worker_uid) {
             return Err(WindowsVmError::InvalidGuest(
                 "base image directory is untrusted",
             ));
