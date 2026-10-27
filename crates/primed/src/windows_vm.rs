@@ -323,6 +323,73 @@ pub fn read_guest_agent_hello_frame<R: Read>(
     )
 }
 
+/// Write one harness-only length-prefixed hello packet: a four-byte
+/// big-endian payload length followed by bounded, validated JSON.
+///
+/// This framing is a deterministic host-side W8 Gate 6 fixture contract, not
+/// a negotiated production guest protocol. It does not start a VM or attest
+/// a Windows guest. A partial transport write invalidates the whole packet;
+/// the caller must discard the stream on error.
+pub fn write_guest_agent_hello_packet<W: Write>(
+    writer: &mut W,
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<usize, WindowsVmError> {
+    let payload = encode_guest_agent_hello_json(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let length = u32::try_from(payload.len())
+        .map_err(|_| WindowsVmError::InvalidGuest("guest-agent hello exceeds JSON size limit"))?;
+    writer.write_all(&length.to_be_bytes())?;
+    writer.write_all(&payload)?;
+    Ok(4 + payload.len())
+}
+
+/// Read exactly one harness-only length-prefixed hello packet without
+/// consuming bytes from a subsequent packet.
+///
+/// Validate caller-owned host authority before touching the stream. Reject
+/// zero and oversized length declarations before allocation or payload read;
+/// a truncated prefix or payload fails closed. This is not runtime guest proof.
+pub fn read_guest_agent_hello_packet<R: Read>(
+    reader: &mut R,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let mut prefix = [0u8; 4];
+    reader.read_exact(&mut prefix).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            WindowsVmError::InvalidGuest("truncated guest-agent hello length prefix")
+        } else {
+            WindowsVmError::Io(error)
+        }
+    })?;
+    let length = u32::from_be_bytes(prefix) as usize;
+    read_guest_agent_hello_frame(
+        reader,
+        length,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )
+}
+
 pub fn validate_guest_agent_hello(
     hello: &GuestAgentHello,
     expected_guest_id: &str,

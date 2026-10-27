@@ -3732,3 +3732,149 @@ fn guest_agent_harness_payload_writer_handles_interrupted_and_zero_progress_io()
         "zero-progress writer must not be accepted"
     );
 }
+
+#[test]
+fn guest_agent_harness_length_prefixed_packet_roundtrip_and_adversarial() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_HELLO_MAX_BYTES, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Write};
+
+    struct FragmentedWriter(Vec<u8>);
+    impl Write for FragmentedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let n = bytes.len().min(2);
+            self.0.extend_from_slice(&bytes[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-harness".to_owned(),
+            guest_revision: 9,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = FragmentedWriter(Vec::new());
+        let written = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let payload = serde_json::to_vec(&hello).unwrap();
+        assert_eq!(written, payload.len() + 4);
+        assert_eq!(&wire.0[..4], &(payload.len() as u32).to_be_bytes());
+        assert_eq!(&wire.0[4..], payload.as_slice());
+
+        let mut stream = Cursor::new([wire.0.as_slice(), b"NEXT"].concat());
+        let admitted = read_guest_agent_hello_packet(
+            &mut stream,
+            &hello.guest_id,
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(admitted, hello);
+        assert_eq!(stream.position() as usize, written);
+
+        let mut denied_writer = FragmentedWriter(Vec::new());
+        assert!(write_guest_agent_hello_packet(
+            &mut denied_writer,
+            &hello,
+            "wrong-guest",
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert!(denied_writer.0.is_empty());
+        let mut denied_reader = Cursor::new(wire.0.clone());
+        assert!(read_guest_agent_hello_packet(
+            &mut denied_reader,
+            "invalid/guest",
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(
+            denied_reader.position(),
+            0,
+            "host preflight must not read header"
+        );
+
+        for length in [0u32, WINDOWS_VM_AGENT_HELLO_MAX_BYTES as u32 + 1, u32::MAX] {
+            let mut hostile = Cursor::new([length.to_be_bytes().as_slice(), b"NEXT"].concat());
+            assert!(read_guest_agent_hello_packet(
+                &mut hostile,
+                &hello.guest_id,
+                9,
+                &hello.guest_sha256,
+                arch,
+            )
+            .is_err());
+            assert_eq!(hostile.position(), 4, "invalid length consumed payload");
+        }
+
+        for truncated in [&wire.0[..3], &wire.0[..wire.0.len() - 1]] {
+            let mut stream = Cursor::new(truncated);
+            assert!(read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                9,
+                &hello.guest_sha256,
+                arch,
+            )
+            .is_err());
+        }
+    }
+
+    struct PartialThenDenied {
+        writes: usize,
+        bytes: Vec<u8>,
+    }
+    impl Write for PartialThenDenied {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes > 1 {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            self.bytes.push(bytes[0]);
+            Ok(1)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-harness".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let mut broken = PartialThenDenied {
+        writes: 0,
+        bytes: Vec::new(),
+    };
+    assert!(matches!(write_guest_agent_hello_packet(
+        &mut broken, &hello, &hello.guest_id, 9, &hello.guest_sha256, "x86_64",
+    ), Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied));
+    assert_eq!(
+        broken.bytes.len(),
+        1,
+        "partial frame must not report success"
+    );
+}
