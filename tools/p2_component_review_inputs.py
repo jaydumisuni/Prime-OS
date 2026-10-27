@@ -120,6 +120,20 @@ def stat_identity(state: os.stat_result) -> tuple[int, int, int, int, int]:
             state.st_mtime_ns, state.st_ctime_ns)
 
 
+def require_index_epoch(index_path: Path) -> tuple[int, int, int, int, int]:
+    """Bind final review evidence to one private, unchanged Git index file."""
+    if index_path.resolve() != index_path:
+        raise ReviewInputError("noncanonical review index path")
+    require_private_directory(index_path.parent)
+    require_protected_ancestors(index_path.parent)
+    state = index_path.lstat()
+    if (not stat.S_ISREG(state.st_mode) or state.st_nlink != 1
+            or state.st_uid not in (0, os.geteuid())
+            or state.st_mode & 0o022):
+        raise ReviewInputError("untrusted review index")
+    return stat_identity(state)
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -217,6 +231,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             "sha256": hashlib.sha256(committed).hexdigest(),
             "bytes": len(committed),
         })
+    # The final filesystem sweep cannot observe staged-only changes. Pin the
+    # index inode/epoch before the last Git probes and verify it again after
+    # the sweep; no later Git subprocess is permitted.
+    index_name = git(root, "rev-parse", "--git-path", "index").decode().strip()
+    index_path = Path(index_name)
+    if not index_path.is_absolute():
+        index_path = root / index_path
+    index_epoch = require_index_epoch(index_path)
     # Complete every final index probe before the final HEAD check. A Git
     # subprocess can overlap a concurrent mutation of an earlier input;
     # performing probes after final filesystem checks could admit stale
@@ -243,6 +265,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # the worktree root and its ancestors before returning review evidence.
     require_private_directory(root)
     require_protected_ancestors(root)
+    if require_index_epoch(index_path) != index_epoch:
+        raise ReviewInputError("review index changed after final Git probe")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
