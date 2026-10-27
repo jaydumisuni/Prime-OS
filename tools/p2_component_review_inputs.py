@@ -218,7 +218,13 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
             packed, MAX_REVIEW_INPUT_BYTES)
         entries = [tuple(line.split(b" ", 1)) for line in packed_data.splitlines()
                    if b" " in line and not line.startswith(b"#")]
-        if (expected_head.encode(), symbolic.encode()) not in entries:
+        # Git can resolve the last of duplicate packed ref records. A matching
+        # final record must not conceal a conflicting or repeated earlier one:
+        # review evidence requires one unambiguous authoritative ref identity.
+        matches = [oid for oid, ref in entries if ref == symbolic.encode()]
+        if len(matches) != 1:
+            raise ReviewInputError("ambiguous packed HEAD ref entries")
+        if matches[0] != expected_head.encode():
             raise ReviewInputError("packed HEAD ref differs from expected commit")
         files.append((packed, MAX_REVIEW_INPUT_BYTES, packed_epoch, packed_digest))
         return files, ref_path

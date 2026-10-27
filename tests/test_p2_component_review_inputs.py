@@ -862,3 +862,30 @@ def test_rejects_linked_worktree_gitdir_pointer_swap_after_final_git(
         assert swapped and head_reads == 2
     finally:
         pointer.write_bytes(original)
+
+
+def test_rejects_duplicate_packed_head_ref_entries(tmp_path: Path) -> None:
+    # A duplicate earlier entry can be ignored by Git's last-entry-wins
+    # resolution, but is not a canonical source of review authority.
+    for name, duplicate in (("conflicting", "0" * 40), ("identical", None)):
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        root, head = sample_repo(case_dir)
+        git(root, "pack-refs", "--all", "--prune")
+        packed = root / ".git" / "packed-refs"
+        branch = git(root, "symbolic-ref", "HEAD")
+        lines = packed.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        packed.write_text(
+            lines[0] + "\n"
+            + (duplicate or head) + " " + branch + "\n"
+            + lines[1] + "\n",
+            encoding="utf-8",
+        )
+        assert git(root, "rev-parse", "HEAD") == head
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "ambiguous packed HEAD ref" in str(error)
+        else:
+            raise AssertionError("duplicate packed HEAD ref admitted")
