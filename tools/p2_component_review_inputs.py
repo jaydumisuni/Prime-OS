@@ -35,21 +35,22 @@ class ReviewInputError(Exception):
 
 
 def git(repo: Path, *args: str) -> bytes:
-    # Ambient Git overrides may substitute the index, object database, or
-    # worktree and falsely certify a different candidate as this exact HEAD.
-    # Trust only the repository resolved from the explicit -C path.
-    trusted_env = {key: value for key, value in os.environ.items()
-                   if not key.startswith("GIT_")}
-    # Repository or inherited Git config may name an executable fsmonitor.
-    # Git metadata reads must not invoke checkout-controlled monitors.
-    # refs/replace can substitute Git object bytes without changing HEAD.
-    # Disable local replacement refs before reading pinned review evidence.
-    trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
-    # Missing partial-clone objects are not permission to run a repository-
-    # configured remote upload-pack helper during read-only review custody.
-    trusted_env["GIT_NO_LAZY_FETCH"] = "1"
-    # Git may itself invoke helpers; keep those off the ambient search path.
-    trusted_env["PATH"] = os.defpath
+    # A pinned Git executable is insufficient if the child inherits loader
+    # controls (LD_PRELOAD/LD_AUDIT/LD_DEBUG), Git configuration locations,
+    # or other caller-supplied process state. Construct a minimal environment
+    # rather than trying to enumerate every hostile inherited variable.
+    trusted_env = {
+        "PATH": os.defpath,
+        "LC_ALL": "C",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    # Repository-local fsmonitor is explicitly disabled in the argv below.
+    # Neither ambient config nor Git helpers may expand this read-only scope.
     if SYSTEM_GIT is None:
         raise ReviewInputError("system Git executable unavailable")
     try:
