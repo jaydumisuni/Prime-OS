@@ -134,6 +134,86 @@ def require_index_epoch(index_path: Path) -> tuple[int, int, int, int, int]:
     return stat_identity(state)
 
 
+
+def git_control_path(root: Path, name: str) -> Path:
+    """Resolve a Git metadata path before the final read-only Git probes."""
+    value = git(root, "rev-parse", "--git-path", name).decode().strip()
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def control_file_epoch(path: Path, limit: int) -> tuple[tuple[int, ...], bytes, bytes]:
+    """Read a private Git control file through its verified regular descriptor."""
+    if path.resolve() != path:
+        raise ReviewInputError("noncanonical HEAD control path")
+    require_private_directory(path.parent)
+    require_protected_ancestors(path.parent)
+    before = path.lstat()
+    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+            or before.st_uid not in (0, os.geteuid())
+            or before.st_mode & 0o022 or before.st_size > limit):
+        raise ReviewInputError("untrusted HEAD control file")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                 | getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if stat_identity(opened) != stat_identity(before):
+            raise ReviewInputError("HEAD control file changed before read")
+        data = stream.read(limit + 1)
+        if len(data) > limit or stat_identity(os.fstat(stream.fileno())) != stat_identity(before):
+            raise ReviewInputError("HEAD control file changed during read")
+    return stat_identity(before), hashlib.sha256(data).digest(), data
+
+
+def capture_head_epoch(root: Path, expected_head: str) -> tuple:
+    """Pin HEAD and its loose or packed branch ref without granting release authority."""
+    head_path = git_control_path(root, "HEAD")
+    symbolic = git(root, "rev-parse", "--symbolic-full-name", "HEAD").decode().strip()
+    head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
+    files = [(head_path, 4096, head_epoch, head_digest)]
+    if symbolic == "HEAD":
+        if head_data.strip() != expected_head.encode():
+            raise ReviewInputError("detached HEAD control differs from expected commit")
+        return files, None
+    if (not symbolic.startswith("refs/heads/")
+            or any(part in ("", ".", "..") for part in symbolic.split("/"))):
+        raise ReviewInputError("unsupported symbolic HEAD control")
+    if head_data.strip() != ("ref: " + symbolic).encode():
+        raise ReviewInputError("symbolic HEAD control differs from Git resolution")
+    ref_path = git_control_path(root, symbolic)
+    try:
+        ref_epoch, ref_digest, ref_data = control_file_epoch(ref_path, 4096)
+    except FileNotFoundError:
+        # Packed branches are valid, but the absence of a loose ref is also
+        # part of the epoch: a newly created loose ref must invalidate it.
+        packed = git_control_path(root, "packed-refs")
+        packed_epoch, packed_digest, packed_data = control_file_epoch(
+            packed, MAX_REVIEW_INPUT_BYTES)
+        entries = [tuple(line.split(b" ", 1)) for line in packed_data.splitlines()
+                   if b" " in line and not line.startswith(b"#")]
+        if (expected_head.encode(), symbolic.encode()) not in entries:
+            raise ReviewInputError("packed HEAD ref differs from expected commit")
+        files.append((packed, MAX_REVIEW_INPUT_BYTES, packed_epoch, packed_digest))
+        return files, ref_path
+    if ref_data.strip() != expected_head.encode():
+        raise ReviewInputError("loose HEAD ref differs from expected commit")
+    files.append((ref_path, 4096, ref_epoch, ref_digest))
+    return files, None
+
+
+def verify_head_epoch(snapshot: tuple) -> None:
+    """No Git subprocess follows the final HEAD probe; verify pinned ref files."""
+    files, absent_ref = snapshot
+    try:
+        for path, limit, epoch, digest in files:
+            current, current_digest, _ = control_file_epoch(path, limit)
+            if current != epoch or current_digest != digest:
+                raise ReviewInputError("HEAD ref changed after final Git probe")
+        if absent_ref is not None and absent_ref.exists():
+            raise ReviewInputError("HEAD ref changed from packed to loose")
+    except OSError as exc:
+        raise ReviewInputError("HEAD ref changed after final Git probe") from exc
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -234,6 +314,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # The final filesystem sweep cannot observe staged-only changes. Pin the
     # index inode/epoch before the last Git probes and verify it again after
     # the sweep; no later Git subprocess is permitted.
+    head_epoch = capture_head_epoch(root, head)
     index_name = git(root, "rev-parse", "--git-path", "index").decode().strip()
     index_path = Path(index_name)
     if not index_path.is_absolute():
@@ -267,6 +348,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     require_protected_ancestors(root)
     if require_index_epoch(index_path) != index_epoch:
         raise ReviewInputError("review index changed after final Git probe")
+    verify_head_epoch(head_epoch)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

@@ -731,3 +731,71 @@ def test_rejects_index_only_restage_after_final_git_probe(
     assert (root / relative).read_text() == f"p2 committed input: {relative}\n"
     assert git(root, "rev-parse", "HEAD") == head
     assert git(root, "rev-parse", f":{relative}") == blob
+
+
+
+def test_rejects_head_ref_advance_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late ref-only HEAD advance cannot retain an old exact-head manifest."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    env = os.environ.copy()
+    env.update({
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    })
+    successor = subprocess.check_output(
+        ["git", "-C", str(root), "commit-tree", f"{head}^{{tree}}", "-p", head],
+        input=b"concurrent ref-only advance\n", env=env,
+    ).decode().strip()
+    original_git = module.git
+    original_private = module.require_private_directory
+    final_head_seen = False
+    injected = False
+    head_reads = 0
+
+    def observe_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal final_head_seen, head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                final_head_seen = True
+        return result
+
+    def advance_ref_after_final_git(directory: Path) -> None:
+        nonlocal injected
+        if final_head_seen and not injected:
+            git(root, "update-ref", "HEAD", successor)
+            injected = True
+        original_private(directory)
+
+    monkeypatch.setattr(module, "git", observe_final_head)
+    monkeypatch.setattr(module, "require_private_directory",
+                        advance_ref_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD.*changed|ref.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+    assert git(root, "rev-parse", "HEAD") == successor
+    assert not git(root, "diff", "--cached", "--name-only")
+
+
+
+def test_head_epoch_supports_packed_detached_and_linked_worktrees(
+    tmp_path: Path,
+) -> None:
+    """Ref custody must not reject ordinary Git storage and worktree forms."""
+    root, head = sample_repo(tmp_path)
+    git(root, "pack-refs", "--all")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    git(root, "checkout", "-q", "--detach", head)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    assert module.build_manifest(linked, head)["candidate_head"] == head
