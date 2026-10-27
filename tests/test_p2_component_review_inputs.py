@@ -895,7 +895,7 @@ def test_rejects_pending_git_control_lockfiles(tmp_path: Path) -> None:
     """A pending Git update must not be presented as a stable review epoch."""
     import pytest
 
-    for kind in ("index", "HEAD", "branch", "packed-refs"):
+    for kind in ("index", "HEAD", "branch", "packed-refs", "config", "config.worktree"):
         case = tmp_path / kind
         case.mkdir()
         root, head = sample_repo(case)

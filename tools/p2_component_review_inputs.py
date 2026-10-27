@@ -413,7 +413,15 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # replacing the authoritative pathname. A stable current inode alone
     # cannot prove that no pending update is already underway.
     head_files, absent_ref, absent_commondir = head_epoch
-    control_paths = [index_path, git_control_path(root, "packed-refs")]
+    # Git config updates can rebind object and worktree interpretation during
+    # the final read-only probes. Treat pending repository or worktree config
+    # writes as an unstable review epoch, just like HEAD/index updates.
+    control_paths = [
+        index_path,
+        git_control_path(root, "packed-refs"),
+        git_control_path(root, "config"),
+        git_control_path(root, "config.worktree"),
+    ]
     control_paths.extend(path for path, _, _, _ in head_files)
     if absent_ref is not None:
         control_paths.append(absent_ref)
