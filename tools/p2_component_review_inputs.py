@@ -217,13 +217,17 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             "sha256": hashlib.sha256(committed).hexdigest(),
             "bytes": len(committed),
         })
+    # Complete every final index probe before the final HEAD check. A Git
+    # subprocess can overlap a concurrent mutation of an earlier input;
+    # performing probes after final filesystem checks could admit stale
+    # review evidence despite an intervening HEAD or worktree change.
+    for relative, _ in verified_inputs:
+        require_clean_index(root, head, relative)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
-    # An earlier input or its staged index entry can change while a later
-    # input is inspected. Revalidate every admitted input after the final
-    # HEAD read, rather than trusting only its per-input snapshot.
+    # No Git subprocesses follow this point. Recheck every admitted input's
+    # filesystem identity after all final Git probes have completed.
     for relative, admitted_identity in verified_inputs:
-        require_clean_index(root, head, relative)
         directory = root
         for component in Path(relative).parts[:-1]:
             directory /= component
