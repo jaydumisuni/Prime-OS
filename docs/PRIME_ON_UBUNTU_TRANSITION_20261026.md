@@ -253,3 +253,38 @@ admission is authorized.
 **Freeze:** Do not merge this review branch, switch KRATOS's default XFCE
 desktop, overwrite the prior Prime preview, or admit an OS image/ISO.
 Visual and interaction gates remain open.
+
+### Additional 27 October 2026 review — reference icons, glass and live windows
+
+This update refines only the existing isolated visual workspace; the
+production Prime preview and Ubuntu XFCE desktop remain unchanged.
+
+- Added reproducible owner-reference extraction for ten Prime-owned
+  96x96 menu cards (Machine, Settings, Terminal, Store, Files, Notes, Music,
+  Gallery, Tools and Chat) in
+  tools/prime-on-ubuntu/extract_reference_icons.py. Other extracted
+  reference assets (Bin, Projects, six Quick Control tiles) retain their
+  original 74x74 formats; their decode test covers both formats.
+  Installed third-party apps keep their actual XDG icons.
+- Increased Ubuntu-hosted Quick Controls panel opacity and card contrast.
+  Live screenshot confirms readable six-card grouping, volume and brightness
+  status and Focus/Dark Mode/Night Light labels:
+  ~/.oracle/proof/prime-glass-updated-20261027/quick-controls.png.
+  Unsupported hardware capabilities still report unavailable.
+- Using the typed Ubuntu bridge, Files (Thunar), Terminal (Ptyxis), and
+  Settings were dispatched. Wayland toplevel inspection confirmed three
+  actual compositor windows, and the running-app rail showed their icons.
+- Subsequently, the isolated compositor restarted with a Broken pipe
+  connection error after host applications opened. A foreground unrelated
+  remote-access request appeared during final visual capture; it was not
+  clicked or dismissed. This image is not valid owner acceptance evidence.
+- Current checks: 78 Rust Shell tests; 16 bridge tests; native release build
+  and cargo fmt pass. Dispatch response is not equivalent to complete
+  application workflow or session-stability proof.
+- The 1672x941 reference is a flattened composite containing explanatory
+  panels. Running 1366x718 controls must not falsely be called exactly
+  pixel-identical merely by painting the composite. Cosmic wallpaper
+  reconstruction, icon glow and stack artwork remain different.
+
+**Acceptance remains OPEN / FAILED.** Do not merge, replace the old preview,
+change KRATOS default Ubuntu desktop or admit the Prime OS image.

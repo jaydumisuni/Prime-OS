@@ -137,9 +137,14 @@ mod tests {
     fn all_reference_icons_decode_with_expected_dimensions() {
         assert_eq!(cache().len(), 18);
         for (name, image) in cache() {
+            let expected = if name.starts_with("quick-") || *name == "projects" || *name == "bin" {
+                (74, 74)
+            } else {
+                (96, 96)
+            };
             assert_eq!(
                 (image.width, image.height),
-                (74, 74),
+                expected,
                 "bad dimensions for {name}"
             );
         }

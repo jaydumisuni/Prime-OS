@@ -193,7 +193,7 @@ pub(crate) fn paint_ubuntu_host_preview(
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 22, theme.base_0.with_alpha(alpha.saturating_sub(16)));
+    canvas.fill_rounded_rect(body, 22, theme.base_0.with_alpha(alpha));
     canvas.stroke_rounded_rect(body, 22, 1, theme.cyan.with_alpha(alpha / 2));
     let heading = TextStyle {
         size_px: 15,
@@ -241,7 +241,11 @@ pub(crate) fn paint_ubuntu_host_preview(
     for i in 0..3 {
         let x = margin + i as i32 * (tile_w + gap);
         let card = Rect::new(x, top_y, tile_w as u32, 98);
-        canvas.fill_rounded_rect(card, 15, theme.panel.with_alpha(alpha / 2));
+        canvas.fill_rounded_rect(
+            card,
+            15,
+            theme.panel.with_alpha(((u16::from(alpha) * 3) / 4) as u8),
+        );
         canvas.stroke_rounded_rect(
             card,
             15,
