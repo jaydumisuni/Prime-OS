@@ -1982,6 +1982,91 @@ fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
 }
 
 #[test]
+fn guest_agent_length_delimited_reader_admits_only_one_bounded_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_frame, GuestAgentHello, WINDOWS_VM_AGENT_HELLO_MAX_BYTES,
+    };
+    use std::io::Cursor;
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-x86".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+
+    // Explicit frame length is the caller's transport boundary. Do not
+    // consume bytes belonging to a subsequent message on the same stream.
+    let mut stream = Cursor::new([frame.as_slice(), b"NEXT"].concat());
+    let accepted = read_guest_agent_hello_frame(
+        &mut stream,
+        frame.len(),
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap();
+    assert_eq!(accepted, hello);
+    assert_eq!(stream.position() as usize, frame.len());
+
+    // Reject oversized lengths before touching the reader or allocating a
+    // payload. Truncated frames and empty frames are not valid handshakes.
+    let mut oversized = Cursor::new(frame.clone());
+    let error = read_guest_agent_hello_frame(
+        &mut oversized,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES + 1,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("size limit"), "{error}");
+    assert_eq!(oversized.position(), 0);
+
+    let mut truncated = Cursor::new(frame[..frame.len() - 1].to_vec());
+    let error = read_guest_agent_hello_frame(
+        &mut truncated,
+        frame.len(),
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("truncated"), "{error}");
+
+    let mut empty = Cursor::new(frame.clone());
+    assert!(read_guest_agent_hello_frame(
+        &mut empty,
+        0,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .is_err());
+    assert_eq!(empty.position(), 0);
+
+    // A complete frame is still untrusted until identity/digest validation.
+    let mut mismatched = Cursor::new(frame);
+    let mismatch_len = mismatched.get_ref().len();
+    assert!(read_guest_agent_hello_frame(
+        &mut mismatched,
+        mismatch_len,
+        &hello.guest_id,
+        hello.guest_revision,
+        &"d".repeat(64),
+        "x86",
+    )
+    .is_err());
+}
+
+#[test]
 fn guest_agent_json_rejects_invalid_caller_expectations() {
     use primed::windows_vm::GuestAgentHello;
 

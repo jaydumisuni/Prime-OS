@@ -182,6 +182,47 @@ pub fn parse_guest_agent_hello_json(
     Ok(hello)
 }
 
+/// Admit one explicitly length-delimited hello frame from a caller-owned reader.
+///
+/// The transport must establish `frame_len` independently; this function
+/// does not infer framing from EOF, start a socket, or grant guest execution.
+/// Reject an oversized declaration before allocating or reading, and never
+/// consume bytes from a following frame.
+pub fn read_guest_agent_hello_frame<R: Read>(
+    reader: &mut R,
+    frame_len: usize,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    if frame_len == 0 {
+        return Err(WindowsVmError::InvalidGuest(
+            "empty guest-agent hello frame",
+        ));
+    }
+    if frame_len > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    let mut frame = vec![0u8; frame_len];
+    reader.read_exact(&mut frame).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            WindowsVmError::InvalidGuest("truncated guest-agent hello frame")
+        } else {
+            WindowsVmError::Io(error)
+        }
+    })?;
+    parse_guest_agent_hello_json(
+        &frame,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )
+}
+
 pub fn validate_guest_agent_hello(
     hello: &GuestAgentHello,
     expected_guest_id: &str,
