@@ -70,6 +70,24 @@ def test_ambient_path_cannot_replace_review_git_binary(
     assert not marker.exists(), "ambient PATH must not run a shadow Git executable"
 
 
+def test_ambient_dynamic_loader_controls_cannot_reach_review_git(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # Git is a child process: inheriting LD_DEBUG/LD_PRELOAD can expose or
+    # execute attacker-controlled loader state despite a pinned Git binary.
+    if sys.platform != "linux":
+        import pytest
+        pytest.skip("Linux dynamic-loader custody regression")
+    root, head = sample_repo(tmp_path)
+    trace_prefix = tmp_path / "untrusted-loader-trace"
+    monkeypatch.setenv("LD_DEBUG", "libs")
+    monkeypatch.setenv("LD_DEBUG_OUTPUT", str(trace_prefix))
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    assert not list(tmp_path.glob("untrusted-loader-trace.*")), (
+        "ambient loader configuration reached a Git subprocess"
+    )
+
+
 def test_rejects_wrong_head(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     try:
