@@ -162,6 +162,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
     entries = []
+    verified_inputs = []
     for relative in INPUTS:
         directory = root
         for component in Path(relative).parts[:-1]:
@@ -189,6 +190,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
             raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
         working = read_bounded_working_input(file, before)
+        # An ancestor may become replaceable after the initial path preflight.
+        # Recheck before accepting bytes from the opened descriptor.
+        require_protected_ancestors(root)
         directory = root
         require_private_directory(directory)
         for component in Path(relative).parts[:-1]:
@@ -206,6 +210,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if committed != working:
             raise ReviewInputError(f"review input has local changes: {relative}")
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
+        verified_inputs.append((relative, stat_identity(after)))
         entries.append({
             "path": relative,
             "git_blob": blob,
@@ -214,6 +219,26 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         })
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
+    # An earlier input or its staged index entry can change while a later
+    # input is inspected. Revalidate every admitted input after the final
+    # HEAD read, rather than trusting only its per-input snapshot.
+    for relative, admitted_identity in verified_inputs:
+        require_clean_index(root, head, relative)
+        directory = root
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
+        file = root / relative
+        current = file.lstat()
+        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or current.st_uid not in (0, os.geteuid())
+                or current.st_mode & 0o022 or file.resolve() != file
+                or stat_identity(current) != admitted_identity):
+            raise ReviewInputError(f"review input changed after verification: {relative}")
+    # The final Git and filesystem reads are untrusted intervals. Recheck
+    # the worktree root and its ancestors before returning review evidence.
+    require_private_directory(root)
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
