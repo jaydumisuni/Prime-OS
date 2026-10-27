@@ -1982,6 +1982,71 @@ fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
 }
 
 #[test]
+fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
+    use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let canonical = serde_json::to_string(&hello).unwrap();
+
+    // An attacker must not hide a conflicting identity behind duplicate JSON
+    // keys, add host-control fields, or append a second protocol document.
+    let duplicate_id = format!(r#"{{"guest_id":"shadow",{}"#, &canonical[1..]);
+    let host_override = format!(r#"{{"host_override":true,{}"#, &canonical[1..]);
+    let trailing_document = format!("{canonical}{{}}");
+    for (case, payload) in [
+        ("duplicate guest ID", duplicate_id),
+        ("undeclared host override", host_override),
+        ("trailing document", trailing_document),
+    ] {
+        assert!(
+            parse_guest_agent_hello_json(
+                payload.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "{case} must not be admitted as guest identity"
+        );
+    }
+
+    for (case, field, replacement) in [
+        (
+            "unsupported schema",
+            "schema",
+            serde_json::json!("prime.windows-vm-agent.v2"),
+        ),
+        (
+            "unsupported revision",
+            "protocol_revision",
+            serde_json::json!(2),
+        ),
+    ] {
+        let mut payload = serde_json::to_value(&hello).unwrap();
+        payload[field] = replacement;
+        assert!(
+            parse_guest_agent_hello_json(
+                &serde_json::to_vec(&payload).unwrap(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "{case} must fail closed"
+        );
+    }
+}
+
+#[test]
 fn guest_agent_handshake_rejects_undeclared_protocol_fields() {
     use primed::windows_vm::{GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA};
 
