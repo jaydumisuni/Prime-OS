@@ -3878,3 +3878,107 @@ fn guest_agent_harness_length_prefixed_packet_roundtrip_and_adversarial() {
         "partial frame must not report success"
     );
 }
+
+#[test]
+fn guest_agent_harness_packet_stream_two_packets_are_independently_admitted() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    // The caller owns stream framing. A fragmented, once-interrupted reader
+    // must admit two distinct packets without borrowing the next frame's bytes.
+    struct FragmentedInterruptedReader {
+        inner: Cursor<Vec<u8>>,
+        interrupt_once: bool,
+    }
+    impl Read for FragmentedInterruptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.interrupt_once {
+                self.interrupt_once = false;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let chunk = buf.len().min(1);
+            self.inner.read(&mut buf[..chunk])
+        }
+    }
+
+    let first = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "first-harness".to_owned(),
+        guest_revision: 11,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let second = GuestAgentHello {
+        guest_id: "second-harness".to_owned(),
+        guest_revision: 12,
+        guest_sha256: "b".repeat(64),
+        workload_arch: "x86".to_owned(),
+        ..first.clone()
+    };
+    let mut wire = Vec::new();
+    let first_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &first,
+        &first.guest_id,
+        first.guest_revision,
+        &first.guest_sha256,
+        &first.workload_arch,
+    )
+    .unwrap();
+    let second_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &second,
+        &second.guest_id,
+        second.guest_revision,
+        &second.guest_sha256,
+        &second.workload_arch,
+    )
+    .unwrap();
+    assert_eq!(wire.len(), first_bytes + second_bytes);
+    wire.extend_from_slice(b"TRAILER");
+    let mut reader = FragmentedInterruptedReader {
+        inner: Cursor::new(wire),
+        interrupt_once: true,
+    };
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &first.guest_id,
+            first.guest_revision,
+            &first.guest_sha256,
+            &first.workload_arch,
+        )
+        .unwrap(),
+        first
+    );
+    assert_eq!(reader.inner.position() as usize, first_bytes);
+    // Invalid caller authority must not consume the second packet's prefix.
+    assert!(read_guest_agent_hello_packet(
+        &mut reader,
+        "invalid/host",
+        second.guest_revision,
+        &second.guest_sha256,
+        &second.workload_arch,
+    )
+    .is_err());
+    assert_eq!(reader.inner.position() as usize, first_bytes);
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &second.guest_id,
+            second.guest_revision,
+            &second.guest_sha256,
+            &second.workload_arch,
+        )
+        .unwrap(),
+        second
+    );
+    assert_eq!(reader.inner.position() as usize, first_bytes + second_bytes);
+    let mut trailer = [0u8; 7];
+    reader.read_exact(&mut trailer).unwrap();
+    assert_eq!(&trailer, b"TRAILER");
+}
