@@ -596,6 +596,25 @@ pub fn plan_component_registration_order_checked(
     Ok(order)
 }
 
+/// Preview dependent-first unregistration of a complete, separately authenticated
+/// installed component inventory.
+///
+/// This is the exact reverse of the deterministic dependency-first registration
+/// preview: consumers are considered before providers, even across multiple
+/// dependency levels. The shared inventory validator rejects missing manifests,
+/// identity conflicts and dependency cycles before returning any plan.
+///
+/// The result is source-only planning evidence. It performs no unregistration,
+/// shutdown, removal, rollback, activation or protected authority change.
+pub fn plan_component_unregistration_order_checked(
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let mut order = plan_component_registration_order_checked(installed, installed_manifests)?;
+    order.reverse();
+    Ok(order)
+}
+
 /// Dependency-aware P2 removal preflight over a complete installed inventory.
 ///
 /// Callers must separately authenticate and pin installed manifest evidence.
@@ -4015,6 +4034,16 @@ mod tests {
             plan_component_registration_order_checked(&installed, &manifests).unwrap(),
             expected
         );
+        assert_eq!(
+            plan_component_unregistration_order_checked(&installed, &manifests).unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "origins.runtime",
+                "alpha.runtime"
+            ],
+            "dependents must unregister before their dependencies"
+        );
         let mut reversed_installed = installed.clone();
         reversed_installed.reverse();
         let mut reversed_manifests = manifests.clone();
@@ -4024,6 +4053,17 @@ mod tests {
                 .unwrap(),
             expected,
             "source inventory order must not alter dependency registration order"
+        );
+        assert_eq!(
+            plan_component_unregistration_order_checked(&reversed_installed, &reversed_manifests)
+                .unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "origins.runtime",
+                "alpha.runtime"
+            ],
+            "source inventory order must not alter dependency unregistration order"
         );
     }
 
@@ -4057,7 +4097,18 @@ mod tests {
             Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
         ));
         assert!(matches!(
-            plan_component_registration_order_checked(&installed, &[origins, consumer]),
+            plan_component_unregistration_order_checked(&installed, &[origins.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        assert!(matches!(
+            plan_component_registration_order_checked(
+                &installed,
+                &[origins.clone(), consumer.clone()]
+            ),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_order_checked(&installed, &[origins, consumer]),
             Err(ComponentAdmissionError::InstalledDependencyCycle(_))
         ));
     }
