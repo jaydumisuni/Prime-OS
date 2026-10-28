@@ -199,38 +199,44 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     pointer = capture_gitdir_pointer_epoch(root, head_path)
     if pointer is not None:
         files.append(pointer)
-        # A gitfile can point to a linked worktree or a standalone separate
-        # Git directory. Only the linked form has a commondir pointer.
-        commondir = head_path.parent / "commondir"
-        try:
-            commondir.lstat()
-        except FileNotFoundError:
-            # A --separate-git-dir repository has a .git pointer but no
-            # commondir. Verify Git resolves its common dir to this HEAD
-            # directory and pin the absence against late introduction.
+    # commondir can redirect Git's common refs and objects even when .git is
+    # an ordinary directory. Capture its presence or absence independently
+    # of whether this worktree uses a .git pointer.
+    commondir = head_path.parent / "commondir"
+    try:
+        commondir.lstat()
+    except FileNotFoundError:
+        if pointer is not None:
+            # A standalone --separate-git-dir repository has no commondir.
+            # Its Git common directory must remain the pinned HEAD directory.
             common_name = git(
                 root, "rev-parse", "--path-format=absolute", "--git-common-dir"
             ).decode().strip()
             if Path(common_name).resolve() != head_path.parent.resolve():
                 raise ReviewInputError("separate gitdir differs from HEAD authority")
-            absent_commondir = commondir
-        else:
-            common_epoch, common_digest, common_data = control_file_epoch(
-                commondir, 4096
-            )
-            common_line = common_data.rstrip(b"\n")
-            if (not common_line or b"\n" in common_line
-                    or b"\r" in common_line or b"\x00" in common_line):
-                raise ReviewInputError("invalid linked worktree commondir control")
-            common_target = Path(os.fsdecode(common_line))
-            if not common_target.is_absolute():
-                common_target = head_path.parent / common_target
-            expected_common = head_path.parent.parent.parent
-            if common_target.resolve() != expected_common.resolve():
-                raise ReviewInputError("linked worktree commondir differs from Git authority")
-            require_private_directory(expected_common)
-            require_protected_ancestors(expected_common)
-            files.append((commondir, 4096, common_epoch, common_digest))
+        absent_commondir = commondir
+    else:
+        if pointer is None:
+            # A normal .git directory has no authorized linked-worktree
+            # redirection. Fail closed rather than admitting an unpinned
+            # alternate common refs/object store.
+            raise ReviewInputError("unbound ordinary Git commondir control")
+        common_epoch, common_digest, common_data = control_file_epoch(
+            commondir, 4096
+        )
+        common_line = common_data.rstrip(b"\n")
+        if (not common_line or b"\n" in common_line
+                or b"\r" in common_line or b"\x00" in common_line):
+            raise ReviewInputError("invalid linked worktree commondir control")
+        common_target = Path(os.fsdecode(common_line))
+        if not common_target.is_absolute():
+            common_target = head_path.parent / common_target
+        expected_common = head_path.parent.parent.parent
+        if common_target.resolve() != expected_common.resolve():
+            raise ReviewInputError("linked worktree commondir differs from Git authority")
+        require_private_directory(expected_common)
+        require_protected_ancestors(expected_common)
+        files.append((commondir, 4096, common_epoch, common_digest))
     if symbolic == "HEAD":
         if head_data.strip() != expected_head.encode():
             raise ReviewInputError("detached HEAD control differs from expected commit")

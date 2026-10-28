@@ -1032,6 +1032,59 @@ def test_rejects_late_commondir_creation_in_separate_gitdir(
         commondir.unlink(missing_ok=True)
 
 
+def test_rejects_preexisting_commondir_in_ordinary_gitdir(tmp_path: Path) -> None:
+    """An ordinary .git directory must not admit an unbound common-dir pointer."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    commondir = root / ".git" / "commondir"
+    commondir.write_text(".\n")
+    with pytest.raises(module.ReviewInputError, match="commondir|common.*dir"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_late_commondir_creation_in_ordinary_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The absent ordinary .git/commondir is part of the final HEAD epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    alternate = tmp_path / "alternate-common"
+    subprocess.check_call(
+        ["git", "clone", "-q", "--no-hardlinks", str(root), str(alternate)]
+    )
+    subprocess.check_call(
+        ["git", "-C", str(alternate), "-c", "user.name=Test",
+         "-c", "user.email=test@example.invalid", "commit", "-q",
+         "--allow-empty", "-m", "alternate successor"]
+    )
+    assert git(alternate, "rev-parse", "HEAD") != head
+    commondir = root / ".git" / "commondir"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(str(alternate / ".git") + "\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|common.*dir|HEAD"):
+            module.build_manifest(root, head)
+        assert injected and head_reads == 2
+        assert git(root, "rev-parse", "HEAD") != head
+    finally:
+        commondir.unlink(missing_ok=True)
+
+
 def test_rejects_late_git_config_epoch_change(tmp_path: Path, monkeypatch) -> None:
     """An identical-byte config inode replacement after Git probes is not stable."""
     import pytest
