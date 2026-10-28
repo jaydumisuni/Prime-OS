@@ -4263,6 +4263,97 @@ fn guest_agent_packet_flush_failure_cannot_report_success() {
 }
 
 #[test]
+fn guest_agent_packet_writer_retries_interruption_and_denies_zero_progress() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // Gate 6's length prefix and JSON body are one transport operation.
+    // Interrupted writes are retried, while zero progress in either region
+    // must fail without flushing or claiming packet completion.
+    struct FragmentedFaultWriter {
+        bytes: Vec<u8>,
+        interrupted: bool,
+        calls: usize,
+        flushes: usize,
+        stop_after: Option<usize>,
+    }
+    impl Write for FragmentedFaultWriter {
+        fn write(&mut self, chunk: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let remaining = self
+                .stop_after
+                .map(|limit| limit.saturating_sub(self.bytes.len()))
+                .unwrap_or(chunk.len());
+            if remaining == 0 {
+                return Ok(0);
+            }
+            let n = chunk.len().min(remaining).min(2);
+            self.bytes.extend_from_slice(&chunk[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-io-harness".to_owned(),
+            guest_revision: 29,
+            guest_sha256: "f".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        let mut expected = (payload.len() as u32).to_be_bytes().to_vec();
+        expected.extend_from_slice(&payload);
+        for stop_after in [None, Some(0), Some(2), Some(4), Some(7)] {
+            let mut writer = FragmentedFaultWriter {
+                bytes: Vec::new(),
+                interrupted: false,
+                calls: 0,
+                flushes: 0,
+                stop_after,
+            };
+            let result = write_guest_agent_hello_packet(
+                &mut writer,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            match stop_after {
+                None => {
+                    assert_eq!(result.unwrap(), expected.len());
+                    assert_eq!(writer.bytes, expected);
+                    assert_eq!(writer.flushes, 1);
+                }
+                Some(limit) => {
+                    assert!(matches!(
+                        result,
+                        Err(WindowsVmError::Io(error))
+                            if error.kind() == io::ErrorKind::WriteZero
+                    ));
+                    assert_eq!(writer.bytes, expected[..limit]);
+                    assert_eq!(writer.flushes, 0, "failed packet cannot flush");
+                }
+            }
+            assert!(writer.interrupted);
+            assert!(writer.calls >= 2);
+        }
+    }
+}
+
+#[test]
 fn guest_agent_harness_replay_mismatch_isolates_following_packet() {
     use primed::windows_vm::{
         read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
