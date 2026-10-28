@@ -1085,6 +1085,66 @@ def test_rejects_late_commondir_creation_in_ordinary_gitdir(
         commondir.unlink(missing_ok=True)
 
 
+def test_rejects_late_dangling_commondir_pointer_in_ordinary_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Even an unresolved commondir symlink invalidates an absent-file epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    commondir = root / ".git" / "commondir"
+    original_git = module.git
+    head_reads = 0
+
+    def introduce_dangling_pointer(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.symlink_to(tmp_path / "missing-common-gitdir")
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_dangling_pointer)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|HEAD"):
+            module.build_manifest(root, head)
+        assert head_reads == 2
+        assert commondir.is_symlink() and not commondir.exists()
+    finally:
+        commondir.unlink(missing_ok=True)
+
+
+def test_rejects_late_dangling_object_alternates_pointer(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An unresolved object-store pointer must not escape final custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    pointer = root / ".git" / "objects" / "info" / "alternates"
+    original_git = module.git
+    head_reads = 0
+
+    def introduce_dangling_alternate(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.symlink_to(tmp_path / "missing-object-store")
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_dangling_alternate)
+    try:
+        with pytest.raises(module.ReviewInputError, match="object alternates"):
+            module.build_manifest(root, head)
+        assert head_reads == 2
+        assert pointer.is_symlink() and not pointer.exists()
+    finally:
+        pointer.unlink(missing_ok=True)
+
+
 def test_rejects_late_git_config_epoch_change(tmp_path: Path, monkeypatch) -> None:
     """An identical-byte config inode replacement after Git probes is not stable."""
     import pytest
