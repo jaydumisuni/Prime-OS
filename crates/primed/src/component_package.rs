@@ -4,7 +4,7 @@ use prime_contracts::{
     APPLICATIONS_PROJECTION_SCHEMA, CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -539,6 +539,61 @@ fn index_installed_manifests<'a>(
         ));
     }
     Ok(manifests)
+}
+
+/// Return a deterministic dependency-first registration preview for a complete,
+/// separately authenticated installed manifest inventory.
+///
+/// This is source-only planning evidence. It neither registers services nor
+/// authorizes component activation, removal, installation, or promotion.
+/// Unrelated ready components are ordered by canonical component ID.
+pub fn plan_component_registration_order_checked(
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut outstanding = BTreeMap::<&str, usize>::new();
+    let mut dependents = BTreeMap::<&str, Vec<&str>>::new();
+    for (&id, manifest) in &manifests {
+        outstanding.insert(id, manifest.dependencies.len());
+        for dependency in &manifest.dependencies {
+            dependents
+                .entry(dependency.component_id.as_str())
+                .or_default()
+                .push(id);
+        }
+    }
+    let mut ready: BTreeSet<&str> = outstanding
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut order = Vec::with_capacity(manifests.len());
+    while let Some(id) = ready.pop_first() {
+        order.push(id.to_owned());
+        if let Some(users) = dependents.get(id) {
+            for user in users {
+                let count = outstanding
+                    .get_mut(user)
+                    .expect("complete inventory dependencies were validated");
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(user);
+                }
+            }
+        }
+    }
+    // The inventory validator already rejects cycles. Retain this guard
+    // independently so a future refactor cannot emit a partial preview.
+    if order.len() != manifests.len() {
+        let id = outstanding
+            .iter()
+            .find_map(|(&id, &count)| (count > 0).then_some(id))
+            .expect("incomplete registration order has an unresolved dependency");
+        return Err(ComponentAdmissionError::InstalledDependencyCycle(
+            id.to_owned(),
+        ));
+    }
+    Ok(order)
 }
 
 /// Dependency-aware P2 removal preflight over a complete installed inventory.
@@ -3917,6 +3972,93 @@ mod tests {
                 &forged_current, &retained, &retained_manifest, &installed, &[target_manifest, consumer_manifest]
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == current.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_registration_order_is_dependency_first_and_stable() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let origins = make("origins.runtime", &[]);
+        let provider = make("provider.runtime", &["origins.runtime"]);
+        let consumer = make("consumer.runtime", &["provider.runtime"]);
+        let alpha = make("alpha.runtime", &[]);
+        let manifests = vec![consumer, alpha, provider, origins];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let expected = vec![
+            "alpha.runtime".to_owned(),
+            "origins.runtime".to_owned(),
+            "provider.runtime".to_owned(),
+            "consumer.runtime".to_owned(),
+        ];
+        assert_eq!(
+            plan_component_registration_order_checked(&installed, &manifests).unwrap(),
+            expected
+        );
+        let mut reversed_installed = installed.clone();
+        reversed_installed.reverse();
+        let mut reversed_manifests = manifests.clone();
+        reversed_manifests.reverse();
+        assert_eq!(
+            plan_component_registration_order_checked(&reversed_installed, &reversed_manifests,)
+                .unwrap(),
+            expected,
+            "source inventory order must not alter dependency registration order"
+        );
+    }
+
+    #[test]
+    fn checked_registration_order_rejects_incomplete_or_cyclic_inventory() {
+        let mut origins = manifest(b"origins");
+        origins.dependencies = vec![ComponentDependency {
+            component_id: "consumer.runtime".to_owned(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let mut consumer = manifest(b"consumer");
+        consumer.component_id = "consumer.runtime".to_owned();
+        consumer.services = vec!["consumerd".to_owned()];
+        consumer.capabilities = vec!["consumer.factory".to_owned()];
+        consumer.dependencies = vec![ComponentDependency {
+            component_id: origins.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let installed: Vec<_> = [&origins, &consumer]
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        assert!(matches!(
+            plan_component_registration_order_checked(&installed, &[origins.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        assert!(matches!(
+            plan_component_registration_order_checked(&installed, &[origins, consumer]),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
         ));
     }
 }
