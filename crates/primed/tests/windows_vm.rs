@@ -4887,3 +4887,113 @@ fn guest_agent_harness_payload_writer_flush_custody() {
         assert_eq!(denied.flushes, 0, "authority failure must precede I/O");
     }
 }
+
+#[test]
+fn guest_agent_protocol_revision_numeric_tokens_fail_closed_without_frame_bleed() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // The protocol revision is a strict integer contract, not a JSON number
+    // that can be rounded, coerced, or interpreted as another protocol.
+    // A rejected frame must not consume a following authorized frame.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-protocol-token".to_owned(),
+            guest_revision: 49,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let valid_json = serde_json::to_string(&expected).unwrap();
+        assert!(valid_json.contains("\"protocol_revision\":1"));
+        for (case, token) in [
+            ("zero", "0"),
+            ("unsupported future", "2"),
+            ("negative", "-1"),
+            ("fraction", "1.0"),
+            ("exponent", "1e0"),
+            ("leading zero", "01"),
+            ("u64 overflow", "18446744073709551616"),
+            ("string coercion", "\"1\""),
+            ("null coercion", "null"),
+            ("boolean coercion", "true"),
+        ] {
+            let rejected = valid_json.replacen(
+                "\"protocol_revision\":1",
+                &format!("\"protocol_revision\":{token}"),
+                1,
+            );
+            assert_ne!(rejected, valid_json, "{arch}/{case}");
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        rejected.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct admission must reject noncanonical protocol revision"
+            );
+
+            let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(rejected.as_bytes());
+            let next_frame_start = wire.len();
+            let next_frame_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed admission must reject protocol token"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                next_frame_start,
+                "{arch}/{case}"
+            );
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following authorized frame must remain readable"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                next_frame_start + next_frame_len,
+                "{arch}/{case}"
+            );
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+    }
+}
