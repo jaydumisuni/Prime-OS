@@ -4062,3 +4062,135 @@ fn guest_agent_harness_rejected_packet_preserves_following_frame() {
         assert_eq!(&trailer, b"TRAILER", "{case}");
     }
 }
+
+#[test]
+fn guest_agent_harness_maximum_length_packet_keeps_next_packet_isolated() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // The direct JSON parser's 8 KiB bound must also hold at the actual
+    // length-prefixed stream boundary. A full-sized rejected frame may not
+    // borrow any bytes from the next independent packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-boundary-harness".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&hello).unwrap();
+        assert!(canonical.len() < WINDOWS_VM_AGENT_HELLO_MAX_BYTES);
+        let mut boundary = vec![b' '; WINDOWS_VM_AGENT_HELLO_MAX_BYTES - canonical.len()];
+        boundary.extend_from_slice(&canonical);
+
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(boundary.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&boundary);
+        let second_start = wire.len();
+        let second_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+        let mut stream = Cursor::new(wire);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(stream.position() as usize, second_start);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(stream.position() as usize, second_start + second_len);
+        let mut trailer = [0u8; 7];
+        stream.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER");
+
+        let mut untrusted = hello.clone();
+        untrusted.guest_id = "unauthorized-boundary".to_owned();
+        let unauthorized_json = serde_json::to_vec(&untrusted).unwrap();
+        let mut unauthorized =
+            vec![b' '; WINDOWS_VM_AGENT_HELLO_MAX_BYTES - unauthorized_json.len()];
+        unauthorized.extend_from_slice(&unauthorized_json);
+        let mut rejected_wire = Vec::new();
+        rejected_wire.extend_from_slice(&(unauthorized.len() as u32).to_be_bytes());
+        rejected_wire.extend_from_slice(&unauthorized);
+        let next_start = rejected_wire.len();
+        write_guest_agent_hello_packet(
+            &mut rejected_wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let mut rejected_stream = Cursor::new(rejected_wire);
+        assert!(read_guest_agent_hello_packet(
+            &mut rejected_stream,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(rejected_stream.position() as usize, next_start);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut rejected_stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+
+        // An oversized declaration is rejected after its prefix only. It is
+        // not safe to infer a new frame boundary after a dishonest length.
+        let mut oversized = Cursor::new(
+            [
+                (WINDOWS_VM_AGENT_HELLO_MAX_BYTES as u32 + 1)
+                    .to_be_bytes()
+                    .as_slice(),
+                b"NEXT",
+            ]
+            .concat(),
+        );
+        assert!(read_guest_agent_hello_packet(
+            &mut oversized,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(oversized.position(), 4);
+    }
+}
