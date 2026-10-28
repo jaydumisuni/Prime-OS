@@ -1030,3 +1030,58 @@ def test_rejects_late_commondir_creation_in_separate_gitdir(
         assert injected and head_reads == 2
     finally:
         commondir.unlink(missing_ok=True)
+
+
+def test_rejects_late_git_config_epoch_change(tmp_path: Path, monkeypatch) -> None:
+    """An identical-byte config inode replacement after Git probes is not stable."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    config = root / ".git" / "config"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def replace_config_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = config.with_name("config.replacement")
+                replacement.write_bytes(config.read_bytes())
+                os.replace(replacement, config)
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_config_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="config|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+
+
+def test_rejects_late_git_worktree_config_creation(tmp_path: Path, monkeypatch) -> None:
+    """A previously absent config.worktree appearing after Git probes is unsafe."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    config = root / ".git" / "config.worktree"
+    assert not config.exists()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def create_config_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                config.write_bytes(b"# late worktree config\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", create_config_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="config|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2

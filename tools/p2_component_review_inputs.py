@@ -303,6 +303,23 @@ def require_no_pending_git_control_locks(paths: tuple[Path, ...]) -> None:
         raise ReviewInputError(f"pending Git control update: {lock}")
 
 
+def capture_config_epochs(paths: tuple[Path, ...]) -> tuple[list, list]:
+    """Pin present Git config files and absence of optional worktree config."""
+    present, absent = [], []
+    for path in paths:
+        try:
+            epoch, digest, _ = control_file_epoch(path, MAX_REVIEW_INPUT_BYTES)
+        except FileNotFoundError:
+            # Missing config is a meaningful state. Its parent must be
+            # trustworthy, and later creation invalidates the review epoch.
+            require_private_directory(path.parent)
+            require_protected_ancestors(path.parent)
+            absent.append(path)
+        else:
+            present.append((path, MAX_REVIEW_INPUT_BYTES, epoch, digest))
+    return present, absent
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -416,11 +433,18 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # Git config updates can rebind object and worktree interpretation during
     # the final read-only probes. Treat pending repository or worktree config
     # writes as an unstable review epoch, just like HEAD/index updates.
+    config_paths = (
+        git_control_path(root, "config"),
+        git_control_path(root, "config.worktree"),
+    )
+    config_files, absent_config = capture_config_epochs(config_paths)
+    # Git config can change without leaving a .lock file (e.g. direct
+    # replacement). Bind its actual inode/bytes and optional-file absence.
+    head_files.extend(config_files)
     control_paths = [
         index_path,
         git_control_path(root, "packed-refs"),
-        git_control_path(root, "config"),
-        git_control_path(root, "config.worktree"),
+        *config_paths,
     ]
     control_paths.extend(path for path, _, _, _ in head_files)
     if absent_ref is not None:
@@ -460,6 +484,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if require_index_epoch(index_path) != index_epoch:
         raise ReviewInputError("review index changed after final Git probe")
     verify_head_epoch(head_epoch)
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
     require_no_pending_git_control_locks(lock_paths)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
