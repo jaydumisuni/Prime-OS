@@ -177,6 +177,8 @@ pub enum ComponentAdmissionError {
     InvalidTargetPackageDigest(String),
     #[error("component publisher signature was not admitted")]
     SignatureRejected,
+    #[error("component {0} requires Prime generation handoff, not component installation")]
+    BaseSystemGenerationHandoffRequired(String),
     #[error("component does not support host architecture {0}")]
     ArchitectureMismatch(String),
     #[error(
@@ -328,6 +330,16 @@ pub fn plan_component_transaction_checked(
         return Err(ComponentAdmissionError::CandidateManifestMismatch(
             package.component_id.clone(),
         ));
+    }
+    // A VerifiedComponentPackage is publicly constructible. Checked planning
+    // must independently preserve the immutable-base boundary even when a
+    // caller skips the offline verifier's GenerationHandoff outcome.
+    if !candidate_manifest.base_system_requirements.is_empty() {
+        return Err(
+            ComponentAdmissionError::BaseSystemGenerationHandoffRequired(
+                candidate_manifest.component_id.clone(),
+            ),
+        );
     }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     if matches!(&plan.kind, ComponentTransactionKind::Update { .. }) {
@@ -1348,6 +1360,58 @@ mod tests {
                 requirements: vec!["kernel.module.example".to_owned()],
             }
         );
+    }
+
+    #[test]
+    fn checked_component_plan_never_bypasses_base_generation_handoff() {
+        // An offline verifier returns GenerationHandoff for this manifest.
+        // A caller can nevertheless construct the public VerifiedComponentPackage
+        // directly: checked planning must not turn it into a component install.
+        let mut candidate = manifest(b"base-driver");
+        candidate.base_system_requirements = vec!["kernel.module.example".to_owned()];
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/unadmitted-base-driver.primepkg"),
+            package_digest: candidate.package_digest.clone(),
+            component_id: candidate.component_id.clone(),
+            revision: candidate.revision,
+            version: candidate.version.clone(),
+            publisher_id: candidate.publisher_id.clone(),
+        };
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &[], &[], &candidate),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == candidate.component_id
+        ));
+
+        let mut optional = candidate.clone();
+        optional.base_system_requirements.clear();
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &[], &[], &optional),
+            Ok(ComponentTransactionPlan {
+                kind: ComponentTransactionKind::Install,
+                ..
+            })
+        ));
+
+        let current = InstalledComponent {
+            component_id: candidate.component_id.clone(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut original = candidate.clone();
+        original.base_system_requirements.clear();
+        original.revision = 1;
+        original.package_digest = current.package_digest.clone();
+        assert!(matches!(
+            plan_component_transaction_checked(
+                &package,
+                std::slice::from_ref(&current),
+                &[original],
+                &candidate,
+            ),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == candidate.component_id
+        ));
     }
 
     #[test]
