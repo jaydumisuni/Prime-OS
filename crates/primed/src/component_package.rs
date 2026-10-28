@@ -214,6 +214,8 @@ pub enum ComponentAdmissionError {
     },
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
+    #[error("component {0} appears more than once in the registration selection")]
+    DuplicateRegistrationTarget(String),
     #[error("component {0} appears more than once in the unregistration selection")]
     DuplicateUnregistrationTarget(String),
     #[error("registration {registration} is claimed by both {first_component_id} and {second_component_id}")]
@@ -615,6 +617,59 @@ pub fn plan_component_unregistration_order_checked(
     let mut order = plan_component_registration_order_checked(installed, installed_manifests)?;
     order.reverse();
     Ok(order)
+}
+
+/// Preview registration of selected optional components together with every
+/// transitively required installed prerequisite, in deterministic dependency-first
+/// order. All installed components and pinned manifests must pass full inventory
+/// validation even when a selection is empty.
+///
+/// The preview is deliberately conservative: it includes prerequisites whether
+/// or not a separate runtime has already registered them. It does not infer
+/// current registration state, install packages, register services or capabilities,
+/// or grant activation/promotion authority.
+pub fn plan_component_registration_subset_checked(
+    selected_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let full_order = plan_component_registration_order_checked(installed, installed_manifests)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut selected = BTreeSet::new();
+    for &id in selected_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !manifests.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !selected.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateRegistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut required = BTreeSet::new();
+    let mut pending: Vec<&str> = selected.into_iter().collect();
+    while let Some(id) = pending.pop() {
+        if required.insert(id) {
+            let manifest = manifests
+                .get(id)
+                .expect("selection and dependency inventory were validated");
+            pending.extend(
+                manifest
+                    .dependencies
+                    .iter()
+                    .map(|dependency| dependency.component_id.as_str()),
+            );
+        }
+    }
+    Ok(full_order
+        .into_iter()
+        .filter(|id| required.contains(id.as_str()))
+        .collect())
 }
 
 /// Preview a selected subset of component unregistrations without stranding
@@ -4203,6 +4258,92 @@ mod tests {
             plan_component_unregistration_subset_checked(&[], &installed, &manifests).unwrap(),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn checked_subset_registration_includes_transitive_prerequisites() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.runtime", &["provider.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("provider.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let expected = vec!["origins.runtime", "provider.runtime", "consumer.runtime"];
+        assert_eq!(
+            plan_component_registration_subset_checked(
+                &["consumer.runtime"],
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_registration_subset_checked(
+                &["provider.runtime", "consumer.runtime"],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(
+            plan_component_registration_subset_checked(&[], &installed, &manifests).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["provider.runtime", "provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateRegistrationTarget(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["missing.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(id))
+                if id == "missing.runtime"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["Not Canonical"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Not Canonical"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &[], &installed, &manifests[..3]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id))
+                if id == "origins.runtime"
+        ));
     }
 
     #[test]
