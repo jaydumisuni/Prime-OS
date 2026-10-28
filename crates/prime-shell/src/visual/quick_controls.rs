@@ -177,6 +177,8 @@ fn paint_card(
 /// Six-card compact system control panel, matching the approved reference
 /// grouping. Connected values are read from Ubuntu; unsupported control
 /// mutations are not falsely presented as completed.
+/// Compact owner-reference preview. Values are live Ubuntu observations;
+/// these tiles and sliders do not imply provider mutations.
 pub(crate) fn paint_ubuntu_host_preview(
     canvas: &mut Canvas<'_>,
     text: &mut TextSystem,
@@ -187,41 +189,31 @@ pub(crate) fn paint_ubuntu_host_preview(
     let alpha = (view.progress.clamp(0.0, 1.0) * 255.0) as u8;
     let w = canvas.width as i32;
     let h = canvas.height as i32;
-    let body = Rect::new(
+    let outer = Rect::new(
         1,
         1,
         canvas.width.saturating_sub(2),
         canvas.height.saturating_sub(2),
     );
-    canvas.fill_rounded_rect(body, 22, theme.base_0.with_alpha(alpha));
-    canvas.stroke_rounded_rect(body, 22, 1, theme.cyan.with_alpha(alpha / 2));
-    let heading = TextStyle {
-        size_px: 15,
+    canvas.fill_rounded_rect(outer, 16, theme.base_0.with_alpha(alpha));
+    canvas.stroke_rounded_rect(outer, 16, 1, theme.cyan.with_alpha(alpha / 2));
+    let group = Rect::new(
+        14,
+        15,
+        canvas.width.saturating_sub(28),
+        canvas.height.saturating_sub(28),
+    );
+    canvas.fill_rounded_rect(group, 14, theme.panel.with_alpha(alpha / 3));
+    canvas.stroke_rounded_rect(group, 14, 1, theme.cyan.with_alpha(alpha / 3));
+    let label_style = TextStyle {
+        size_px: 11,
         weight: FontWeight::Semibold,
     };
-    let regular = TextStyle {
-        size_px: 11,
+    let status_style = TextStyle {
+        size_px: 10,
         weight: FontWeight::Regular,
     };
-    let small = TextStyle {
-        size_px: 10,
-        weight: FontWeight::Semibold,
-    };
-    text.draw(
-        canvas,
-        (21, 18),
-        "Quick Controls",
-        heading,
-        theme.text.with_alpha(alpha),
-    );
-    text.draw(
-        canvas,
-        (w - 58, 20),
-        "Close",
-        regular,
-        theme.muted.with_alpha(alpha),
-    );
-    let fetch = |needle: &str| -> String {
+    let lookup = |needle: &str| -> String {
         view.lines
             .iter()
             .find_map(|line| {
@@ -231,162 +223,104 @@ pub(crate) fn paint_ubuntu_host_preview(
             })
             .unwrap_or_else(|| "Unavailable".to_owned())
     };
-    let top_labels = ["Wi-Fi", "Bluetooth", "Performance"];
-    let top_values = [fetch("WIFI"), fetch("BLUETOOTH"), fetch("PERFORMANCE")];
-    let top_icons = [Icon::Network, Icon::Status, Icon::Health];
-    let margin = 20i32;
-    let gap = 12i32;
-    let tile_w = ((w - 2 * margin - 2 * gap) / 3).max(48);
-    let top_y = 56;
-    for i in 0..3 {
-        let x = margin + i as i32 * (tile_w + gap);
-        let card = Rect::new(x, top_y, tile_w as u32, 98);
-        canvas.fill_rounded_rect(
-            card,
-            15,
-            theme.panel.with_alpha(((u16::from(alpha) * 3) / 4) as u8),
-        );
-        canvas.stroke_rounded_rect(
-            card,
-            15,
-            1,
-            if top_values[i].eq_ignore_ascii_case("unavailable") {
-                theme.muted.with_alpha(alpha / 3)
-            } else {
-                theme.cyan.with_alpha(alpha / 2)
-            },
-        );
-        let icon_rect = Rect::new(x + tile_w / 2 - 19, top_y + 10, 38, 38);
-        if let Some(image) = reference_icons::quick_icon_for(top_labels[i]) {
-            reference_icons::paint_icon(
-                canvas,
-                image,
-                Rect::new(icon_rect.x - 1, icon_rect.y - 2, 40, 40),
-                alpha,
-            );
+    let top = [
+        ("Wi-Fi", "WIFI"),
+        ("Bluetooth", "BLUETOOTH"),
+        ("Performance", "PERFORMANCE"),
+    ];
+    let cx = [w / 6, w / 2, w * 5 / 6];
+    for (index, (label, key)) in top.iter().enumerate() {
+        let center = cx[index];
+        let icon = Rect::new(center - 25, 26, 50, 50);
+        if let Some(asset) = reference_icons::quick_icon_for(label) {
+            reference_icons::paint_icon(canvas, asset, icon, alpha);
         } else {
-            canvas.fill_rounded_rect(icon_rect, 10, theme.violet.with_alpha(alpha / 3));
-            draw_icon(
-                canvas,
-                Rect::new(icon_rect.x + 7, icon_rect.y + 7, 24, 24),
-                top_icons[i],
-                theme.cyan.with_alpha(alpha),
-            );
+            let fallback = [Icon::Network, Icon::Status, Icon::Health][index];
+            draw_icon(canvas, icon, fallback, theme.cyan.with_alpha(alpha));
         }
-        let lab = top_labels[i];
-        let lab_width = text.measure(lab, small).width as i32;
+        let width = text.measure(label, label_style).width as i32;
         text.draw(
             canvas,
-            (x + (tile_w - lab_width) / 2, top_y + 53),
-            lab,
-            small,
+            (center - width / 2, 76),
+            label,
+            label_style,
             theme.text.with_alpha(alpha),
         );
-        let val = top_values[i].as_str();
-        let compact = if val.len() > 13 { &val[..13] } else { val };
-        let value_width = text.measure(compact, regular).width as i32;
+        let raw = lookup(key);
+        // Truncate at character boundaries, not byte offsets, for non-ASCII statuses.
+        let value: String = raw.chars().take(12).collect();
+        let tw = text.measure(&value, status_style).width as i32;
         text.draw(
             canvas,
-            (x + (tile_w - value_width) / 2, top_y + 73),
-            compact,
-            regular,
+            (center - tw / 2, 94),
+            &value,
+            status_style,
             theme.muted.with_alpha(alpha),
         );
     }
-    let divider_y = 171;
-    canvas.fill_rect(
-        Rect::new(21, divider_y, canvas.width.saturating_sub(42), 1),
-        theme.text.with_alpha(27),
-    );
-    let volume = fetch("VOLUME");
-    for (index, (label, val)) in [("Brightness", fetch("BRIGHTNESS")), ("Volume", volume)]
+
+    let track_x = 75;
+    let track_w = (w - track_x - 33).max(32);
+    for (index, (key, icon)) in [("BRIGHTNESS", Icon::Settings), ("VOLUME", Icon::Audio)]
         .iter()
         .enumerate()
     {
-        let y = 186 + index as i32 * 57;
-        text.draw(
+        let center_y = 133 + index as i32 * 39;
+        draw_icon(
             canvas,
-            (23, y),
-            label,
-            regular,
+            Rect::new(28, center_y - 11, 22, 22),
+            *icon,
             theme.text.with_alpha(alpha),
         );
-        let track_x = 137;
-        let track_w = (w - track_x - 31).max(36);
-        let track = Rect::new(track_x, y + 4, track_w as u32, 6);
-        canvas.fill_rounded_rect(track, 3, theme.muted.with_alpha(91));
-        if let Some(percentage) = val.strip_suffix('%').and_then(|v| v.parse::<i32>().ok()) {
-            let progress = track_w * percentage.clamp(0, 100) / 100;
-            if progress > 0 {
+        let track = Rect::new(track_x, center_y - 3, track_w as u32, 6);
+        canvas.fill_rounded_rect(track, 3, theme.muted.with_alpha(74));
+        let value = lookup(key);
+        if let Some(percent) = value.strip_suffix('%').and_then(|v| v.parse::<i32>().ok()) {
+            let filled = track_w * percent.clamp(0, 100) / 100;
+            if filled > 0 {
                 canvas.fill_rounded_rect(
-                    Rect::new(track_x, y + 4, progress as u32, 6),
+                    Rect::new(track_x, center_y - 3, filled as u32, 6),
                     3,
                     theme.cyan.with_alpha(alpha),
                 );
                 canvas.fill_rounded_rect(
-                    Rect::new(track_x + progress - 6, y, 12, 14),
+                    Rect::new(track_x + filled - 6, center_y - 7, 12, 14),
                     7,
                     theme.text.with_alpha(alpha),
                 );
             }
         }
-        text.draw(
-            canvas,
-            (23, y + 19),
-            val,
-            TextStyle {
-                size_px: 10,
-                weight: FontWeight::Regular,
-            },
-            theme.muted.with_alpha(alpha),
-        );
     }
-    let bottom_y = 310.min(h - 106);
-    let bottom = [
-        ("Focus", Icon::Status),
-        ("Dark Mode", Icon::Settings),
-        ("Night Light", Icon::Health),
-    ];
-    for (i, (label, icon)) in bottom.iter().enumerate() {
-        let x = margin + i as i32 * (tile_w + gap);
-        let card = Rect::new(x, bottom_y, tile_w as u32, 64);
-        canvas.fill_rounded_rect(card, 12, theme.panel.with_alpha(alpha / 2));
-        canvas.stroke_rounded_rect(card, 12, 1, theme.cyan.with_alpha(alpha / 3));
-        if let Some(image) = reference_icons::quick_icon_for(label) {
+    let bottom = ["Focus", "Dark Mode", "Night Light"];
+    for (index, label) in bottom.iter().enumerate() {
+        let center = cx[index];
+        let tile = Rect::new(center - 24, h - 66, 48, 37);
+        canvas.fill_rounded_rect(tile, 10, theme.base_0.with_alpha(alpha / 2));
+        canvas.stroke_rounded_rect(tile, 10, 1, theme.cyan.with_alpha(alpha / 2));
+        if let Some(asset) = reference_icons::quick_icon_for(label) {
             reference_icons::paint_icon(
                 canvas,
-                image,
-                Rect::new(x + tile_w / 2 - 25, bottom_y + 1, 50, 50),
+                asset,
+                Rect::new(center - 24, h - 70, 48, 48),
                 alpha,
             );
         } else {
             draw_icon(
                 canvas,
-                Rect::new(x + tile_w / 2 - 13, bottom_y + 9, 26, 26),
-                *icon,
+                Rect::new(center - 15, h - 63, 30, 30),
+                Icon::Settings,
                 theme.cyan.with_alpha(alpha),
             );
         }
-        let width = text.measure(label, small).width as i32;
+        let tw = text.measure(label, label_style).width as i32;
         text.draw(
             canvas,
-            (x + (tile_w - width) / 2, bottom_y + 43),
+            (center - tw / 2, h - 25),
             label,
-            small,
+            label_style,
             theme.text.with_alpha(alpha),
         );
     }
-    let footer = "Ubuntu-backed preview • controls require provider approval";
-    text.draw(
-        canvas,
-        (19, h - 21),
-        footer,
-        TextStyle {
-            size_px: 9,
-            weight: FontWeight::Regular,
-        },
-        theme.muted.with_alpha(alpha),
-    );
 }
 
 pub(crate) fn paint_quick_controls_surface(

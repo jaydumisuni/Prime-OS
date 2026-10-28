@@ -1,4 +1,4 @@
-"""Make a layered, owner-reference cosmic wallpaper for the isolated Ubuntu preview.
+"""Make an owner-reference cosmic wallpaper for isolated Prime UI review.
 
 Source is the exact owner-provided upper mockup viewport, transferred with SHA-256
 3c2bfe93eac6845f8b7de3f0e96a968acfe708adda0139da73b8f2bde2a122e6.
@@ -34,41 +34,50 @@ for _ in range(530):
     base[max(0,y-radius):min(h,y+radius+1), max(0,x-radius):min(w,x+radius+1)]+=np.array((value*.35,value*.57,value))
 mask=Image.new("L",(w,h),0)
 d=ImageDraw.Draw(mask)
-d.ellipse((317,-2,1347,588),fill=255)
-# Force-remove every flattened launcher search/text fragment in the central
-# reference; the clean Menu-closed emblem is composited as a separate asset.
-# A soft mask edge preserves the surrounding star field.
-d.rounded_rectangle((548,75,1118,545),radius=70,fill=255)
-# The flattened top mockup has app labels and search glass across the emblem.
-# Remove its entire center; the logo is restored below from the separate
-# owner-supplied Menu-closed reference art, never from placeholder geometry.
-d.ellipse((665,136,999,444),fill=255)
-d.rectangle((0,0,95,581),fill=255)
-d.rectangle((1472,0,1671,232),fill=255)
-d.rectangle((168,449,454,581),fill=255)
-d.rectangle((1231,447,1541,581),fill=255)
-d.rectangle((372,313,552,549),fill=255)
-d.rectangle((1116,311,1306,550),fill=255)
-d.rectangle((657,308,1019,354),fill=255)
-mask=mask.filter(ImageFilter.MaxFilter(19)).filter(ImageFilter.GaussianBlur(13))
+# Mask only the flattened controls, not the bright orbital ring and cosmic
+# background. All coordinates refer to the provided 1672x582 top viewport.
+# Owner visual gate: source control positions are masked and redrawn by
+# native Shell. Preserve all ring and scenic pixels outside these regions.
+unwanted=[
+    (0,0,94,581),         # left navigation
+    (1470,0,1671,215),   # Machine / Projects / Bin
+    (781,17,898,145),    # Browser
+    (636,64,751,186),    # Machine
+    (920,62,1044,190),   # Settings
+    (544,156,658,278),   # Terminal
+    (507,271,612,391),   # Files
+    (572,376,680,501),   # Music
+    (687,440,795,575),   # Tools
+    (887,440,993,575),   # Chat
+    (1006,380,1116,510), # Gallery
+    (1064,275,1178,389), # Notes
+    (1030,160,1134,279), # Store
+    (367,305,560,548),   # left interactive stack and arrow
+    (1099,310,1296,551), # right interactive stack and arrow
+    (172,457,415,575),   # left instruction callout
+    (1277,462,1513,578), # right instruction callout
+    (663,305,1012,361),  # flattened search field
+]
+for bounds in unwanted:
+    d.rounded_rectangle(bounds,radius=10,fill=255)
+# Central image is replaced by an untouched clean Menu-closed source emblem,
+# but preserve the surrounding luminous circular ring and cosmic stars.
+d.ellipse((720,161,960,421),fill=255)
+mask=mask.filter(ImageFilter.MaxFilter(87)).filter(ImageFilter.GaussianBlur(19))
+# Restore the original left floating monolith and light beam, not the
+# nearby left-side stack. An oversized global dilation erased this real scene.
+hole=Image.new("L",(w,h),0)
+hd=ImageDraw.Draw(hole)
+hd.polygon([(238,180),(373,180),(377,306),(365,436),(233,442)],fill=255)
+hole=hole.filter(ImageFilter.GaussianBlur(11))
+mask_arr=np.asarray(mask,dtype=np.float32)
+hole_arr=np.asarray(hole,dtype=np.float32)/255.0
+mask=Image.fromarray(np.uint8(np.clip(mask_arr*(1-hole_arr),0,255)),'L')
 strength=np.asarray(mask).astype(np.float32)/255.0
 # The flattened mockup embeds text *inside* its central logo preservation
 # ellipse. Remove those remnants without erasing the luminous A/ring.
 # Apply full alpha to actual unwanted glyph/search interiors. The broadened
 # outline remains feathered by the original mask above.
-strong=Image.new("L",(w,h),0)
-glyphs=ImageDraw.Draw(strong)
-for bounds in [
-    (755,111,915,173),   # flattened Browser name, NOT the logo tip
-    (642,171,745,225),   # Machine name near left ring
-    (931,166,1056,226),  # Settings name near right ring
-    (644,299,1032,362),  # duplicate search glass and lettering
-    (613,453,762,504),   # menu labels near lower-left ring
-    (878,451,1075,512),  # menu labels near lower-right ring
-]:
-    glyphs.rectangle(bounds,fill=255)
-strong=strong.filter(ImageFilter.GaussianBlur(3))
-strength=np.maximum(strength,np.asarray(strong).astype(np.float32)/255.0)
 rgb=np.clip(data*(1-strength[:,:,None])+base*strength[:,:,None],0,255).astype(np.uint8)
 image=Image.fromarray(rgb).convert("RGBA")
 # Do not redraw or replace the central artwork embedded in the approved

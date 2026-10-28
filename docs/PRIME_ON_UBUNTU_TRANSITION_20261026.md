@@ -321,3 +321,75 @@ This is NOT final acceptance.
   image alone. Any reconstruction is an approximation and must be labeled.
 - Preserve active Ubuntu XFCE and separate previous Prime preview.
   No merge, default-desktop switch, image/ISO release or fake 100% claim.
+
+### 28 October 2026 — workspace visual review, preserved rings and right-side controls
+
+The owner reiterated that pixel-identical visual acceptance, not build passing,
+is the promotion gate. Work continued ONLY in the isolated KRATOS branch
+ui/prime-mockup-acceptance-20261026.
+
+- Recovered the authoritative flattened source image and previous clean
+  Menu-closed emblem. Replaced over-wide masks with bounded control
+  masks, retaining surrounding real orbital and star-field pixels.
+- Restored the left floating monolith with a carefully bounded polygon
+  that excludes stack-arrow artwork. Rejected earlier candidate masks
+  leaving flattened card outlines; selected the reviewed third candidate.
+- tools/prime-on-ubuntu/generate_cosmic_preview_wallpaper.py reproducibly
+  builds the selected cosmic_clean_1366.png, a wallpaper not a clickable
+  fake desktop screenshot.
+- Preview-only Quick Controls moved to the lower-right bottom corner.
+  The rail trigger, six actual tile statuses, brightness and volume
+  remain, with honest unavailability for unsupported hardware.
+- Live compositor screenshots at 1366x718:
+  ~/.oracle/proof/prime-visual-review-20261028/live-orbit.png,
+  ~/.oracle/proof/prime-visual-review-20261028/live-closed.png,
+  ~/.oracle/proof/prime-quick-right-20261028/quick-right.png.
+  Outside-click dismissal showed PRIME_SHELL_TRANSIENT_CLOSE=pointer.
+- Rust tests 78/78, Python bridge 16/16, release build and diff checks PASS.
+  The latest image comparison remains nonzero: mean RGB deviation
+  [19.88, 22.16, 35.42]. The reference is a flattened composite and
+  cannot certify the exact hidden scene pixels of a live interactive UI.
+
+ACCEPTANCE OPEN: no merge, previous-preview replacement, XFCE default
+desktop change, or Prime image/ISO admission. Ubuntu X11 stays active.
+
+### 28 October 2026 — compact Quick Controls native reference pass
+
+Existing review branch updated (not merged). The previous 455x424 Ubuntu
+preview Quick Controls panel had an extra heading/footer and large cards,
+which did not match the owner's six-control reference. The native
+preview now uses a 320x270 bottom-right panel: three live-status controls,
+two horizontal read-only slider tracks, three bottom controls and
+the mockup-derived six colored icon PNGs (scaled without substituting
+generic system application symbols). Render proof:
+~/.oracle/proof/prime-quick-scaled-20261028/quick-live.png.
+Wi-Fi, Bluetooth, performance and volume report actual Ubuntu status;
+unsupported brightness remains unavailable without invented values.
+
+The preview pointer handler no longer accepts native power-action hit
+rectangles or the native collapse region while this compact panel is
+open. Outside-click dismissal remains. Native Prime power UI paths
+remain separate.
+
+Validation: 78 Rust Shell tests, 16 Python bridge tests, native release
+build, formatting and staged diff checks passed in the isolated worktree.
+
+Recoverable source check: inspected Prime repository wallpaper assets,
+embedded image source from the saved standalone menu design, relevant
+KRATOS local image files and connected Drive. An original unflattened
+version of the cosmic scene was not found. The full-height mockup is a
+flattened interface image; using it as a fake wallpaper would duplicate
+nonfunctional UI pixels. An experimental synthetic water-ripple
+treatment was rejected and NOT installed.
+
+The owner-reference compact panel was visually checked in the isolated
+Wayland compositor at 1366x718, and clicking outside emitted
+PRIME_SHELL_TRANSIENT_CLOSE=pointer on 28 October 2026. The current
+cosmic wallpaper generator reproduced SHA-256
+a0ec125f2d523f248de0f59e5158778fb4f9a188d86899a36e1c50d1d4cac158
+exactly from source. This is implementation reproducibility, not
+owner-approved visual equality.
+
+Still blocked: exact visual parity of the reconstructed cosmic
+background and complete native app/control acceptance. Do not promote
+the review branch to KRATOS default, previous Prime preview, or an ISO.

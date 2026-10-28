@@ -964,10 +964,10 @@ impl PrimeShell {
             self.create_overlay(
                 queue_handle,
                 QUICK_CONTROLS_NAMESPACE,
-                Anchor::BOTTOM | Anchor::LEFT,
-                (0, 0, 23, (visual::rail::PREVIEW_RAIL_WIDTH as i32 + 13)),
-                455.min(self.background_width.saturating_sub(46).max(1)),
-                424.min(self.background_height.saturating_sub(70).max(1)),
+                Anchor::BOTTOM | Anchor::RIGHT,
+                (0, 23, 23, 0),
+                320.min(self.background_width.saturating_sub(46).max(1)),
+                270.min(self.background_height.saturating_sub(70).max(1)),
             )
         } else {
             self.create_overlay(
@@ -1774,7 +1774,7 @@ impl LayerShellHandler for PrimeShell {
                     let mut canvas = visual::Canvas::new(bytes, w, h)
                         .expect("Prime status buffer must match configured dimensions");
                     if std::env::var_os("PRIME_VISUAL_COSMIC").is_some() {
-                        // Quick Controls live on the left rail in the owner mockup;
+                        // The preview Quick Controls entry stays on the left rail;
                         // the old top-right status strip would be duplicate chrome.
                         canvas.clear();
                     } else {
@@ -2315,7 +2315,9 @@ impl PointerHandler for PrimeShell {
                         )
                     })
                     .expect("quick controls exists for matched surface");
-                if layout.collapse_at(event.position.0, event.position.1) {
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none()
+                    && layout.collapse_at(event.position.0, event.position.1)
+                {
                     self.close_transient(
                         ShellSurfaceKind::QuickControls,
                         queue_handle,
@@ -2323,9 +2325,12 @@ impl PointerHandler for PrimeShell {
                     );
                     continue;
                 }
-                if let Some(action) = layout.power_action_at(event.position.0, event.position.1) {
-                    self.stage_power_action(action);
-                    self.redraw_quick_controls(queue_handle);
+                if std::env::var_os("PRIME_UBUNTU_PREVIEW").is_none() {
+                    if let Some(action) = layout.power_action_at(event.position.0, event.position.1)
+                    {
+                        self.stage_power_action(action);
+                        self.redraw_quick_controls(queue_handle);
+                    }
                 }
             }
         }
