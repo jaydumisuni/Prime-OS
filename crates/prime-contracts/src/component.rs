@@ -235,6 +235,12 @@ fn valid_bounded_text(value: &str) -> bool {
         && !value.chars().any(|c| matches!(c as u32, 0x070F | 0x0890..=0x0891 | 0xFFF9..=0xFFFB | 0x13430..=0x1343F))
         // Unicode specials can be rendered as invisible or ambiguous evidence text.
         && !value.chars().any(|c| matches!(c as u32, 0xFFF0..=0xFFF8))
+        // Unicode noncharacters cannot supply interoperable component evidence.
+        // Cover U+FDD0..FDEF and the final two scalars of every Unicode plane.
+        && !value.chars().any(|c| {
+            let point = c as u32;
+            (0xFDD0..=0xFDEF).contains(&point) || (point & 0xFFFE) == 0xFFFE
+        })
         && !value.chars().any(|c| matches!(c as u32, 0xE0100..=0xE01EF))
 }
 
@@ -1137,5 +1143,47 @@ mod tests {
                 "U+{point:04X} admitted in limitation"
             );
         }
+    }
+
+    #[test]
+    fn unicode_noncharacters_cannot_enter_component_evidence() {
+        // Noncharacters are reserved for internal use and cannot form
+        // trustworthy version, compatibility or human-readable evidence.
+        let points = (0xFDD0..=0xFDEF)
+            .chain((0..=16).flat_map(|plane| [plane * 0x10000 + 0xFFFE, plane * 0x10000 + 0xFFFF]));
+        for point in points {
+            let mark = char::from_u32(point).unwrap();
+            let mut item = manifest();
+            item.version = format!("1.0{mark}.0");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version),
+                "noncharacter admitted in version: U+{point:06X}"
+            );
+            let mut item = manifest();
+            item.required_capability_interface = Some(format!("capability{mark}v1"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement),
+                "noncharacter admitted in compatibility: U+{point:06X}"
+            );
+            let mut item = manifest();
+            item.base_system_requirements = vec![format!("kernel{mark}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement),
+                "noncharacter admitted in requirement: U+{point:06X}"
+            );
+            let mut item = manifest();
+            item.limitations = vec![format!("verified{mark}source")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Limitation),
+                "noncharacter admitted in limitation: U+{point:06X}"
+            );
+        }
+        let mut valid = manifest();
+        valid.limitations = vec!["résumé evidence".to_owned()];
+        assert!(validate_component_manifest(&valid).is_ok());
     }
 }

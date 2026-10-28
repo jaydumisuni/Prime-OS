@@ -120,6 +120,13 @@ impl ComponentTransactionState {
                                     | 0xFFF9..=0xFFFB | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
+                            // Noncharacters must not enter durable transaction
+                            // failure/recovery evidence on any Unicode plane.
+                            || {
+                                let point = c as u32;
+                                (0xFDD0..=0xFDEF).contains(&point)
+                                    || (point & 0xFFFE) == 0xFFFE
+                            }
                     })
             }
             _ => true,
@@ -2309,6 +2316,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn transaction_reasons_reject_unicode_noncharacters() {
+        use ComponentTransactionState as State;
+        let points = (0xFDD0..=0xFDEF)
+            .chain((0..=16).flat_map(|plane| [plane * 0x10000 + 0xFFFE, plane * 0x10000 + 0xFFFF]));
+        for point in points {
+            let mark = char::from_u32(point).unwrap();
+            let reason = format!("disk{mark}failure");
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "noncharacter admitted into transaction: U+{point:06X}"
+                );
+            }
+            assert_eq!(
+                (State::Failed {
+                    reason: reason.clone()
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore".into()
+                }),
+                Err(ComponentTransactionTransitionError),
+                "noncharacter admitted from prior failure: U+{point:06X}"
+            );
+            assert_eq!(
+                (State::RecoveryRequired { reason }).advance(State::RolledBack),
+                Err(ComponentTransactionTransitionError),
+                "noncharacter allowed rollback: U+{point:06X}"
+            );
+        }
+        assert!(State::Applying
+            .advance(State::Failed {
+                reason: "ordinary disk failure".into(),
+            })
+            .is_ok());
     }
 
     #[test]
