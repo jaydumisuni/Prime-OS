@@ -906,6 +906,20 @@ pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVm
             "workload architecture is not x86/x86_64",
         ));
     }
+    // The format and architecture are one binding, not two independent
+    // allowlists: a PE32+ x86 or PE32 x86_64 profile would authorize a
+    // workload whose declared image format cannot match its execution lane.
+    if !matches!(
+        (
+            &profile.artifact.format,
+            profile.artifact.workload_arch.as_deref()
+        ),
+        (ArtifactFormat::Pe32, Some("x86")) | (ArtifactFormat::Pe32Plus, Some("x86_64"))
+    ) {
+        return Err(WindowsVmError::InvalidProfile(
+            "PE format and workload architecture mismatch",
+        ));
+    }
     if matches!(
         profile.compatibility.state,
         MechanicalCompatibilityState::Unknown

@@ -1807,6 +1807,33 @@ fn vm_fallback_is_explicit_backend_authority_not_personality_retry() {
 }
 
 #[test]
+fn vm_fallback_requires_matching_pe_format_and_workload_architecture() {
+    // PE32 is the 32-bit x86 image format; PE32+ is the x86_64 image format
+    // in W8's explicitly limited x86/x86_64 workload domain. A caller must
+    // not authorize a mismatched binary through a separately valid arch.
+    for (format, arch) in [
+        (ArtifactFormat::Pe32, "x86_64"),
+        (ArtifactFormat::Pe32Plus, "x86"),
+    ] {
+        let mut profile = vm_profile(ExecutionBackend::Vm);
+        profile.artifact.format = format;
+        profile.artifact.workload_arch = Some(arch.to_owned());
+        let error = validate_vm_profile(&profile).unwrap_err();
+        assert!(error.to_string().contains("architecture"), "{error}");
+    }
+
+    for (format, arch) in [
+        (ArtifactFormat::Pe32, "x86"),
+        (ArtifactFormat::Pe32Plus, "x86_64"),
+    ] {
+        let mut profile = vm_profile(ExecutionBackend::Vm);
+        profile.artifact.format = format;
+        profile.artifact.workload_arch = Some(arch.to_owned());
+        validate_vm_profile(&profile).unwrap();
+    }
+}
+
+#[test]
 fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
     use primed::windows_vm::{
         validate_guest_agent_hello, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
