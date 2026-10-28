@@ -4691,6 +4691,111 @@ fn guest_agent_harness_malformed_json_packet_isolates_following_frame() {
 }
 
 #[test]
+fn guest_agent_revision_numeric_tokens_fail_closed_without_frame_bleed() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A guest revision is an exact u64 authority binding, not a numeric
+    // approximation or a permissive JSON coercion. The next packet remains
+    // independently framed even when a hostile revision token is rejected.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-revision-custody".to_owned(),
+        guest_revision: 43,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let valid_json = serde_json::to_string(&expected).unwrap();
+    assert!(valid_json.contains("\"guest_revision\":43"));
+    for (case, token) in [
+        ("negative", "-1"),
+        ("fraction", "43.0"),
+        ("exponent", "4.3e1"),
+        ("u64 overflow", "18446744073709551616"),
+        ("u64 maximum mismatch", "18446744073709551615"),
+        ("leading zero", "043"),
+        ("zero", "0"),
+        ("string coercion", "\"43\""),
+        ("null coercion", "null"),
+        ("boolean coercion", "true"),
+    ] {
+        let rejected = valid_json.replacen(
+            "\"guest_revision\":43",
+            &format!("\"guest_revision\":{token}"),
+            1,
+        );
+        assert_ne!(rejected, valid_json, "{case}");
+        assert!(
+            matches!(
+                parse_guest_agent_hello_json(
+                    rejected.as_bytes(),
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: direct JSON admission must reject the revision token"
+        );
+
+        let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(rejected.as_bytes());
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            matches!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: framed admission must reject the revision token"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}: the following packet must remain independently admitted"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
+
+#[test]
 fn guest_agent_harness_payload_writer_flush_custody() {
     use primed::windows_vm::{
         write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
