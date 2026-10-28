@@ -224,9 +224,10 @@ pub fn encode_guest_agent_hello_json(
 /// W8 harness. The caller owns the length delimiter and transport; this
 /// function does not open a socket, start a guest, or grant runtime authority.
 ///
-/// Invalid host or guest authority is rejected before any writer call. A
-/// transport error may leave a partial payload on the caller-owned stream;
-/// the caller must discard that frame rather than treating it as admitted.
+/// Invalid host or guest authority is rejected before any writer call.
+/// Completion includes Write::flush, so a buffered transport failure cannot
+/// be mistaken for a completed payload. This is not guest acknowledgement.
+/// Any write or flush error invalidates the caller-owned stream/frame.
 pub fn write_guest_agent_hello_payload<W: Write>(
     writer: &mut W,
     hello: &GuestAgentHello,
@@ -243,6 +244,7 @@ pub fn write_guest_agent_hello_payload<W: Write>(
         expected_workload_arch,
     )?;
     writer.write_all(&payload)?;
+    writer.flush()?;
     Ok(payload.len())
 }
 

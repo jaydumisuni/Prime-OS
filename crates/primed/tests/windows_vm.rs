@@ -4662,3 +4662,96 @@ fn guest_agent_harness_malformed_json_packet_isolates_following_frame() {
         assert_eq!(&trailer, b"TRAILER", "{case}");
     }
 }
+
+#[test]
+fn guest_agent_harness_payload_writer_flush_custody() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // A buffered transport can accept every write while refusing the flush.
+    // Payload-only success must not conceal that failure. This remains a
+    // non-production Gate 6 fixture, not guest delivery acknowledgement.
+    #[derive(Default)]
+    struct BufferedWriter {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        flushes: usize,
+        fail_flush: bool,
+    }
+    impl Write for BufferedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "flush-payload-harness".to_owned(),
+            guest_revision: 47,
+            guest_sha256: "f".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let expected = serde_json::to_vec(&hello).unwrap();
+        let mut failing = BufferedWriter {
+            fail_flush: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut failing,
+                &hello,
+                &hello.guest_id,
+                47,
+                &hello.guest_sha256,
+                arch,
+            ),
+            Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
+        ));
+        assert_eq!(failing.flushes, 1, "{arch}: flush must be attempted");
+        assert_eq!(failing.staged, expected);
+        assert!(failing.delivered.is_empty());
+
+        let mut admitted = BufferedWriter::default();
+        assert_eq!(
+            write_guest_agent_hello_payload(
+                &mut admitted,
+                &hello,
+                &hello.guest_id,
+                47,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            expected.len()
+        );
+        assert_eq!(admitted.flushes, 1);
+        assert_eq!(admitted.delivered, expected);
+        assert!(admitted.staged.is_empty());
+
+        let mut denied = BufferedWriter::default();
+        assert!(write_guest_agent_hello_payload(
+            &mut denied,
+            &hello,
+            "unauthorized",
+            47,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert!(denied.staged.is_empty());
+        assert_eq!(denied.flushes, 0, "authority failure must precede I/O");
+    }
+}
