@@ -328,8 +328,10 @@ pub fn read_guest_agent_hello_frame<R: Read>(
 ///
 /// This framing is a deterministic host-side W8 Gate 6 fixture contract, not
 /// a negotiated production guest protocol. It does not start a VM or attest
-/// a Windows guest. A partial transport write invalidates the whole packet;
-/// the caller must discard the stream on error.
+/// a Windows guest. A successful return includes Write::flush, so a buffered
+/// writer cannot report packet completion before its underlying flush fails.
+/// This is not a guest delivery acknowledgement. Any write or flush failure
+/// invalidates the whole packet; the caller must discard the stream on error.
 pub fn write_guest_agent_hello_packet<W: Write>(
     writer: &mut W,
     hello: &GuestAgentHello,
@@ -349,6 +351,7 @@ pub fn write_guest_agent_hello_packet<W: Write>(
         .map_err(|_| WindowsVmError::InvalidGuest("guest-agent hello exceeds JSON size limit"))?;
     writer.write_all(&length.to_be_bytes())?;
     writer.write_all(&payload)?;
+    writer.flush()?;
     Ok(4 + payload.len())
 }
 

@@ -4194,3 +4194,70 @@ fn guest_agent_harness_maximum_length_packet_keeps_next_packet_isolated() {
         assert_eq!(oversized.position(), 4);
     }
 }
+
+#[test]
+fn guest_agent_packet_flush_failure_cannot_report_success() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // A buffered transport may accept the complete packet into memory and
+    // fail only when flush transfers it to the underlying writer. Success
+    // must not be reported before that failure is observed.
+    struct FlushProbe {
+        bytes: Vec<u8>,
+        flushes: usize,
+        deny_flush: bool,
+    }
+    impl Write for FlushProbe {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.deny_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(())
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-flush-harness".to_owned(),
+        guest_revision: 19,
+        guest_sha256: "d".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    for deny_flush in [false, true] {
+        let mut writer = FlushProbe {
+            bytes: Vec::new(),
+            flushes: 0,
+            deny_flush,
+        };
+        let result = write_guest_agent_hello_packet(
+            &mut writer,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            &hello.workload_arch,
+        );
+        assert_eq!(writer.flushes, 1, "complete packet requires one flush");
+        let payload = serde_json::to_vec(&hello).unwrap();
+        assert_eq!(&writer.bytes[..4], &(payload.len() as u32).to_be_bytes());
+        assert_eq!(&writer.bytes[4..], payload.as_slice());
+        if deny_flush {
+            assert!(matches!(
+                result,
+                Err(WindowsVmError::Io(error))
+                    if error.kind() == io::ErrorKind::BrokenPipe
+            ));
+        } else {
+            assert_eq!(result.unwrap(), payload.len() + 4);
+        }
+    }
+}
