@@ -320,6 +320,21 @@ def capture_config_epochs(paths: tuple[Path, ...]) -> tuple[list, list]:
     return present, absent
 
 
+def require_no_unbound_git_config_includes(root: Path) -> None:
+    """Reject Git config sources outside the pinned local/worktree config epoch.
+
+    An include.path or includeIf path can load mutable external configuration
+    without changing either captured repository config inode. Query Git's own
+    case-normalized parser with includes disabled, including inactive rules:
+    their future activation must not silently change review interpretation.
+    """
+    records = git(root, "config", "--no-includes", "--null", "--list")
+    for record in records.split(b"\x00"):
+        key = record.split(b"\n", 1)[0].lower()
+        if key.startswith((b"include.", b"includeif.")):
+            raise ReviewInputError("unbound Git configuration include")
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -438,6 +453,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         git_control_path(root, "config.worktree"),
     )
     config_files, absent_config = capture_config_epochs(config_paths)
+    require_no_unbound_git_config_includes(root)
     # Git config can change without leaving a .lock file (e.g. direct
     # replacement). Bind its actual inode/bytes and optional-file absence.
     head_files.extend(config_files)

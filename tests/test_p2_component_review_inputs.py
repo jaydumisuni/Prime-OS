@@ -1085,3 +1085,22 @@ def test_rejects_late_git_worktree_config_creation(tmp_path: Path, monkeypatch) 
     with pytest.raises(module.ReviewInputError, match="config|HEAD.*changed"):
         module.build_manifest(root, head)
     assert injected and head_reads == 2
+
+
+def test_rejects_unbound_repository_config_includes(tmp_path: Path) -> None:
+    """A repository include is external Git authority absent from the pinned epoch."""
+    import pytest
+
+    for name, key in (
+        ("direct", "include.path"),
+        ("active-conditional", "includeIf.onbranch:*.path"),
+        ("inactive-conditional", "includeIf.onbranch:nonexistent.path"),
+    ):
+        case = tmp_path / name
+        case.mkdir()
+        root, head = sample_repo(case)
+        external = case / "external-git-config"
+        external.write_text("[core]\n\tquotePath = false\n", encoding="utf-8")
+        git(root, "config", "--add", key, str(external))
+        with pytest.raises(module.ReviewInputError, match="unbound Git configuration include"):
+            module.build_manifest(root, head)
