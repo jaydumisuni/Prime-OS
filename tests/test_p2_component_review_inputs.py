@@ -1104,3 +1104,30 @@ def test_rejects_unbound_repository_config_includes(tmp_path: Path) -> None:
         git(root, "config", "--add", key, str(external))
         with pytest.raises(module.ReviewInputError, match="unbound Git configuration include"):
             module.build_manifest(root, head)
+
+
+
+def test_rejects_split_index_external_sharedindex_authority(tmp_path: Path) -> None:
+    """The Git index may delegate tracked identity to a separate mutable file."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    git(root, "update-index", "--split-index")
+    shared = git(root, "rev-parse", "--shared-index-path")
+    assert shared and "sharedindex." in shared
+    assert git(root, "rev-parse", "HEAD") == head
+    with pytest.raises(module.ReviewInputError, match="split index"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_linked_worktree_split_index_external_authority(tmp_path: Path) -> None:
+    """A linked worktree can also delegate its index to an unpinned sharedindex."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    git(linked, "update-index", "--split-index")
+    assert git(linked, "rev-parse", "--shared-index-path")
+    with pytest.raises(module.ReviewInputError, match="split index"):
+        module.build_manifest(linked, head)

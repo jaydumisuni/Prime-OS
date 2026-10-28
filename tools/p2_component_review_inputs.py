@@ -436,6 +436,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # index inode/epoch before the last Git probes and verify it again after
     # the sweep; no later Git subprocess is permitted.
     head_epoch = capture_head_epoch(root, head)
+    # A split index delegates tracked entries to sharedindex.<oid>, outside
+    # the index inode pinned below. A late replacement of that external file
+    # can change Git's staged interpretation without changing the pinned
+    # index or HEAD. Fail closed until sharedindex epochs are independently
+    # captured and verified; ordinary and linked full indexes remain valid.
+    if git(root, "rev-parse", "--shared-index-path").strip():
+        raise ReviewInputError("unbound Git split index sharedindex authority")
     index_name = git(root, "rev-parse", "--git-path", "index").decode().strip()
     index_path = Path(index_name)
     if not index_path.is_absolute():
