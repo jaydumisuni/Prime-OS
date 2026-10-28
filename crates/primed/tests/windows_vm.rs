@@ -4997,3 +4997,108 @@ fn guest_agent_protocol_revision_numeric_tokens_fail_closed_without_frame_bleed(
         }
     }
 }
+
+#[test]
+fn guest_agent_duplicate_authority_fields_cannot_shadow_next_frame() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A malicious peer may prepend a conflicting key and rely on a different
+    // JSON consumer choosing first-key versus last-key semantics. Reject all
+    // six authority fields, not only the guest ID, before admitting a frame.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-duplicate-custody".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let valid = serde_json::to_string(&expected).unwrap();
+        for (field, forged) in [
+            ("schema", r#""prime.windows-vm-agent.v2""#),
+            ("protocol_revision", "2"),
+            ("guest_id", r#""shadow-guest""#),
+            ("guest_revision", "18"),
+            ("guest_sha256", r#""#),
+            ("workload_arch", r#""unsupported""#),
+        ] {
+            let forged = if field == "guest_sha256" {
+                format!("\"{}\"", "e".repeat(64))
+            } else {
+                forged.to_owned()
+            };
+            let duplicate = format!("{{\"{field}\":{forged},{}", &valid[1..]);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        duplicate.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: duplicate authority must fail direct admission"
+            );
+
+            let mut wire = (duplicate.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(duplicate.as_bytes());
+            let following_start = wire.len();
+            let following_size = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: duplicate authority must fail framed admission"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                following_start,
+                "{arch}/{field}"
+            );
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{field}: next frame must remain independently admissible"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                following_start + following_size,
+                "{arch}/{field}"
+            );
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{field}");
+        }
+    }
+}
