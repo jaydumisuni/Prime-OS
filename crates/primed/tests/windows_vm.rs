@@ -4261,3 +4261,120 @@ fn guest_agent_packet_flush_failure_cannot_report_success() {
         }
     }
 }
+
+#[test]
+fn guest_agent_harness_replay_mismatch_isolates_following_packet() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A valid JSON frame from a different guest, revision, image or workload
+    // architecture is not a handshake for this host-owned authority. Rejection
+    // must consume exactly the declared frame, never the next packet.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-authorized".to_owned(),
+        guest_revision: 23,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let cases = [
+        (
+            "guest identity",
+            GuestAgentHello {
+                guest_id: "w8-replayed".to_owned(),
+                ..expected.clone()
+            },
+        ),
+        (
+            "guest revision",
+            GuestAgentHello {
+                guest_revision: expected.guest_revision + 1,
+                ..expected.clone()
+            },
+        ),
+        (
+            "guest image digest",
+            GuestAgentHello {
+                guest_sha256: "b".repeat(64),
+                ..expected.clone()
+            },
+        ),
+        (
+            "workload architecture",
+            GuestAgentHello {
+                workload_arch: "x86".to_owned(),
+                ..expected.clone()
+            },
+        ),
+        (
+            "protocol revision",
+            GuestAgentHello {
+                protocol_revision: 2,
+                ..expected.clone()
+            },
+        ),
+        (
+            "protocol schema",
+            GuestAgentHello {
+                schema: "prime.windows-vm-agent.v2".to_owned(),
+                ..expected.clone()
+            },
+        ),
+    ];
+
+    for (case, rejected) in cases {
+        let mut wire = Vec::new();
+        let rejected_json = serde_json::to_vec(&rejected).unwrap();
+        wire.extend_from_slice(&(rejected_json.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&rejected_json);
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .is_err(),
+            "{case} replay must be denied"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
