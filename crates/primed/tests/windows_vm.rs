@@ -5309,3 +5309,123 @@ fn guest_agent_malformed_unicode_and_utf8_packets_preserve_next_frame() {
         }
     }
 }
+
+#[test]
+fn guest_agent_nonstandard_json_envelopes_cannot_bleed_into_next_packet() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Gate 6 uses strict JSON rather than a permissive JSON-like envelope.
+    // A valid second packet must remain independent after the first is denied.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-strict-json-envelope".to_owned(),
+            guest_revision: 61,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&expected).unwrap();
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.extend_from_slice(&canonical);
+        let mut second_document = canonical.clone();
+        second_document.extend_from_slice(b"{}");
+        let comma = canonical.iter().position(|byte| *byte == b',').unwrap();
+        let mut form_feed = canonical.clone();
+        form_feed.insert(comma + 1, 0x0c);
+        let mut vertical_tab = canonical.clone();
+        vertical_tab.insert(comma + 1, 0x0b);
+        let mut nonbreaking_space = canonical.clone();
+        nonbreaking_space.splice(comma + 1..comma + 1, [0xc2, 0xa0]);
+        let mut json_comment = canonical.clone();
+        json_comment.splice(comma + 1..comma + 1, b"/*not-json*/".iter().copied());
+
+        for (case, hostile) in [
+            ("UTF-8 BOM", bom),
+            ("second JSON document", second_document),
+            ("form-feed whitespace", form_feed),
+            ("vertical-tab whitespace", vertical_tab),
+            ("nonbreaking-space whitespace", nonbreaking_space),
+            ("JSON comment", json_comment),
+        ] {
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        &hostile,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct JSON admission must fail"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(&hostile);
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed JSON admission must fail"
+            );
+            assert_eq!(reader.position() as usize, following_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following packet must remain admissible"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+
+        // RFC 8259 permits exactly space, horizontal tab, CR and LF around a
+        // JSON document. Do not accidentally reject the legitimate envelope.
+        let mut legal = b" \t\r\n".to_vec();
+        legal.extend_from_slice(&canonical);
+        legal.extend_from_slice(b"\n\r\t ");
+        assert_eq!(
+            parse_guest_agent_hello_json(
+                &legal,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            expected
+        );
+    }
+}
