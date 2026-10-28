@@ -1131,3 +1131,59 @@ def test_rejects_linked_worktree_split_index_external_authority(tmp_path: Path) 
     assert git(linked, "rev-parse", "--shared-index-path")
     with pytest.raises(module.ReviewInputError, match="split index"):
         module.build_manifest(linked, head)
+
+
+
+def test_rejects_unbound_object_alternates_in_regular_and_linked_git(
+    tmp_path: Path,
+) -> None:
+    """Git object alternates are mutable external input to exact-head review."""
+    import pytest
+
+    for layout in ("regular", "linked"):
+        case = tmp_path / layout
+        case.mkdir()
+        root, head = sample_repo(case)
+        review = root
+        if layout == "linked":
+            review = case / "linked-review"
+            git(root, "worktree", "add", "-q", "-b", "linked-review", str(review), head)
+        alternate_objects = case / "external-objects"
+        alternate_objects.mkdir()
+        pointer = Path(git(review, "rev-parse", "--git-path", "objects/info/alternates"))
+        if not pointer.is_absolute():
+            pointer = review / pointer
+        pointer.write_text(str(alternate_objects) + "\n", encoding="utf-8")
+        assert git(review, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="object alternates"):
+            module.build_manifest(review, head)
+
+
+def test_rejects_late_object_alternates_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An alternates pointer introduced after Git reads invalidates custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    pointer = root / ".git" / "objects" / "info" / "alternates"
+    external = tmp_path / "external-objects"
+    external.mkdir()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def introduce_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.write_text(str(external) + "\n", encoding="utf-8")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="object alternates"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2

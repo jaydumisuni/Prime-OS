@@ -335,6 +335,20 @@ def require_no_unbound_git_config_includes(root: Path) -> None:
             raise ReviewInputError("unbound Git configuration include")
 
 
+def require_no_object_alternates(path: Path) -> None:
+    """No mutable external Git object store may supply committed review bytes."""
+    require_private_directory(path.parent)
+    require_protected_ancestors(path.parent)
+    try:
+        # lstat also catches dangling symlinks, unlike Path.exists().
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ReviewInputError("cannot inspect Git object alternates") from exc
+    raise ReviewInputError("unbound Git object alternates authority")
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -373,6 +387,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
+    # Resolve Git's common object directory (also for linked worktrees).
+    # Refuse external alternates before reading any committed review blobs.
+    alternates_path = git_control_path(root, "objects/info/alternates")
+    require_no_object_alternates(alternates_path)
     head = git(repo, "rev-parse", "HEAD").decode().strip()
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
@@ -515,6 +533,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         else:
             raise ReviewInputError("Git config appeared after final Git probe")
     require_no_pending_git_control_locks(lock_paths)
+    # No Git subprocess follows the final HEAD probe; the absence of an
+    # external object-store pointer is part of the final review epoch.
+    require_no_object_alternates(alternates_path)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
