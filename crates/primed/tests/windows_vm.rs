@@ -5102,3 +5102,96 @@ fn guest_agent_duplicate_authority_fields_cannot_shadow_next_frame() {
         }
     }
 }
+
+#[test]
+fn guest_agent_escaped_duplicate_keys_cannot_shadow_next_packet() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A JSON key escaped as \uXXXX has the same decoded identity as its
+    // ordinary spelling. Reject duplicate or undeclared authority keys
+    // before either x86 or x64 framed handoff can be admitted.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-escaped-key-custody".to_owned(),
+            guest_revision: 19,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_string(&expected).unwrap();
+        for (field, forged) in [
+            ("schema", r#""prime.windows-vm-agent.v2""#.to_owned()),
+            ("protocol_revision", "2".to_owned()),
+            ("guest_id", r#""shadow-guest""#.to_owned()),
+            ("guest_revision", "20".to_owned()),
+            ("guest_sha256", format!("\"{}\"", "b".repeat(64))),
+            ("workload_arch", r#""unsupported""#.to_owned()),
+            ("host_override", "true".to_owned()),
+        ] {
+            let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+            let hostile = format!("{{\"{escaped}\":{forged},{}", &canonical[1..]);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        hostile.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: escaped authority alias must fail direct admission"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(hostile.as_bytes());
+            let next_start = wire.len();
+            let next_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: escaped alias must fail framed admission"
+            );
+            assert_eq!(reader.position() as usize, next_start, "{arch}/{field}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{field}: following packet must retain independent authority"
+            );
+            assert_eq!(reader.position() as usize, next_start + next_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+    }
+}
