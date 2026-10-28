@@ -4469,3 +4469,108 @@ fn guest_agent_harness_replay_mismatch_isolates_following_packet() {
         assert_eq!(&trailer, b"TRAILER", "{case}");
     }
 }
+
+#[test]
+fn guest_agent_packet_reader_faults_are_bounded_to_the_current_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    // Exercise interruptions at the length prefix, payload boundary and
+    // inside the payload, not only before the first read. Other I/O failures
+    // must remain transport errors rather than guest-identity failures.
+    struct FaultReader {
+        inner: Cursor<Vec<u8>>,
+        fault_at: usize,
+        fault_kind: io::ErrorKind,
+        faulted: bool,
+    }
+    impl Read for FaultReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.faulted && self.inner.position() as usize >= self.fault_at {
+                self.faulted = true;
+                return Err(self.fault_kind.into());
+            }
+            let count = buffer.len().min(2);
+            self.inner.read(&mut buffer[..count])
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "fault-reader-harness".to_owned(),
+            guest_revision: 31,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut packet = Vec::new();
+        let packet_len = write_guest_agent_hello_packet(
+            &mut packet,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(packet_len, packet.len());
+        packet.extend_from_slice(b"TRAILER");
+
+        let near_end = (packet_len - 1) & !1;
+        for fault_at in [0, 2, 4, 8, near_end] {
+            let mut interrupted = FaultReader {
+                inner: Cursor::new(packet.clone()),
+                fault_at,
+                fault_kind: io::ErrorKind::Interrupted,
+                faulted: false,
+            };
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut interrupted,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}: interruption at {fault_at}",
+            );
+            assert!(interrupted.faulted, "{arch}: fault not exercised");
+            assert_eq!(interrupted.inner.position() as usize, packet_len);
+            let mut trailer = [0u8; 7];
+            interrupted.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+
+        for fault_kind in [io::ErrorKind::PermissionDenied, io::ErrorKind::WouldBlock] {
+            for fault_at in [0, 2, 4, 8] {
+                let mut denied = FaultReader {
+                    inner: Cursor::new(packet.clone()),
+                    fault_at,
+                    fault_kind,
+                    faulted: false,
+                };
+                assert!(matches!(
+                    read_guest_agent_hello_packet(
+                        &mut denied,
+                        &hello.guest_id,
+                        hello.guest_revision,
+                        &hello.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::Io(error)) if error.kind() == fault_kind
+                ));
+                assert!(denied.faulted);
+                assert!(
+                    denied.inner.position() as usize <= packet_len,
+                    "transport failure borrowed trailing bytes"
+                );
+            }
+        }
+    }
+}
