@@ -214,6 +214,12 @@ pub enum ComponentAdmissionError {
     },
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
+    #[error("registration {registration} is claimed by both {first_component_id} and {second_component_id}")]
+    RegistrationIdentityConflict {
+        registration: String,
+        first_component_id: String,
+        second_component_id: String,
+    },
     #[error("installed component dependency graph contains a cycle through {0}")]
     InstalledDependencyCycle(String),
     #[error("removing {component_id} would strand installed dependent {dependent_id}")]
@@ -460,6 +466,28 @@ fn index_installed_manifests<'a>(
             return Err(ComponentAdmissionError::MissingInstalledManifest(
                 current.component_id.clone(),
             ));
+        }
+    }
+    // Registration names are global Prime authority identities, not scoped
+    // to each package. Two independently valid manifests cannot both own
+    // the same service, Application Profile or exposed capability.
+    let mut registration_owners = BTreeMap::<&str, &str>::new();
+    for manifest in manifests.values() {
+        for registration in manifest
+            .application_profiles
+            .iter()
+            .chain(&manifest.services)
+            .chain(&manifest.capabilities)
+        {
+            if let Some(previous_owner) =
+                registration_owners.insert(registration.as_str(), manifest.component_id.as_str())
+            {
+                return Err(ComponentAdmissionError::RegistrationIdentityConflict {
+                    registration: registration.clone(),
+                    first_component_id: previous_owner.to_owned(),
+                    second_component_id: manifest.component_id.clone(),
+                });
+            }
         }
     }
     // Exact manifest identity is insufficient if the installed dependency
@@ -3186,6 +3214,8 @@ mod tests {
         target_manifest.package_digest = DIGEST_A.to_owned();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3222,6 +3252,8 @@ mod tests {
         ));
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = DIGEST_A.to_owned();
         assert!(matches!(
@@ -3344,6 +3376,8 @@ mod tests {
         target_manifest.package_digest = target.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3405,6 +3439,129 @@ mod tests {
     }
 
     #[test]
+    fn checked_plans_reject_cross_component_registration_ownership_aliases() {
+        let first = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let second = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut first_manifest = manifest(b"origins");
+        first_manifest.package_digest = first.package_digest.clone();
+        let mut second_manifest = manifest(b"consumer");
+        second_manifest.component_id = second.component_id.clone();
+        second_manifest.revision = second.revision;
+        second_manifest.package_digest = second.package_digest.clone();
+        second_manifest.services = vec!["consumerd".to_owned()];
+        second_manifest.capabilities = vec!["consumer.factory".to_owned()];
+        let installed = [first.clone(), second.clone()];
+        assert!(index_installed_manifests(
+            &installed,
+            &[first_manifest.clone(), second_manifest.clone()],
+        )
+        .is_ok());
+
+        for family in 0..3 {
+            let mut conflicting = second_manifest.clone();
+            match family {
+                0 => conflicting.services = first_manifest.services.clone(),
+                1 => conflicting.capabilities = first_manifest.capabilities.clone(),
+                _ => conflicting.application_profiles = first_manifest.services.clone(),
+            }
+            assert!(
+                index_installed_manifests(&installed, &[first_manifest.clone(), conflicting])
+                    .is_err(),
+                "distinct components must not claim the same registration (family {family})"
+            );
+        }
+
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/new-component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "new.runtime".to_owned(),
+            revision: 1,
+            version: "1.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let mut candidate = first_manifest.clone();
+        candidate.component_id = package.component_id.clone();
+        candidate.revision = package.revision;
+        candidate.version = package.version.clone();
+        candidate.package_digest = package.package_digest.clone();
+        assert!(
+            plan_component_transaction_checked(
+                &package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &candidate
+            )
+            .is_err(),
+            "checked install must reject an already-owned service and capability"
+        );
+
+        candidate.services = vec!["newd".to_owned()];
+        candidate.capabilities = vec!["new.factory".to_owned()];
+        assert!(
+            plan_component_transaction_checked(
+                &package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &candidate,
+            )
+            .is_ok(),
+            "distinct registrations remain admissible"
+        );
+
+        let update_package = VerifiedComponentPackage {
+            component_id: first.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            ..package.clone()
+        };
+        let mut update_manifest = first_manifest.clone();
+        update_manifest.revision = update_package.revision;
+        update_manifest.version = update_package.version.clone();
+        update_manifest.package_digest = update_package.package_digest.clone();
+        update_manifest.services = second_manifest.services.clone();
+        assert!(
+            plan_component_transaction_checked(
+                &update_package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &update_manifest,
+            )
+            .is_err(),
+            "checked update cannot claim a service owned by another installed component"
+        );
+
+        let retained = InstalledComponent {
+            component_id: first.component_id.clone(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut retained_manifest = first_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.services = second_manifest.services.clone();
+        retained_manifest.capabilities = vec!["origins.factory".to_owned()];
+        assert!(
+            plan_component_rollback_checked(
+                &first,
+                &retained,
+                &retained_manifest,
+                &installed,
+                &[first_manifest, second_manifest],
+            )
+            .is_err(),
+            "checked rollback must not transfer another component's service identity"
+        );
+    }
+
+    #[test]
     fn checked_update_rejects_cycle_from_authenticated_candidate() {
         let current = InstalledComponent {
             component_id: "origins.runtime".to_owned(),
@@ -3420,6 +3577,8 @@ mod tests {
         current_manifest.package_digest = current.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3514,6 +3673,8 @@ mod tests {
         }];
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3586,6 +3747,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3631,6 +3794,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3697,6 +3862,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
