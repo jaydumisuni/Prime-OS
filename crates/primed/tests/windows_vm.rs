@@ -5195,3 +5195,117 @@ fn guest_agent_escaped_duplicate_keys_cannot_shadow_next_packet() {
         }
     }
 }
+
+#[test]
+fn guest_agent_malformed_unicode_and_utf8_packets_preserve_next_frame() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A malformed UTF-8/UTF-16 escape is not a guest identity. Even when the
+    // caller keeps a stream for forensic replay, a rejected bounded packet
+    // must not consume the following independently authorized packet.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-unicode-frame".to_owned(),
+            guest_revision: 53,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&expected).unwrap();
+        let needle = b"\"guest_id\":\"w8-unicode-frame\"";
+        let start = canonical
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .unwrap();
+        let prefix = &canonical[..start];
+        let suffix = &canonical[start + needle.len()..];
+
+        let hostile_values: Vec<(&str, Vec<u8>)> = vec![
+            ("unpaired high surrogate", br#""\ud800""#.to_vec()),
+            ("unpaired low surrogate", br#""\udc00""#.to_vec()),
+            ("high surrogate then ASCII", br#""\ud800x""#.to_vec()),
+            ("nonhex unicode escape", br#""\u12g4""#.to_vec()),
+            ("short unicode escape", br#""\u12""#.to_vec()),
+            ("invalid UTF-8", b"\"\xff\"".to_vec()),
+            ("raw NUL", b"\"bad\x00id\"".to_vec()),
+            ("raw newline", b"\"bad\nid\"".to_vec()),
+            (
+                "valid invisible identity mismatch",
+                br#""w8-\u200bunicode-frame""#.to_vec(),
+            ),
+            (
+                "valid supplementary identity mismatch",
+                br#""\ud83d\ude00""#.to_vec(),
+            ),
+        ];
+
+        for (case, value) in hostile_values {
+            let mut hostile = prefix.to_vec();
+            hostile.extend_from_slice(b"\"guest_id\":");
+            hostile.extend_from_slice(&value);
+            hostile.extend_from_slice(suffix);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        &hostile,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct admission must fail closed"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(&hostile);
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed admission must fail closed"
+            );
+            assert_eq!(reader.position() as usize, following_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following packet must remain independent"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+    }
+}
