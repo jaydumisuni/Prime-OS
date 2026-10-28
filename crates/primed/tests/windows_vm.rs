@@ -4574,3 +4574,91 @@ fn guest_agent_packet_reader_faults_are_bounded_to_the_current_frame() {
         }
     }
 }
+
+#[test]
+fn guest_agent_harness_malformed_json_packet_isolates_following_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Gate 6's framed reader must consume exactly one declared packet even
+    // when JSON decoding fails. A hostile first packet must not swallow or
+    // lend authority to a valid following packet or its trailing bytes.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-authorized".to_owned(),
+        guest_revision: 43,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let valid_json = serde_json::to_string(&expected).unwrap();
+    let duplicate_schema = valid_json.replacen(
+        "\"schema\":",
+        "\"schema\":\"prime.windows-vm-agent.v1\",\"schema\":",
+        1,
+    );
+    let unknown_field = valid_json.replacen("\"schema\":", "\"unexpected\":true,\"schema\":", 1);
+    let wrong_type = valid_json.replacen("\"guest_revision\":43", "\"guest_revision\":\"43\"", 1);
+    let cases: [(&str, Vec<u8>); 6] = [
+        ("truncated JSON", b"{".to_vec()),
+        ("trailing garbage", format!("{valid_json}X").into_bytes()),
+        ("duplicate schema", duplicate_schema.into_bytes()),
+        ("unknown field", unknown_field.into_bytes()),
+        ("wrong revision type", wrong_type.into_bytes()),
+        ("wrong JSON root", b"[]".to_vec()),
+    ];
+    for (case, rejected) in cases {
+        let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(&rejected);
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            matches!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: malformed packet must fail closed"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}: next packet must remain independently readable"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
