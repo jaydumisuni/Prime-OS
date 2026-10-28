@@ -636,6 +636,17 @@ pub fn plan_component_rollback_checked(
             retained.component_id.clone(),
         ));
     }
+    // Retained packages requiring image-owned changes belong to the Prime
+    // generation/update authority, never to an optional-component rollback.
+    // The public checked planner must enforce this independently of whether
+    // the caller ran the offline verifier (which returns GenerationHandoff).
+    if !retained_manifest.base_system_requirements.is_empty() {
+        return Err(
+            ComponentAdmissionError::BaseSystemGenerationHandoffRequired(
+                retained_manifest.component_id.clone(),
+            ),
+        );
+    }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     let observed = manifests
         .get(current.component_id.as_str())
@@ -1411,6 +1422,59 @@ mod tests {
             ),
             Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
                 if id == candidate.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_rollback_never_bypasses_base_generation_handoff() {
+        // A retained manifest may require image-owned changes even when its
+        // digest and publisher are independently authenticated. Rollback must
+        // not silently turn that generation handoff into a component plan.
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut current_manifest = manifest(b"current");
+        current_manifest.revision = current.revision;
+        current_manifest.version = "3.0.0".to_owned();
+        current_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = current_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.version = "2.0.0".to_owned();
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.base_system_requirements = vec!["kernel.module.example".to_owned()];
+
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                std::slice::from_ref(&current_manifest),
+            ),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == retained.component_id
+        ));
+
+        retained_manifest.base_system_requirements.clear();
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                &[current_manifest],
+            ),
+            Ok(ComponentTransactionPlan {
+                kind: ComponentTransactionKind::Rollback { .. },
+                ..
+            })
         ));
     }
 
