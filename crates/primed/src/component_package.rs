@@ -672,6 +672,61 @@ pub fn plan_component_registration_subset_checked(
         .collect())
 }
 
+/// Preview unregistration of selected installed components and every transitive
+/// installed dependent that would otherwise be stranded. The returned closure
+/// is explicit and dependent-first, not permission to silently remove consumers.
+///
+/// Callers must independently authenticate the complete installed manifest
+/// inventory and obtain approval for every member of the expanded selection.
+/// This is planning-only evidence: no services, packages, data, or authorities
+/// are changed. Unknown, duplicate, and noncanonical targets fail closed.
+pub fn plan_component_unregistration_dependent_closure_checked(
+    selected_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let full_order = plan_component_unregistration_order_checked(installed, installed_manifests)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut selected = BTreeSet::new();
+    for &id in selected_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !manifests.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !selected.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateUnregistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut dependents = BTreeMap::<&str, Vec<&str>>::new();
+    for manifest in manifests.values() {
+        for dependency in &manifest.dependencies {
+            dependents
+                .entry(dependency.component_id.as_str())
+                .or_default()
+                .push(manifest.component_id.as_str());
+        }
+    }
+    let mut required = BTreeSet::new();
+    let mut pending: Vec<&str> = selected.into_iter().collect();
+    while let Some(id) = pending.pop() {
+        if required.insert(id) {
+            if let Some(users) = dependents.get(id) {
+                pending.extend(users.iter().copied());
+            }
+        }
+    }
+    Ok(full_order
+        .into_iter()
+        .filter(|id| required.contains(id.as_str()))
+        .collect())
+}
+
 /// Preview a selected subset of component unregistrations without stranding
 /// installed consumers that are not part of the selection.
 ///
@@ -4340,6 +4395,98 @@ mod tests {
         assert!(matches!(
             plan_component_registration_subset_checked(
                 &[], &installed, &manifests[..3]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id))
+                if id == "origins.runtime"
+        ));
+    }
+
+    #[test]
+    fn checked_dependent_closure_unregistration_expands_consumers_only() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.runtime", &["provider.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("provider.runtime", &["origins.runtime"]),
+            make("other.consumer", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["origins.runtime"],
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "other.consumer",
+                "origins.runtime"
+            ]
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["provider.runtime"],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            vec!["consumer.runtime", "provider.runtime"]
+        );
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(&[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["provider.runtime", "provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateUnregistrationTarget(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["missing.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(id))
+                if id == "missing.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["Not Canonical"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Not Canonical"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &[], &installed, &manifests[..4]
             ),
             Err(ComponentAdmissionError::MissingInstalledManifest(id))
                 if id == "origins.runtime"
