@@ -244,8 +244,27 @@ pub fn write_guest_agent_hello_payload<W: Write>(
         expected_workload_arch,
     )?;
     write_all_guest_agent_bounded(writer, &payload)?;
-    writer.flush()?;
+    flush_guest_agent_bounded(writer)?;
     Ok(payload.len())
+}
+
+// An interrupted buffered flush is not acknowledgement or a fatal stream error.
+// Retry transient EINTR, but never allow a non-progressing transport to pin
+// the Gate 6 host worker. Any terminal error invalidates the caller-owned frame.
+fn flush_guest_agent_bounded<W: Write>(writer: &mut W) -> io::Result<()> {
+    let mut interruptions = 0;
+    loop {
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                interruptions += 1;
+                if interruptions > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 // Caller-owned expectations must be valid before consuming an untrusted
@@ -421,7 +440,7 @@ pub fn write_guest_agent_hello_packet<W: Write>(
         .map_err(|_| WindowsVmError::InvalidGuest("guest-agent hello exceeds JSON size limit"))?;
     write_all_guest_agent_bounded(writer, &length.to_be_bytes())?;
     write_all_guest_agent_bounded(writer, &payload)?;
-    writer.flush()?;
+    flush_guest_agent_bounded(writer)?;
     Ok(4 + payload.len())
 }
 

@@ -6451,3 +6451,98 @@ fn guest_agent_packet_preflights_host_authority_before_transport_io() {
         }
     }
 }
+
+#[test]
+fn guest_agent_harness_flush_interruptions_are_bounded_and_recoverable() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct FlushInterrupted {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        remaining_interrupts: usize,
+        flush_calls: usize,
+    }
+    impl Write for FlushInterrupted {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            if self.remaining_interrupts > 0 {
+                self.remaining_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-flush-eintr".to_owned(),
+            guest_revision: 59,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            for interruptions in [2usize, 40] {
+                let mut writer = FlushInterrupted {
+                    staged: Vec::new(),
+                    delivered: Vec::new(),
+                    remaining_interrupts: interruptions,
+                    flush_calls: 0,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        59,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        59,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                let mut expected = Vec::new();
+                if packet {
+                    expected.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+                }
+                expected.extend_from_slice(&payload);
+                if interruptions == 2 {
+                    assert_eq!(result.unwrap(), expected.len(), "{arch}/packet={packet}");
+                    assert_eq!(writer.flush_calls, 3);
+                    assert_eq!(writer.delivered, expected);
+                    assert!(writer.staged.is_empty());
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(WindowsVmError::Io(ref error))
+                            if error.kind() == io::ErrorKind::Interrupted
+                    ));
+                    assert!(writer.flush_calls <= 34, "{arch}: unbounded flush retry");
+                    assert!(
+                        writer.delivered.is_empty(),
+                        "{arch}: unflushed packet delivered"
+                    );
+                    assert_eq!(writer.staged, expected);
+                }
+            }
+        }
+    }
+}
