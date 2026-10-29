@@ -6337,3 +6337,117 @@ fn guest_agent_harness_rejects_overreported_io_counts() {
         }
     }
 }
+
+#[test]
+fn guest_agent_packet_preflights_host_authority_before_transport_io() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet,
+        write_guest_agent_hello_payload, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read, Write};
+
+    // Host authority is checked before either framed or payload-only I/O.
+    // A rejected caller must not consume the next packet or flush a writer.
+    #[derive(Default)]
+    struct ProbeWriter {
+        writes: usize,
+        flushes: usize,
+    }
+    impl Write for ProbeWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+    struct ProbeReader {
+        inner: Cursor<Vec<u8>>,
+        reads: usize,
+    }
+    impl Read for ProbeReader {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.inner.read(bytes)
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-preflight-io".to_owned(),
+            guest_revision: 43,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = Vec::new();
+        write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            43,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        for (case, id, revision, digest, workload_arch) in [
+            ("bad-id", "guest/alias", 43, "d".repeat(64), arch),
+            ("zero-revision", "w8-preflight-io", 0, "d".repeat(64), arch),
+            ("bad-digest", "w8-preflight-io", 43, "D".repeat(64), arch),
+            ("bad-arch", "w8-preflight-io", 43, "d".repeat(64), "arm64"),
+        ] {
+            for packet in [false, true] {
+                let mut writer = ProbeWriter::default();
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        id,
+                        revision,
+                        &digest,
+                        workload_arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        id,
+                        revision,
+                        &digest,
+                        workload_arch,
+                    )
+                };
+                assert!(result.is_err(), "{arch}/{case}/packet={packet}");
+                assert_eq!(writer.writes, 0, "{arch}/{case}: preflight wrote bytes");
+                assert_eq!(writer.flushes, 0, "{arch}/{case}: preflight flushed");
+            }
+            let mut reader = ProbeReader {
+                inner: Cursor::new(wire.clone()),
+                reads: 0,
+            };
+            assert!(
+                read_guest_agent_hello_packet(&mut reader, id, revision, &digest, workload_arch,)
+                    .is_err(),
+                "{arch}/{case}: invalid host authority admitted"
+            );
+            assert_eq!(reader.reads, 0, "{arch}/{case}: preflight read bytes");
+            assert_eq!(reader.inner.position(), 0, "{arch}/{case}: consumed prefix");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    43,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{case}: valid packet was lost after rejected preflight"
+            );
+            assert_eq!(reader.inner.position() as usize, wire.len());
+        }
+    }
+}
