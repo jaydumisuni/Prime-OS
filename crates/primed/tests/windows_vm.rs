@@ -2914,6 +2914,79 @@ fn runtime_proof_observations_cannot_cross_application_or_session_scopes() {
 }
 
 #[test]
+fn runtime_proof_observations_cannot_cross_guest_digests_in_same_session() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofPlan, VmRuntimeProofState,
+    };
+
+    // Gate 8 source-only regression: matching application/session paths do not
+    // authorize evidence from a different digest-bound guest image.
+    let dir = private_tempdir();
+    let image_a = dir.path().join("guest-a.qcow2");
+    let image_b = dir.path().join("guest-b.qcow2");
+    let bytes_a = b"w8-proof-guest-image-a";
+    let bytes_b = b"w8-proof-guest-image-b";
+    private_guest_image(&image_a, bytes_a);
+    private_guest_image(&image_b, bytes_b);
+    let guest_a = validate_guest_definition(&definition(&image_a, bytes_a)).unwrap();
+    let guest_b = validate_guest_definition(&definition(&image_b, bytes_b)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+
+    let plan_a = prepare_runtime_proof_plan(&guest_a, &root, "same-app", "same-session").unwrap();
+    let plan_b = prepare_runtime_proof_plan(&guest_b, &root, "same-app", "same-session").unwrap();
+    assert_ne!(plan_a.guest_sha256, plan_b.guest_sha256);
+    assert_ne!(plan_a.proof_id, plan_b.proof_id);
+
+    let observations_for = |plan: &VmRuntimeProofPlan| {
+        plan.required_cases
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, case)| {
+                create_runtime_proof_observation_from_evidence(
+                    plan,
+                    case,
+                    true,
+                    true,
+                    format!("guest-digest-{}-{index}", plan.proof_id).as_bytes(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let observations_a = observations_for(&plan_a);
+    let observations_b = observations_for(&plan_b);
+    assert_eq!(
+        evaluate_runtime_proof(&plan_a, &observations_a),
+        VmRuntimeProofState::Pass
+    );
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &observations_b),
+        VmRuntimeProofState::Pass
+    );
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &observations_a),
+        VmRuntimeProofState::Pending
+    );
+
+    // Collection order is irrelevant, but replacing one valid observation
+    // with a different guest's observation must fail even after reordering.
+    let mut reversed = observations_b;
+    reversed.reverse();
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &reversed),
+        VmRuntimeProofState::Pass
+    );
+    reversed[3] = observations_a[0].clone();
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &reversed),
+        VmRuntimeProofState::Pending
+    );
+}
+
+#[test]
 fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_digest() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
