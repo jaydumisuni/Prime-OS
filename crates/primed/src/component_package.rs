@@ -4852,6 +4852,73 @@ mod tests {
     }
 
     #[test]
+    fn explicit_scopes_reject_unrelated_inventory_corruption_even_when_empty() {
+        // Explicit scopes are not a shortcut around complete installed-inventory
+        // validation. A damaged unrelated package must invalidate both plans,
+        // including an empty declaration that would otherwise produce no steps.
+        let mut anchor = manifest(b"scope-anchor");
+        anchor.component_id = "anchor.runtime".to_owned();
+        anchor.services = vec!["anchor.service".to_owned()];
+        anchor.capabilities = vec!["anchor.capability".to_owned()];
+        let mut unrelated = manifest(b"scope-unrelated");
+        unrelated.component_id = "unrelated.runtime".to_owned();
+        unrelated.services = vec!["unrelated.service".to_owned()];
+        unrelated.capabilities = vec!["unrelated.capability".to_owned()];
+        let manifests = vec![anchor, unrelated];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+
+        let mut rebounded = installed.clone();
+        rebounded[1].package_digest = manifest(b"other-package").package_digest;
+        for selected in [&[][..], &["anchor.runtime"][..]] {
+            let scope = selected;
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    selected, scope, &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    selected, scope, &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
+        }
+
+        let mut conflicting = manifests.clone();
+        conflicting[1].services = conflicting[0].services.clone();
+        for selected in [&[][..], &["anchor.runtime"][..]] {
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    selected,
+                    selected,
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    selected,
+                    selected,
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn checked_registration_order_rejects_incomplete_or_cyclic_inventory() {
         let mut origins = manifest(b"origins");
         origins.dependencies = vec![ComponentDependency {
