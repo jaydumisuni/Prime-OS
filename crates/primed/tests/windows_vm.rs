@@ -5626,3 +5626,95 @@ fn guest_agent_reordered_json_fields_keep_authority_and_frame_isolation() {
         assert_eq!(&trailer, b"TRAILER", "{arch}");
     }
 }
+
+#[test]
+fn guest_agent_single_escaped_member_name_preserves_semantic_authority() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A single escaped JSON member name is the same field after decoding.
+    // Duplicate aliases are rejected separately; do not reject a valid guest
+    // merely because its encoder chose an equivalent spelling.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-escaped-member".to_owned(),
+            guest_revision: 79,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_string(&hello).unwrap();
+        for (field, escaped) in [
+            ("schema", r"\u0073chema"),
+            ("protocol_revision", r"\u0070rotocol_revision"),
+            ("guest_id", r"\u0067uest_id"),
+            ("guest_revision", r"\u0067uest_revision"),
+            ("guest_sha256", r"\u0067uest_sha256"),
+            ("workload_arch", r"\u0077orkload_arch"),
+        ] {
+            let escaped_json =
+                canonical.replacen(&format!("\"{field}\":"), &format!("\"{escaped}\":"), 1);
+            assert_ne!(escaped_json, canonical, "{arch}/{field}: fixture");
+            assert_eq!(
+                parse_guest_agent_hello_json(
+                    escaped_json.as_bytes(),
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: decoded member identity"
+            );
+
+            let mut wire = (escaped_json.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(escaped_json.as_bytes());
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: framed admission"
+            );
+            assert_eq!(reader.position() as usize, following_start);
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: next packet"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{field}");
+        }
+    }
+}
