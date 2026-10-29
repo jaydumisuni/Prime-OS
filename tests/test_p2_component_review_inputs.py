@@ -124,6 +124,35 @@ def test_ambient_git_config_and_object_store_cannot_rebind_review_inputs(
     assert module.build_manifest(root, head) == baseline
 
 
+def test_ambient_alternate_object_database_cannot_supply_review_git_objects(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An inherited alternate object store must not become review authority."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+    foreign = tmp_path / "foreign-objects-repo"
+    foreign.mkdir()
+    git(foreign, "init", "-q")
+    foreign_oid = subprocess.check_output(
+        ["git", "-C", str(foreign), "hash-object", "-w", "--stdin"],
+        input=b"foreign-only P2 review object\n",
+    ).decode().strip()
+    probe = ["git", "-C", str(root), "cat-file", "-e", foreign_oid]
+    assert subprocess.run(probe, capture_output=True, check=False).returncode != 0
+
+    monkeypatch.setenv(
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", str(foreign / ".git" / "objects")
+    )
+    assert subprocess.run(probe, capture_output=True, check=False).returncode == 0
+    try:
+        module.git(root, "cat-file", "-e", foreign_oid)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("ambient alternate object database supplied review Git")
+    assert module.build_manifest(root, head) == baseline
+
+
 def test_rejects_wrong_head(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     try:
