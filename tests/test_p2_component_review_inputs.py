@@ -1336,3 +1336,65 @@ def test_rejects_late_object_alternates_after_final_git_probe(
     with pytest.raises(module.ReviewInputError, match="object alternates"):
         module.build_manifest(root, head)
     assert injected and head_reads == 2
+
+
+def test_rejects_same_byte_head_control_inode_swap_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Even identical HEAD bytes cannot conceal an atomic control-file replacement."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    control = root / ".git" / "HEAD"
+    original_git = module.git
+    head_reads = 0
+    replaced = False
+
+    def replace_head_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, replaced
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = control.with_name("HEAD.same-bytes")
+                replacement.write_bytes(control.read_bytes())
+                os.replace(replacement, control)
+                replaced = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_head_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.build_manifest(root, head)
+    assert replaced and head_reads == 2
+
+
+def test_rejects_same_byte_loose_branch_ref_inode_swap_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A same-byte replacement of the branch ref invalidates the pinned ref epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    ref = git(root, "symbolic-ref", "HEAD")
+    control = root / ".git" / ref
+    assert control.is_file(), "fixture must use a loose branch ref"
+    original_git = module.git
+    head_reads = 0
+    replaced = False
+
+    def replace_ref_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, replaced
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = control.with_name(control.name + ".same-bytes")
+                replacement.write_bytes(control.read_bytes())
+                os.replace(replacement, control)
+                replaced = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_ref_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.build_manifest(root, head)
+    assert replaced and head_reads == 2
