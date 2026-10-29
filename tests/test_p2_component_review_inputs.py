@@ -1398,3 +1398,34 @@ def test_rejects_same_byte_loose_branch_ref_inode_swap_after_final_git_probe(
     with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
         module.build_manifest(root, head)
     assert replaced and head_reads == 2
+
+
+def test_ambient_gitdir_worktree_and_common_dir_cannot_rebind_review_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Foreign repository-routing variables must not substitute exact-HEAD inputs."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+
+    other_parent = tmp_path / "foreign"
+    other_parent.mkdir()
+    other, _ = sample_repo(other_parent)
+    changed = other / module.INPUTS[0]
+    changed.write_text("foreign committed component review input\n", encoding="utf-8")
+    git(other, "add", "--", module.INPUTS[0])
+    git(other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: foreign review source")
+    foreign_head = git(other, "rev-parse", "HEAD")
+    assert foreign_head != head
+
+    # The same argv resolves a foreign repository when these caller-owned
+    # variables are inherited. The review helper must construct its own
+    # Git environment and retain the originally pinned worktree identity.
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(other / ".git"))
+    inherited = subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert inherited == foreign_head
+    assert module.build_manifest(root, head) == baseline
