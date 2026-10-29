@@ -218,6 +218,8 @@ pub enum ComponentAdmissionError {
     DuplicateRegistrationTarget(String),
     #[error("component {0} appears more than once in the unregistration selection")]
     DuplicateUnregistrationTarget(String),
+    #[error("explicit unregistration scope differs from dependent closure at {0}")]
+    UnregistrationScopeMismatch(String),
     #[error("registration {registration} is claimed by both {first_component_id} and {second_component_id}")]
     RegistrationIdentityConflict {
         registration: String,
@@ -725,6 +727,50 @@ pub fn plan_component_unregistration_dependent_closure_checked(
         .into_iter()
         .filter(|id| required.contains(id.as_str()))
         .collect())
+}
+
+/// Preview a dependent-closed unregistration only when the caller supplies
+/// the complete explicit scope. An expanded dependent closure is never silently
+/// accepted as the requested scope; unrelated components cannot be smuggled in.
+///
+/// The scope is an untrusted declaration, NOT approval or authentication.
+/// Callers must separately authenticate installed manifests and obtain
+/// authorization for every returned component before any mutation.
+pub fn plan_component_unregistration_explicit_scope_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let closure = plan_component_unregistration_dependent_closure_checked(
+        selected_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let mut scope = BTreeSet::new();
+    for &id in explicit_scope_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !inventory.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !scope.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateUnregistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let required: BTreeSet<&str> = closure.iter().map(String::as_str).collect();
+    if let Some(id) = required.symmetric_difference(&scope).next() {
+        return Err(ComponentAdmissionError::UnregistrationScopeMismatch(
+            (*id).to_owned(),
+        ));
+    }
+    Ok(closure)
 }
 
 /// Preview a selected subset of component unregistrations without stranding
@@ -4490,6 +4536,131 @@ mod tests {
             ),
             Err(ComponentAdmissionError::MissingInstalledManifest(id))
                 if id == "origins.runtime"
+        ));
+    }
+
+    #[test]
+    fn explicit_unregistration_scope_requires_exact_dependent_closure() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("leaf.runtime", &["left.runtime", "right.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("right.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+            make("left.runtime", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let exact = [
+            "origins.runtime",
+            "left.runtime",
+            "right.runtime",
+            "leaf.runtime",
+        ];
+        let expected = vec![
+            "leaf.runtime",
+            "right.runtime",
+            "left.runtime",
+            "origins.runtime",
+        ];
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &exact,
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &[
+                    "leaf.runtime",
+                    "right.runtime",
+                    "left.runtime",
+                    "origins.runtime"
+                ],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        for scope in [
+            &exact[..3],
+            &[
+                "origins.runtime",
+                "left.runtime",
+                "right.runtime",
+                "leaf.runtime",
+                "unrelated.runtime",
+            ][..],
+        ] {
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    &["origins.runtime"],
+                    scope,
+                    &installed,
+                    &manifests
+                ),
+                Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+            ));
+        }
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &["origins.runtime", "origins.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateUnregistrationTarget(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &["origins.runtime", "missing.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(_))
+        ));
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(&[], &[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &[],
+                &["unrelated.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
         ));
     }
 
