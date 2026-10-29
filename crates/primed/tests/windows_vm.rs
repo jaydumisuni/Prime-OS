@@ -5932,6 +5932,185 @@ fn guest_agent_high_u64_revision_preserves_exact_authority_and_packet_boundary()
 }
 
 #[test]
+fn guest_agent_writers_bound_consecutive_interruptions() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct InterruptWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        flushes: usize,
+        pending_interrupts: usize,
+        burst_after_first_byte: bool,
+        burst_armed: bool,
+    }
+    impl Write for InterruptWriter {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.pending_interrupts > 0 {
+                self.pending_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let count = if self.burst_after_first_byte && !self.burst_armed {
+                1
+            } else {
+                data.len()
+            };
+            self.bytes.extend_from_slice(&data[..count]);
+            if self.burst_after_first_byte && !self.burst_armed {
+                self.burst_armed = true;
+                self.pending_interrupts = 33;
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-interrupted-writer".to_owned(),
+            guest_revision: 31,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        for packet in [false, true] {
+            for burst_after_first_byte in [false, true] {
+                let mut writer = InterruptWriter {
+                    bytes: Vec::new(),
+                    calls: 0,
+                    flushes: 0,
+                    pending_interrupts: if burst_after_first_byte { 0 } else { 33 },
+                    burst_after_first_byte,
+                    burst_armed: false,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        31,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        31,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                assert!(
+                    matches!(result, Err(WindowsVmError::Io(ref err))
+                        if err.kind() == io::ErrorKind::Interrupted),
+                    "{arch}/packet={packet}/after-progress={burst_after_first_byte}: {result:?}"
+                );
+                assert!(writer.calls <= 34, "{arch}: unbounded interrupted writes");
+                assert_eq!(writer.bytes.len(), usize::from(burst_after_first_byte));
+                assert_eq!(writer.flushes, 0, "failed frame cannot flush");
+            }
+        }
+    }
+}
+
+#[test]
+fn guest_agent_writer_interrupt_budget_resets_after_progress() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct BurstyWriter {
+        bytes: Vec<u8>,
+        pending_interrupts: usize,
+        first_byte_written: bool,
+        flushes: usize,
+    }
+    impl Write for BurstyWriter {
+        fn write(&mut self, chunk: &[u8]) -> io::Result<usize> {
+            if self.pending_interrupts > 0 {
+                self.pending_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let count = if self.first_byte_written {
+                chunk.len()
+            } else {
+                1
+            };
+            self.bytes.extend_from_slice(&chunk[..count]);
+            if !self.first_byte_written {
+                self.first_byte_written = true;
+                self.pending_interrupts = 32;
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-write-progress".to_owned(),
+            guest_revision: 37,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            let mut writer = BurstyWriter {
+                bytes: Vec::new(),
+                pending_interrupts: 32,
+                first_byte_written: false,
+                flushes: 0,
+            };
+            let result = if packet {
+                write_guest_agent_hello_packet(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    37,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            } else {
+                write_guest_agent_hello_payload(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    37,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            };
+            let mut expected = if packet {
+                (payload.len() as u32).to_be_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+            expected.extend_from_slice(&payload);
+            assert_eq!(result.unwrap(), expected.len(), "{arch}/packet={packet}");
+            assert_eq!(writer.bytes, expected, "{arch}/packet={packet}");
+            assert_eq!(writer.flushes, 1, "{arch}/packet={packet}");
+        }
+    }
+}
+
+#[test]
 fn guest_agent_packet_reader_bounds_perpetual_interrupted_io() {
     use primed::windows_vm::{read_guest_agent_hello_packet, WindowsVmError};
     use std::io::{self, Read};

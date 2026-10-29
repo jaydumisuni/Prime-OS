@@ -243,7 +243,7 @@ pub fn write_guest_agent_hello_payload<W: Write>(
         expected_guest_sha256,
         expected_workload_arch,
     )?;
-    writer.write_all(&payload)?;
+    write_all_guest_agent_bounded(writer, &payload)?;
     writer.flush()?;
     Ok(payload.len())
 }
@@ -274,6 +274,38 @@ fn validate_expected_guest_agent_authority(
         return Err(WindowsVmError::InvalidGuest(
             "guest-agent workload architecture mismatch",
         ));
+    }
+    Ok(())
+}
+
+// Write::write_all retries Interrupted indefinitely. A stalled guest-facing
+// harness writer must not pin a host worker. Bound consecutive retries, but
+// reset the budget after positive progress; any failure invalidates the frame.
+const WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS: usize = 32;
+
+fn write_all_guest_agent_bounded<W: Write>(writer: &mut W, mut remaining: &[u8]) -> io::Result<()> {
+    let mut consecutive_interrupts = 0;
+    while !remaining.is_empty() {
+        match writer.write(remaining) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => {
+                if count > remaining.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "guest-agent writer exceeded supplied length",
+                    ));
+                }
+                remaining = &remaining[count..];
+                consecutive_interrupts = 0;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                consecutive_interrupts += 1;
+                if consecutive_interrupts > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
     }
     Ok(())
 }
@@ -387,8 +419,8 @@ pub fn write_guest_agent_hello_packet<W: Write>(
     )?;
     let length = u32::try_from(payload.len())
         .map_err(|_| WindowsVmError::InvalidGuest("guest-agent hello exceeds JSON size limit"))?;
-    writer.write_all(&length.to_be_bytes())?;
-    writer.write_all(&payload)?;
+    write_all_guest_agent_bounded(writer, &length.to_be_bytes())?;
+    write_all_guest_agent_bounded(writer, &payload)?;
     writer.flush()?;
     Ok(4 + payload.len())
 }
