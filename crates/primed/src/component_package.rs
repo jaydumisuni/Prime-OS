@@ -4919,6 +4919,114 @@ mod tests {
     }
 
     #[test]
+    fn deep_component_scopes_are_dependency_closed_without_recursive_traversal() {
+        // Long installed dependency chains must not be truncated, reversed,
+        // or treated as authority to register/remove unrelated components.
+        // The preview remains source-only; no component state is mutated.
+        const DEPTH: usize = 160;
+        let mut manifests = Vec::new();
+        for index in 0..DEPTH {
+            let id = format!("chain.{index:03}");
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.clone();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            if index > 0 {
+                item.dependencies = vec![ComponentDependency {
+                    component_id: format!("chain.{:03}", index - 1),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                }];
+            }
+            manifests.push(item);
+        }
+        let mut unrelated = manifest(b"unrelated");
+        unrelated.component_id = "unrelated.runtime".to_owned();
+        unrelated.services = vec!["unrelated.service".to_owned()];
+        unrelated.capabilities = vec!["unrelated.capability".to_owned()];
+        manifests.push(unrelated);
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+
+        let expected_registration: Vec<_> = (0..DEPTH)
+            .map(|index| format!("chain.{index:03}"))
+            .collect();
+        let registration =
+            plan_component_registration_subset_checked(&["chain.159"], &installed, &manifests)
+                .unwrap();
+        assert_eq!(registration, expected_registration);
+        let registration_scope: Vec<_> = registration.iter().map(String::as_str).collect();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["chain.159"],
+                &registration_scope,
+                &installed,
+                &manifests,
+            )
+            .unwrap(),
+            expected_registration
+        );
+
+        let expected_unregistration: Vec<_> = (80..DEPTH)
+            .rev()
+            .map(|index| format!("chain.{index:03}"))
+            .collect();
+        let unregistration = plan_component_unregistration_dependent_closure_checked(
+            &["chain.080"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(unregistration, expected_unregistration);
+        let unregistration_scope: Vec<_> = unregistration.iter().map(String::as_str).collect();
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["chain.080"],
+                &unregistration_scope,
+                &installed,
+                &manifests,
+            )
+            .unwrap(),
+            expected_unregistration
+        );
+
+        // An incomplete declaration must not silently expand into an
+        // authorized scope, even when the missing member is far away.
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["chain.159"],
+                &registration_scope[..registration_scope.len() - 1],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["chain.080"],
+                &unregistration_scope[..unregistration_scope.len() - 1],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+        ));
+
+        manifests.reverse();
+        assert_eq!(
+            plan_component_registration_subset_checked(&["chain.159"], &installed, &manifests,)
+                .unwrap(),
+            expected_registration,
+            "manifest enumeration order must not change deep prerequisite closure"
+        );
+    }
+
+    #[test]
     fn checked_registration_order_rejects_incomplete_or_cyclic_inventory() {
         let mut origins = manifest(b"origins");
         origins.dependencies = vec![ComponentDependency {
