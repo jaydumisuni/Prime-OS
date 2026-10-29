@@ -6921,3 +6921,44 @@ fn guest_agent_flush_retry_budget_boundary_and_terminal_error_are_fail_closed() 
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn qemu_agent_socket_path_accepts_exact_unix_boundary_and_rejects_overflow() {
+    use std::os::unix::ffi::OsStrExt;
+
+    // sockaddr_un.sun_path has 108 bytes, including the NUL terminator.
+    // Exactly 107 pathname bytes must be admitted; 108 must fail before QEMU.
+    // This is host-only path-boundary proof, not Windows guest qualification.
+    let dir = private_tempdir();
+    let root_bytes = dir.path().as_os_str().as_bytes().len();
+    let suffix_bytes = b"/agent.sock".len();
+    for (socket_bytes, admitted) in [(107usize, true), (108, false)] {
+        let component_bytes = socket_bytes
+            .checked_sub(root_bytes + 1 + suffix_bytes)
+            .expect("test root leaves room for an AF_UNIX pathname");
+        let runtime = dir.path().join("s".repeat(component_bytes));
+        private_runtime_dir(&runtime);
+        let overlay = runtime.join("overlay.qcow2");
+        private_overlay(&overlay);
+        let socket = runtime.join("agent.sock");
+        assert_eq!(socket.as_os_str().as_bytes().len(), socket_bytes);
+        let result = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay,
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        });
+        if admitted {
+            assert!(
+                result.is_ok(),
+                "107-byte AF_UNIX pathname must fit: {result:?}"
+            );
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("AF_UNIX"), "{error}");
+        }
+    }
+}
