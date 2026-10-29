@@ -375,11 +375,12 @@ def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
     while pending:
         directory = pending.pop()
         directory_state = directory.lstat()
-        # The object-store root is private; Git may create group-writable
-        # fanout directories beneath that non-traversable root.
+        # A non-writable object root may still be group/world traversable.
+        # Therefore every descendant directory must also refuse shared
+        # writers; a writable fanout or pack directory is mutable authority.
         if (not stat.S_ISDIR(directory_state.st_mode)
                 or directory_state.st_uid not in (0, os.geteuid())
-                or directory_state.st_mode & stat.S_IWOTH):
+                or directory_state.st_mode & 0o022):
             raise ReviewInputError("untrusted Git object store directory")
         for item in directory.iterdir():
             if len(entries) >= MAX_GIT_OBJECT_ENTRIES:
@@ -391,7 +392,7 @@ def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
             elif stat.S_ISREG(state.st_mode):
                 if state.st_nlink != 1:
                     raise ReviewInputError("Git object store hardlinked external storage")
-                if state.st_uid not in (0, os.geteuid()) or state.st_mode & stat.S_IWOTH:
+                if state.st_uid not in (0, os.geteuid()) or state.st_mode & 0o022:
                     raise ReviewInputError("untrusted Git object store file")
             else:
                 raise ReviewInputError("nonregular Git object store entry")

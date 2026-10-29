@@ -1487,3 +1487,28 @@ def test_rejects_late_git_object_hardlink_after_final_git_probe(
     with pytest.raises(module.ReviewInputError, match="hardlink"):
         module.build_manifest(root, head)
     assert head_reads == 2 and external.is_file()
+
+
+
+def test_rejects_group_writable_git_object_storage(tmp_path: Path) -> None:
+    """A traversable object root cannot protect group-writable descendants."""
+    import pytest
+
+    for storage_kind in ("loose_directory", "loose_file", "pack_directory", "pack_file"):
+        case = tmp_path / storage_kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        objects = root / ".git" / "objects"
+        if storage_kind.startswith("pack"):
+            git(root, "repack", "-ad")
+            target = (objects / "pack" if storage_kind == "pack_directory"
+                      else next((objects / "pack").glob("*.pack")))
+        else:
+            blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+            target = (objects / blob[:2] if storage_kind == "loose_directory"
+                      else objects / blob[:2] / blob[2:])
+        assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"
+        assert objects.stat().st_mode & 0o111  # other users can traverse the root
+        target.chmod(target.stat().st_mode | 0o020)
+        with pytest.raises(module.ReviewInputError, match="object store"):
+            module.build_manifest(root, head)
