@@ -1507,8 +1507,25 @@ def test_rejects_group_writable_git_object_storage(tmp_path: Path) -> None:
             blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
             target = (objects / blob[:2] if storage_kind == "loose_directory"
                       else objects / blob[:2] / blob[2:])
+        objects.chmod(0o755)  # group can traverse, but cannot write the root
         assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"
-        assert objects.stat().st_mode & 0o111  # other users can traverse the root
+        assert objects.stat().st_mode & 0o010
         target.chmod(target.stat().st_mode | 0o020)
         with pytest.raises(module.ReviewInputError, match="object store"):
             module.build_manifest(root, head)
+
+
+
+def test_private_git_object_root_protects_group_writable_descendants(
+    tmp_path: Path,
+) -> None:
+    """Mode 0700 on the root denies group traversal into writable fanout."""
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    objects.chmod(0o700)
+    blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+    fanout = objects / blob[:2]
+    fanout.chmod(fanout.stat().st_mode | 0o020)
+    loose = fanout / blob[2:]
+    loose.chmod(loose.stat().st_mode | 0o020)
+    assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"

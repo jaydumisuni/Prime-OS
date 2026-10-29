@@ -370,17 +370,22 @@ def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
         raise ReviewInputError("noncanonical Git object store")
     require_private_directory(objects)
     require_protected_ancestors(objects)
+    # Mode 0700 on the object root protects descendants even when Git creates
+    # group-writable fanout directories. If group traversal is allowed, a
+    # group-writable descendant is independently mutable and must be rejected.
+    group_can_traverse_objects = bool(objects.lstat().st_mode & stat.S_IXGRP)
     entries: dict[str, tuple] = {}
     pending = [objects]
     while pending:
         directory = pending.pop()
         directory_state = directory.lstat()
-        # A non-writable object root may still be group/world traversable.
-        # Therefore every descendant directory must also refuse shared
-        # writers; a writable fanout or pack directory is mutable authority.
+        # A group-writable descendant is unsafe only when the group can
+        # traverse the object root. World-writable entries remain forbidden.
         if (not stat.S_ISDIR(directory_state.st_mode)
                 or directory_state.st_uid not in (0, os.geteuid())
-                or directory_state.st_mode & 0o022):
+                or directory_state.st_mode & stat.S_IWOTH
+                or (group_can_traverse_objects
+                    and directory_state.st_mode & stat.S_IWGRP)):
             raise ReviewInputError("untrusted Git object store directory")
         for item in directory.iterdir():
             if len(entries) >= MAX_GIT_OBJECT_ENTRIES:
@@ -392,7 +397,10 @@ def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
             elif stat.S_ISREG(state.st_mode):
                 if state.st_nlink != 1:
                     raise ReviewInputError("Git object store hardlinked external storage")
-                if state.st_uid not in (0, os.geteuid()) or state.st_mode & 0o022:
+                if (state.st_uid not in (0, os.geteuid())
+                        or state.st_mode & stat.S_IWOTH
+                        or (group_can_traverse_objects
+                            and state.st_mode & stat.S_IWGRP)):
                     raise ReviewInputError("untrusted Git object store file")
             else:
                 raise ReviewInputError("nonregular Git object store entry")
