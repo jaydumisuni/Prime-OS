@@ -2851,6 +2851,75 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
 }
 
 #[test]
+fn runtime_proof_rejects_identity_valid_failed_and_residual_observations() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState,
+    };
+
+    // A negative observation must remain negative even when its identity
+    // digest is correctly recomputed by the trusted observation factory.
+    // This is source-only Gate 8 custody, not a Windows guest acceptance.
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"w8-failure-observation-identity";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    let make = |case, passed, zero_residual_state| {
+        create_runtime_proof_observation_from_evidence(
+            &plan,
+            case,
+            passed,
+            zero_residual_state,
+            b"w8-identity-valid-evidence",
+        )
+        .unwrap()
+    };
+    let mut valid: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, case)| {
+            create_runtime_proof_observation_from_evidence(
+                &plan,
+                case,
+                true,
+                true,
+                format!("w8-distinct-evidence-{index}").as_bytes(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &valid),
+        VmRuntimeProofState::Pass
+    );
+
+    for (passed, zero_residual_state) in [(false, true), (true, false), (false, false)] {
+        let original = valid[0].clone();
+        let replacement = make(original.case.clone(), passed, zero_residual_state);
+        assert_ne!(replacement.observation_id, original.observation_id);
+        assert_eq!(replacement.proof_id, plan.proof_id);
+        valid[0] = replacement;
+        assert_eq!(
+            evaluate_runtime_proof(&plan, &valid),
+            VmRuntimeProofState::Pending,
+            "a correctly hashed negative observation cannot complete Gate 8"
+        );
+        valid[0] = original;
+    }
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &valid),
+        VmRuntimeProofState::Pass
+    );
+}
+
+#[test]
 fn runtime_proof_observations_cannot_cross_application_or_session_scopes() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
