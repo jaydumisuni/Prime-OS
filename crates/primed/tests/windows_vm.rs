@@ -4296,6 +4296,73 @@ fn guest_agent_harness_rejected_packet_preserves_following_frame() {
 }
 
 #[test]
+fn guest_agent_empty_packet_preserves_following_authorized_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A zero-length declaration has no body to discard. Reject that frame
+    // without consuming the next independently length-delimited hello.
+    // This is a host-side framing regression, not Windows guest qualification.
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-next-frame".to_owned(),
+        guest_revision: 17,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let mut wire = 0u32.to_be_bytes().to_vec();
+    let next_frame_start = wire.len();
+    let next_frame_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        &hello.workload_arch,
+    )
+    .unwrap();
+    wire.extend_from_slice(b"TRAILER");
+    let mut reader = Cursor::new(wire);
+
+    let error = read_guest_agent_hello_packet(
+        &mut reader,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        &hello.workload_arch,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        WindowsVmError::InvalidGuest("empty guest-agent hello frame")
+    ));
+    assert_eq!(reader.position() as usize, next_frame_start);
+
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            &hello.workload_arch,
+        )
+        .unwrap(),
+        hello
+    );
+    assert_eq!(
+        reader.position() as usize,
+        next_frame_start + next_frame_bytes
+    );
+    let mut trailer = [0u8; 7];
+    reader.read_exact(&mut trailer).unwrap();
+    assert_eq!(&trailer, b"TRAILER");
+}
+
+#[test]
 fn guest_agent_harness_maximum_length_packet_keeps_next_packet_isolated() {
     use primed::windows_vm::{
         read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
