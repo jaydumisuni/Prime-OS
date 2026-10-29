@@ -2851,6 +2851,70 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
 }
 
 #[test]
+fn runtime_proof_observations_cannot_cross_application_or_session_scopes() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofPlan, VmRuntimeProofState,
+    };
+
+    // Gate 8/9 source-only isolation: a successful case from one scope
+    // cannot complete another scope's otherwise valid four-case evidence.
+    // This does not claim an authorized Windows guest or runtime execution.
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"w8-scoped-runtime-observation";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+
+    let primary = prepare_runtime_proof_plan(&guest, &root, "app-one", "session-a").unwrap();
+    let other_session =
+        prepare_runtime_proof_plan(&guest, &root, "app-one", "session-b").unwrap();
+    let other_application =
+        prepare_runtime_proof_plan(&guest, &root, "app-two", "session-a").unwrap();
+    let observations_for = |plan: &VmRuntimeProofPlan| {
+        plan.required_cases
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, case)| {
+                let evidence = format!("w8-isolation-{}-{index}", plan.proof_id);
+                create_runtime_proof_observation_from_evidence(
+                    plan,
+                    case,
+                    true,
+                    true,
+                    evidence.as_bytes(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let primary_observations = observations_for(&primary);
+    assert_eq!(
+        evaluate_runtime_proof(&primary, &primary_observations),
+        VmRuntimeProofState::Pass
+    );
+
+    for other in [&other_session, &other_application] {
+        let own_observations = observations_for(other);
+        assert_ne!(other.proof_id, primary.proof_id);
+        assert_eq!(
+            evaluate_runtime_proof(other, &own_observations),
+            VmRuntimeProofState::Pass
+        );
+        let mut spliced = own_observations;
+        spliced[0] = primary_observations[0].clone();
+        assert_eq!(
+            evaluate_runtime_proof(other, &spliced),
+            VmRuntimeProofState::Pending,
+            "cross-scope evidence must not satisfy an otherwise complete plan"
+        );
+    }
+}
+
+#[test]
 fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_digest() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
