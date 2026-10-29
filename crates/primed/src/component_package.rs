@@ -5027,6 +5027,158 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_multi_target_component_scopes_are_exact_and_order_invariant() {
+        // Two independently selected consumers share prerequisites; removing two
+        // providers also shares dependents. Each component must appear exactly
+        // once, regardless of selection, manifest, or scope enumeration order.
+        // These are previews only, not registration/removal authority.
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.shared", &["provider.alpha", "provider.beta"]),
+            make("unrelated.runtime", &[]),
+            make("provider.beta", &["origins.runtime"]),
+            make("consumer.alpha", &["provider.alpha"]),
+            make("origins.runtime", &[]),
+            make("provider.alpha", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let register_scope = [
+            "consumer.shared",
+            "consumer.alpha",
+            "provider.alpha",
+            "provider.beta",
+            "origins.runtime",
+        ];
+        let unregister_scope = [
+            "consumer.shared",
+            "consumer.alpha",
+            "provider.alpha",
+            "provider.beta",
+        ];
+        let registration = plan_component_registration_explicit_scope_checked(
+            &["consumer.shared", "consumer.alpha"],
+            &register_scope,
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        let unregistration = plan_component_unregistration_explicit_scope_checked(
+            &["provider.beta", "provider.alpha"],
+            &unregister_scope,
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        let expected_registration: BTreeSet<_> = register_scope.into_iter().collect();
+        let expected_unregistration: BTreeSet<_> = unregister_scope.into_iter().collect();
+        assert_eq!(registration.len(), expected_registration.len());
+        assert_eq!(unregistration.len(), expected_unregistration.len());
+        assert_eq!(
+            registration
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            expected_registration
+        );
+        assert_eq!(
+            unregistration
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            expected_unregistration
+        );
+        let position =
+            |order: &[String], id: &str| order.iter().position(|item| item == id).unwrap();
+        for provider in ["provider.alpha", "provider.beta"] {
+            assert!(position(&registration, "origins.runtime") < position(&registration, provider));
+            assert!(position(&registration, provider) < position(&registration, "consumer.shared"));
+            assert!(
+                position(&unregistration, "consumer.shared") < position(&unregistration, provider)
+            );
+        }
+        assert!(
+            position(&registration, "provider.alpha") < position(&registration, "consumer.alpha")
+        );
+        assert!(
+            position(&unregistration, "consumer.alpha")
+                < position(&unregistration, "provider.alpha")
+        );
+
+        let mut reordered = manifests.clone();
+        reordered.reverse();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["consumer.alpha", "consumer.shared"],
+                &[
+                    "origins.runtime",
+                    "provider.beta",
+                    "consumer.alpha",
+                    "provider.alpha",
+                    "consumer.shared"
+                ],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            registration
+        );
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["provider.alpha", "provider.beta"],
+                &[
+                    "provider.alpha",
+                    "consumer.alpha",
+                    "provider.beta",
+                    "consumer.shared"
+                ],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            unregistration
+        );
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["consumer.shared", "consumer.alpha"],
+                &register_scope[..4],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["provider.alpha", "provider.beta"],
+                &["consumer.shared", "provider.alpha", "provider.beta"],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+        ));
+    }
+
+    #[test]
     fn checked_registration_order_rejects_incomplete_or_cyclic_inventory() {
         let mut origins = manifest(b"origins");
         origins.dependencies = vec![ComponentDependency {
