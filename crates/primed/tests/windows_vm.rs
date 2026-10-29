@@ -6546,3 +6546,106 @@ fn guest_agent_harness_flush_interruptions_are_bounded_and_recoverable() {
         }
     }
 }
+
+#[test]
+fn guest_agent_flush_retry_budget_boundary_and_terminal_error_are_fail_closed() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct BoundaryFlush {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        remaining_interrupts: usize,
+        terminal_error: Option<io::ErrorKind>,
+        flush_calls: usize,
+    }
+    impl Write for BoundaryFlush {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            if let Some(kind) = self.terminal_error {
+                return Err(kind.into());
+            }
+            if self.remaining_interrupts > 0 {
+                self.remaining_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-flush-boundary".to_owned(),
+            guest_revision: 61,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            let mut expected = Vec::new();
+            if packet {
+                expected.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            }
+            expected.extend_from_slice(&payload);
+            for (interruptions, terminal_error, success, calls) in [
+                (32, None, true, 33),
+                (33, None, false, 33),
+                (0, Some(io::ErrorKind::BrokenPipe), false, 1),
+            ] {
+                let mut writer = BoundaryFlush {
+                    staged: Vec::new(),
+                    delivered: Vec::new(),
+                    remaining_interrupts: interruptions,
+                    terminal_error,
+                    flush_calls: 0,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        61,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        61,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                assert_eq!(writer.flush_calls, calls, "{arch}/packet={packet}");
+                if success {
+                    assert_eq!(result.unwrap(), expected.len());
+                    assert_eq!(writer.delivered, expected);
+                    assert!(writer.staged.is_empty());
+                } else {
+                    let expected_kind = terminal_error.unwrap_or(io::ErrorKind::Interrupted);
+                    assert!(
+                        matches!(
+                            result,
+                            Err(WindowsVmError::Io(ref error)) if error.kind() == expected_kind
+                        ),
+                        "{arch}/packet={packet}/interruptions={interruptions}: {result:?}"
+                    );
+                    assert!(writer.delivered.is_empty(), "failed flush admitted frame");
+                    assert_eq!(writer.staged, expected, "failed frame lost staged bytes");
+                }
+            }
+        }
+    }
+}
