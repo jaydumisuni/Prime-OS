@@ -5542,3 +5542,87 @@ fn guest_agent_escaped_authority_values_are_semantic_and_frame_isolated() {
         }
     }
 }
+
+#[test]
+fn guest_agent_reordered_json_fields_keep_authority_and_frame_isolation() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // JSON object member order has no authority. Gate 6 must accept a valid
+    // guest that sends fields in reverse order, without weakening strict
+    // identity/digest checks or borrowing bytes from the next packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-field-order".to_owned(),
+            guest_revision: 73,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let reversed = format!(
+            "{{\"workload_arch\":{},\"guest_sha256\":{},\"guest_revision\":73,\"guest_id\":{},\"protocol_revision\":1,\"schema\":{}}}",
+            serde_json::to_string(arch).unwrap(),
+            serde_json::to_string(&hello.guest_sha256).unwrap(),
+            serde_json::to_string(&hello.guest_id).unwrap(),
+            serde_json::to_string(WINDOWS_VM_AGENT_SCHEMA).unwrap(),
+        );
+        assert_eq!(
+            parse_guest_agent_hello_json(
+                reversed.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+            "{arch}: reordered valid fields must retain semantic authority"
+        );
+
+        let mut wire = (reversed.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(reversed.as_bytes());
+        let next_offset = wire.len();
+        let next_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+        let mut reader = Cursor::new(wire);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello
+        );
+        assert_eq!(reader.position() as usize, next_offset, "{arch}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello
+        );
+        assert_eq!(reader.position() as usize, next_offset + next_len);
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{arch}");
+    }
+}
