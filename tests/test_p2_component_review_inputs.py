@@ -1429,3 +1429,61 @@ def test_ambient_gitdir_worktree_and_common_dir_cannot_rebind_review_inputs(
     ).strip()
     assert inherited == foreign_head
     assert module.build_manifest(root, head) == baseline
+
+
+def test_rejects_hardlinked_git_object_storage(tmp_path: Path) -> None:
+    """Committed review bytes must not rely on externally aliased Git objects."""
+    import pytest
+
+    for storage_kind in ("loose", "pack"):
+        for linked_worktree in (False, True):
+            case = tmp_path / f"{storage_kind}-{linked_worktree}"
+            case.mkdir()
+            root, head = sample_repo(case)
+            candidate = root
+            if linked_worktree:
+                candidate = case / "linked-review"
+                git(root, "worktree", "add", "-q", "-b",
+                    "linked-object-custody", str(candidate), head)
+            objects = root / ".git" / "objects"
+            if storage_kind == "pack":
+                git(root, "repack", "-ad")
+                source = next((objects / "pack").glob("*.pack"))
+            else:
+                blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+                source = objects / blob[:2] / blob[2:]
+            assert source.is_file()
+            assert module.build_manifest(candidate, head)["candidate_head"] == head
+            external = case / "outside-git-object"
+            os.link(source, external)
+            assert source.stat().st_nlink == 2
+            with pytest.raises(module.ReviewInputError, match="hardlink"):
+                module.build_manifest(candidate, head)
+
+
+def test_rejects_late_git_object_hardlink_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An external object alias created after Git reads invalidates the epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+    source = root / ".git" / "objects" / blob[:2] / blob[2:]
+    external = tmp_path / "late-external-object-alias"
+    original_git = module.git
+    head_reads = 0
+
+    def alias_after_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                os.link(source, external)
+        return result
+
+    monkeypatch.setattr(module, "git", alias_after_final_head)
+    with pytest.raises(module.ReviewInputError, match="hardlink"):
+        module.build_manifest(root, head)
+    assert head_reads == 2 and external.is_file()

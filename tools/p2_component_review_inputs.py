@@ -17,6 +17,7 @@ import stat
 import sys
 
 MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
+MAX_GIT_OBJECT_ENTRIES = 100_000
 GIT_READ_TIMEOUT_SECONDS = 30
 # Resolve Git only from the host system path, never caller-controlled PATH.
 SYSTEM_GIT = shutil.which("git", path=os.defpath)
@@ -355,6 +356,52 @@ def require_no_object_alternates(path: Path) -> None:
     raise ReviewInputError("unbound Git object alternates authority")
 
 
+
+def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
+    """Pin private, non-aliased local Git objects across review probes.
+
+    Loose objects and pack/index sidecars share one object directory. A
+    hardlinked object has an independently mutable external pathname, even
+    when HEAD and every working review input remain unchanged. Refuse such
+    storage rather than presenting its bytes as independently held evidence.
+    """
+    objects = git_control_path(root, "objects")
+    if objects.resolve() != objects:
+        raise ReviewInputError("noncanonical Git object store")
+    require_private_directory(objects)
+    require_protected_ancestors(objects)
+    entries: dict[str, tuple] = {}
+    pending = [objects]
+    while pending:
+        directory = pending.pop()
+        directory_state = directory.lstat()
+        # The object-store root is private; Git may create group-writable
+        # fanout directories beneath that non-traversable root.
+        if (not stat.S_ISDIR(directory_state.st_mode)
+                or directory_state.st_uid not in (0, os.geteuid())
+                or directory_state.st_mode & stat.S_IWOTH):
+            raise ReviewInputError("untrusted Git object store directory")
+        for item in directory.iterdir():
+            if len(entries) >= MAX_GIT_OBJECT_ENTRIES:
+                raise ReviewInputError("Git object store exceeds bounded review inventory")
+            state = item.lstat()
+            relative = item.relative_to(objects).as_posix()
+            if stat.S_ISDIR(state.st_mode):
+                pending.append(item)
+            elif stat.S_ISREG(state.st_mode):
+                if state.st_nlink != 1:
+                    raise ReviewInputError("Git object store hardlinked external storage")
+                if state.st_uid not in (0, os.geteuid()) or state.st_mode & stat.S_IWOTH:
+                    raise ReviewInputError("untrusted Git object store file")
+            else:
+                raise ReviewInputError("nonregular Git object store entry")
+            entries[relative] = (
+                stat.S_IFMT(state.st_mode), state.st_uid,
+                state.st_mode & 0o7777, state.st_nlink,
+                *stat_identity(state),
+            )
+    return entries
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -397,6 +444,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # Refuse external alternates before reading any committed review blobs.
     alternates_path = git_control_path(root, "objects/info/alternates")
     require_no_object_alternates(alternates_path)
+    object_epoch = capture_git_object_epoch(root)
     head = git(repo, "rev-parse", "HEAD").decode().strip()
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
@@ -542,6 +590,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # No Git subprocess follows the final HEAD probe; the absence of an
     # external object-store pointer is part of the final review epoch.
     require_no_object_alternates(alternates_path)
+    if capture_git_object_epoch(root) != object_epoch:
+        raise ReviewInputError("Git object store changed after final Git probe")
+    # The bounded object inventory is a filesystem-only operation. Reconfirm
+    # the control epoch afterward without executing another Git subprocess.
+    if require_index_epoch(index_path) != index_epoch:
+        raise ReviewInputError("review index changed after object-store verification")
+    verify_head_epoch(head_epoch)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
