@@ -5460,4 +5460,125 @@ mod tests {
                 if id == "consumer.runtime"
         ));
     }
+
+    #[test]
+    fn shared_dependent_removal_requires_each_explicit_migration() {
+        // Selecting one provider may close over a consumer shared with another
+        // provider. Both selected migration policies must be declared, while
+        // the unselected provider and its retained data remain out of scope.
+        // This is only a preview; it does not authenticate migration evidence.
+        let make = |id: &str, policy: PersistentDataPolicy, deps: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.persistent_data_policy = policy;
+            item.dependencies = deps
+                .iter()
+                .map(|dep| ComponentDependency {
+                    component_id: (*dep).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make(
+                "consumer.shared",
+                PersistentDataPolicy::ExplicitMigration,
+                &["provider.alpha", "provider.beta"],
+            ),
+            make("provider.beta", PersistentDataPolicy::RetainOnRemove, &[]),
+            make(
+                "consumer.alpha",
+                PersistentDataPolicy::Ephemeral,
+                &["provider.alpha"],
+            ),
+            make(
+                "provider.alpha",
+                PersistentDataPolicy::ExplicitMigration,
+                &[],
+            ),
+            make(
+                "unrelated.runtime",
+                PersistentDataPolicy::RetainOnRemove,
+                &[],
+            ),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let selected = ["provider.alpha"];
+        let scope = ["consumer.alpha", "provider.alpha", "consumer.shared"];
+        let migrated = ["consumer.shared", "provider.alpha"];
+        let planned = plan_component_unregistration_data_checked(
+            &selected, &scope, &migrated, &installed, &manifests,
+        )
+        .unwrap();
+        assert_eq!(planned.len(), 3);
+        let positions: BTreeMap<_, _> = planned
+            .iter()
+            .enumerate()
+            .map(|(i, (id, disposition))| (id.as_str(), (i, disposition)))
+            .collect();
+        assert!(positions["consumer.alpha"].0 < positions["provider.alpha"].0);
+        assert!(positions["consumer.shared"].0 < positions["provider.alpha"].0);
+        assert_eq!(
+            *positions["consumer.alpha"].1,
+            ComponentDataDisposition::DiscardEphemeral
+        );
+        assert_eq!(
+            *positions["consumer.shared"].1,
+            ComponentDataDisposition::Migrated
+        );
+        assert_eq!(
+            *positions["provider.alpha"].1,
+            ComponentDataDisposition::Migrated
+        );
+        assert!(!positions.contains_key("provider.beta"));
+        assert!(!positions.contains_key("unrelated.runtime"));
+
+        for (acknowledged, missing) in [
+            (&["provider.alpha"][..], "consumer.shared"),
+            (&["consumer.shared"][..], "provider.alpha"),
+        ] {
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    &selected, &scope, acknowledged, &installed, &manifests,
+                ),
+                Err(ComponentAdmissionError::PersistentDataMigrationRequired(id)) if id == missing
+            ));
+        }
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["provider.alpha", "provider.beta", "consumer.shared"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "provider.beta"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &["provider.alpha", "consumer.shared", "consumer.alpha", "provider.beta"],
+                &migrated, &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(id))
+                if id == "provider.beta"
+        ));
+        let mut reversed = manifests.clone();
+        reversed.reverse();
+        assert_eq!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &migrated, &installed, &reversed,
+            )
+            .unwrap(),
+            planned
+        );
+    }
 }
