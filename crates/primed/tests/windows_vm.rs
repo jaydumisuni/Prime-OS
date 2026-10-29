@@ -5718,3 +5718,111 @@ fn guest_agent_single_escaped_member_name_preserves_semantic_authority() {
         }
     }
 }
+
+#[test]
+fn guest_agent_mixed_escaped_keys_reordered_fields_and_values_preserve_packet_custody() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // JSON member order and equivalent Unicode escapes can occur together.
+    // Admission is semantic: a valid single occurrence is accepted, while
+    // a mismatched decoded revision still fails without consuming the next
+    // independently length-delimited packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-combined-escapes".to_owned(),
+            guest_revision: 83,
+            guest_sha256: "e".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let escaped_id = serde_json::to_string(&hello.guest_id)
+            .unwrap()
+            .replace('-', r"\u002d");
+        let mixed = format!(
+            r#"{{"workload_\u0061rch":{},"guest_sh\u0061256":{},"guest_revis\u0069on":83,"g\u0075est_id":{},"protocol_\u0072evision":1,"sch\u0065ma":{}}}"#,
+            serde_json::to_string(arch).unwrap(),
+            serde_json::to_string(&hello.guest_sha256).unwrap(),
+            escaped_id,
+            serde_json::to_string(WINDOWS_VM_AGENT_SCHEMA).unwrap(),
+        );
+        let wrong_revision = mixed.replacen(
+            r#""guest_revis\u0069on":83"#,
+            r#""guest_revis\u0069on":84"#,
+            1,
+        );
+        assert_ne!(wrong_revision, mixed, "{arch}: hostile fixture");
+
+        for (case, payload, accepted) in [
+            ("valid combined escapes", mixed.as_str(), true),
+            ("wrong decoded revision", wrong_revision.as_str(), false),
+        ] {
+            let direct = parse_guest_agent_hello_json(
+                payload.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            if accepted {
+                assert_eq!(direct.unwrap(), hello, "{arch}/{case}");
+            } else {
+                assert!(
+                    matches!(direct, Err(WindowsVmError::InvalidGuest(_))),
+                    "{arch}/{case}: unauthorized identity must be rejected"
+                );
+            }
+
+            let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(payload.as_bytes());
+            let next_start = wire.len();
+            let next_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            let first = read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            if accepted {
+                assert_eq!(first.unwrap(), hello, "{arch}/{case}");
+            } else {
+                assert!(
+                    matches!(first, Err(WindowsVmError::InvalidGuest(_))),
+                    "{arch}/{case}: framed mismatch must be rejected"
+                );
+            }
+            assert_eq!(reader.position() as usize, next_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{case}: following packet"
+            );
+            assert_eq!(reader.position() as usize, next_start + next_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+    }
+}
