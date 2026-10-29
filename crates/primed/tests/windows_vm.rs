@@ -5826,3 +5826,107 @@ fn guest_agent_mixed_escaped_keys_reordered_fields_and_values_preserve_packet_cu
         }
     }
 }
+
+#[test]
+fn guest_agent_high_u64_revision_preserves_exact_authority_and_packet_boundary() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Revisions are u64 identities, not floating-point JSON numbers. In
+    // particular, values above the IEEE-754 exact-integer boundary must not
+    // alias a neighboring revision or consume the following packet.
+    for arch in ["x86", "x86_64"] {
+        for revision in [(1_u64 << 53) + 1, u64::MAX] {
+            let hello = GuestAgentHello {
+                schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+                protocol_revision: 1,
+                guest_id: "w8-exact-revision".to_owned(),
+                guest_revision: revision,
+                guest_sha256: "f".repeat(64),
+                workload_arch: arch.to_owned(),
+            };
+            let valid = serde_json::to_vec(&hello).unwrap();
+            let mut neighboring = hello.clone();
+            neighboring.guest_revision = revision - 1;
+            let neighbor = serde_json::to_vec(&neighboring).unwrap();
+            let canonical = String::from_utf8(valid.clone()).unwrap();
+            let oversized = canonical.replacen(
+                &format!("\"guest_revision\":{revision}"),
+                "\"guest_revision\":18446744073709551616",
+                1,
+            );
+            assert_ne!(oversized, canonical, "{arch}/{revision}: overflow fixture");
+
+            for (case, payload, accepted) in [
+                ("exact revision", valid.clone(), true),
+                ("adjacent revision", neighbor, false),
+                ("overflow revision", oversized.into_bytes(), false),
+            ] {
+                let direct = parse_guest_agent_hello_json(
+                    &payload,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                );
+                if accepted {
+                    assert_eq!(direct.unwrap(), hello, "{arch}/{revision}/{case}");
+                } else {
+                    assert!(
+                        matches!(direct, Err(WindowsVmError::InvalidGuest(_))),
+                        "{arch}/{revision}/{case}: mismatched or unrepresentable revision"
+                    );
+                }
+
+                let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+                wire.extend_from_slice(&payload);
+                let next_start = wire.len();
+                let next_len = write_guest_agent_hello_packet(
+                    &mut wire,
+                    &hello,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap();
+                wire.extend_from_slice(b"TRAILER");
+                let mut reader = Cursor::new(wire);
+                let first = read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                );
+                if accepted {
+                    assert_eq!(first.unwrap(), hello, "{arch}/{revision}/{case}");
+                } else {
+                    assert!(
+                        matches!(first, Err(WindowsVmError::InvalidGuest(_))),
+                        "{arch}/{revision}/{case}: rejected packet"
+                    );
+                }
+                assert_eq!(reader.position() as usize, next_start);
+                assert_eq!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &hello.guest_id,
+                        revision,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                    .unwrap(),
+                    hello
+                );
+                assert_eq!(reader.position() as usize, next_start + next_len);
+                let mut trailer = [0_u8; 7];
+                reader.read_exact(&mut trailer).unwrap();
+                assert_eq!(&trailer, b"TRAILER", "{arch}/{revision}/{case}");
+            }
+        }
+    }
+}
