@@ -216,6 +216,8 @@ pub enum ComponentAdmissionError {
     DuplicateInstalledManifest(String),
     #[error("component {0} appears more than once in the registration selection")]
     DuplicateRegistrationTarget(String),
+    #[error("explicit registration scope differs from prerequisite closure at {0}")]
+    RegistrationScopeMismatch(String),
     #[error("component {0} appears more than once in the unregistration selection")]
     DuplicateUnregistrationTarget(String),
     #[error("explicit unregistration scope differs from dependent closure at {0}")]
@@ -672,6 +674,48 @@ pub fn plan_component_registration_subset_checked(
         .into_iter()
         .filter(|id| required.contains(id.as_str()))
         .collect())
+}
+
+/// Preview a registration only when the caller declares the complete
+/// prerequisite-closed scope. The subset planner may expand prerequisites;
+/// this stricter form requires every expanded component to be named explicitly
+/// and rejects unrelated entries. The declaration is not approval, signature
+/// verification, installation, activation, or runtime registration authority.
+pub fn plan_component_registration_explicit_scope_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let closure = plan_component_registration_subset_checked(
+        selected_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let mut scope = BTreeSet::new();
+    for &id in explicit_scope_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !inventory.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !scope.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateRegistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let required: BTreeSet<&str> = closure.iter().map(String::as_str).collect();
+    if let Some(id) = required.symmetric_difference(&scope).next() {
+        return Err(ComponentAdmissionError::RegistrationScopeMismatch(
+            (*id).to_owned(),
+        ));
+    }
+    Ok(closure)
 }
 
 /// Preview unregistration of selected installed components and every transitive
@@ -4444,6 +4488,149 @@ mod tests {
             ),
             Err(ComponentAdmissionError::MissingInstalledManifest(id))
                 if id == "origins.runtime"
+        ));
+    }
+
+    #[test]
+    fn explicit_registration_scope_requires_exact_prerequisite_closure() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("leaf.runtime", &["left.runtime", "right.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("right.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+            make("left.runtime", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let exact = [
+            "leaf.runtime",
+            "left.runtime",
+            "right.runtime",
+            "origins.runtime",
+        ];
+        let expected = vec![
+            "origins.runtime",
+            "left.runtime",
+            "right.runtime",
+            "leaf.runtime",
+        ];
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &exact,
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &[
+                    "origins.runtime",
+                    "right.runtime",
+                    "left.runtime",
+                    "leaf.runtime"
+                ],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        for scope in [
+            &exact[..3],
+            &[
+                "leaf.runtime",
+                "left.runtime",
+                "right.runtime",
+                "origins.runtime",
+                "unrelated.runtime",
+            ][..],
+        ] {
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    &["leaf.runtime"],
+                    scope,
+                    &installed,
+                    &manifests
+                ),
+                Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+            ));
+        }
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["leaf.runtime", "leaf.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateRegistrationTarget(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["leaf.runtime", "missing.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["Not Canonical"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(_))
+        ));
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(&[], &[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &[],
+                &["unrelated.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &[],
+                &[],
+                &installed,
+                &manifests[..4]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(_))
         ));
     }
 
