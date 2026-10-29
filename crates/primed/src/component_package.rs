@@ -4962,6 +4962,15 @@ mod tests {
                 Err(ComponentAdmissionError::InstalledManifestMismatch(id))
                     if id == "unrelated.runtime"
             ));
+            // Data-aware dependent removal must validate the entire inventory
+            // before trusting even an empty, no-migration removal preview.
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    selected, scope, &[], &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
         }
 
         let mut conflicting = manifests.clone();
@@ -4980,6 +4989,16 @@ mod tests {
                 plan_component_unregistration_explicit_scope_checked(
                     selected,
                     selected,
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    selected,
+                    selected,
+                    &[],
                     &installed,
                     &conflicting
                 ),
