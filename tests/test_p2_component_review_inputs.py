@@ -88,6 +88,42 @@ def test_ambient_dynamic_loader_controls_cannot_reach_review_git(
     )
 
 
+def test_ambient_git_config_and_object_store_cannot_rebind_review_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Caller-supplied Git configuration and object paths are not review authority."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+    external_config = tmp_path / "external-git-config"
+    external_config.write_text("[core]\n\tbare = true\n", encoding="utf-8")
+    external_objects = tmp_path / "external-objects"
+    external_objects.mkdir()
+
+    # Prove the hostile configuration is observable by an ordinary inherited
+    # Git subprocess. The review helper must not inherit that process state.
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "include.path")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(external_config))
+    inherited = subprocess.check_output(
+        ["git", "-C", str(root), "config", "--no-includes", "--list"]
+    )
+    assert b"include.path=" in inherited
+    assert module.build_manifest(root, head) == baseline
+
+    # A caller can also redirect Git's object database without touching the
+    # repository's tracked bytes. It must not affect exact-HEAD review input.
+    monkeypatch.delenv("GIT_CONFIG_COUNT")
+    monkeypatch.delenv("GIT_CONFIG_KEY_0")
+    monkeypatch.delenv("GIT_CONFIG_VALUE_0")
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(external_objects))
+    hostile = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", head],
+        capture_output=True, check=False,
+    )
+    assert hostile.returncode != 0, "ambient object redirect must be effective"
+    assert module.build_manifest(root, head) == baseline
+
+
 def test_rejects_wrong_head(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     try:
