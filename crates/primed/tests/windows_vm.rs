@@ -6246,3 +6246,94 @@ fn guest_agent_packet_reader_interrupt_budget_resets_after_progress() {
         );
     }
 }
+
+#[test]
+fn guest_agent_harness_rejects_overreported_io_counts() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet,
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Read, Write};
+
+    // A hostile or defective transport implementation must never be allowed
+    // to claim more progress than the caller-supplied buffer permits.
+    struct OverreportReader {
+        calls: usize,
+    }
+    impl Read for OverreportReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Ok(buffer.len() + 1)
+        }
+    }
+    struct OverreportWriter {
+        calls: usize,
+        flushes: usize,
+    }
+    impl Write for OverreportWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Ok(buffer.len() + 1)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-overreported-io".to_owned(),
+            guest_revision: 41,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut reader = OverreportReader { calls: 0 };
+        assert!(matches!(
+            read_guest_agent_hello_packet(
+                &mut reader, &hello.guest_id, 41, &hello.guest_sha256, arch
+            ),
+            Err(WindowsVmError::Io(ref error))
+                if error.kind() == io::ErrorKind::InvalidData
+        ));
+        assert_eq!(reader.calls, 1, "{arch}: invalid read count must stop");
+
+        for packet in [false, true] {
+            let mut writer = OverreportWriter {
+                calls: 0,
+                flushes: 0,
+            };
+            let result = if packet {
+                write_guest_agent_hello_packet(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    41,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            } else {
+                write_guest_agent_hello_payload(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    41,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            };
+            assert!(
+                matches!(
+                    result,
+                    Err(WindowsVmError::Io(ref error))
+                        if error.kind() == io::ErrorKind::InvalidData
+                ),
+                "{arch}/packet={packet}: {result:?}"
+            );
+            assert_eq!(writer.calls, 1);
+            assert_eq!(writer.flushes, 0, "failed frame cannot flush");
+        }
+    }
+}
