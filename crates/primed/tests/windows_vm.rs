@@ -5930,3 +5930,140 @@ fn guest_agent_high_u64_revision_preserves_exact_authority_and_packet_boundary()
         }
     }
 }
+
+#[test]
+fn guest_agent_packet_reader_bounds_perpetual_interrupted_io() {
+    use primed::windows_vm::{read_guest_agent_hello_packet, WindowsVmError};
+    use std::io::{self, Read};
+
+    struct AlwaysInterrupted {
+        calls: usize,
+    }
+    impl Read for AlwaysInterrupted {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Err(io::ErrorKind::Interrupted.into())
+        }
+    }
+
+    // An untrusted transport must not spin forever without progress.
+    for arch in ["x86", "x86_64"] {
+        let mut reader = AlwaysInterrupted { calls: 0 };
+        let error = read_guest_agent_hello_packet(
+            &mut reader,
+            "w8-interrupt-budget",
+            11,
+            &"a".repeat(64),
+            arch,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::Io(ref io_error)
+                if io_error.kind() == io::ErrorKind::Interrupted),
+            "{arch}: {error}"
+        );
+        assert!(reader.calls <= 33, "{arch}: unbounded interrupted reads");
+    }
+}
+
+#[test]
+fn guest_agent_packet_reader_interrupt_budget_resets_after_progress() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    struct BurstyReader {
+        inner: Cursor<Vec<u8>>,
+        interrupts: usize,
+        reads: usize,
+        stall_after: Option<usize>,
+    }
+    impl Read for BurstyReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self
+                .stall_after
+                .is_some_and(|at| self.inner.position() as usize >= at)
+            {
+                self.reads += 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if self.interrupts < 32 {
+                self.interrupts += 1;
+                self.reads += 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.interrupts = 0;
+            let count = buffer.len().min(1);
+            self.inner.read(&mut buffer[..count])
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-bounded-interrupts".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = Vec::new();
+        write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let frame_len = wire.len();
+        wire.extend_from_slice(b"TRAILER");
+        let mut progress = BurstyReader {
+            inner: Cursor::new(wire.clone()),
+            interrupts: 0,
+            reads: 0,
+            stall_after: None,
+        };
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut progress,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(progress.inner.position() as usize, frame_len);
+        assert!(progress.reads > 32, "{arch}: retries were not exercised");
+
+        let mut stalled = BurstyReader {
+            inner: Cursor::new(wire),
+            interrupts: 32,
+            reads: 0,
+            stall_after: Some(2),
+        };
+        let error = read_guest_agent_hello_packet(
+            &mut stalled,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::Io(ref err)
+                if err.kind() == io::ErrorKind::Interrupted),
+            "{arch}: {error}"
+        );
+        assert_eq!(stalled.inner.position(), 2, "{arch}: stalled prefix");
+        assert!(
+            stalled.reads <= 68,
+            "{arch}: unbounded stalled-prefix retry"
+        );
+    }
+}

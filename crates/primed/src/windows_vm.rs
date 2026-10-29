@@ -278,6 +278,42 @@ fn validate_expected_guest_agent_authority(
     Ok(())
 }
 
+// Bound consecutive EINTR retries on an untrusted guest-agent transport.
+// read_exact retries Interrupted indefinitely; a peer that never yields bytes
+// must not pin a host worker in a busy loop. Progress resets the retry budget.
+const WINDOWS_VM_AGENT_MAX_CONSECUTIVE_INTERRUPTS: usize = 32;
+
+fn read_exact_guest_agent_bounded<R: Read>(
+    reader: &mut R,
+    mut remaining: &mut [u8],
+) -> io::Result<()> {
+    let mut consecutive_interrupts = 0;
+    while !remaining.is_empty() {
+        match reader.read(remaining) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => {
+                if count > remaining.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "guest-agent reader exceeded requested length",
+                    ));
+                }
+                let (_, tail) = std::mem::take(&mut remaining).split_at_mut(count);
+                remaining = tail;
+                consecutive_interrupts = 0;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                consecutive_interrupts += 1;
+                if consecutive_interrupts > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Admit one explicitly length-delimited hello frame from a caller-owned reader.
 ///
 /// The transport must establish `frame_len` independently; this function
@@ -309,7 +345,7 @@ pub fn read_guest_agent_hello_frame<R: Read>(
         expected_workload_arch,
     )?;
     let mut frame = vec![0u8; frame_len];
-    reader.read_exact(&mut frame).map_err(|error| {
+    read_exact_guest_agent_bounded(reader, &mut frame).map_err(|error| {
         if error.kind() == io::ErrorKind::UnexpectedEof {
             WindowsVmError::InvalidGuest("truncated guest-agent hello frame")
         } else {
@@ -377,7 +413,7 @@ pub fn read_guest_agent_hello_packet<R: Read>(
         expected_workload_arch,
     )?;
     let mut prefix = [0u8; 4];
-    reader.read_exact(&mut prefix).map_err(|error| {
+    read_exact_guest_agent_bounded(reader, &mut prefix).map_err(|error| {
         if error.kind() == io::ErrorKind::UnexpectedEof {
             WindowsVmError::InvalidGuest("truncated guest-agent hello length prefix")
         } else {
