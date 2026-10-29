@@ -2869,8 +2869,7 @@ fn runtime_proof_observations_cannot_cross_application_or_session_scopes() {
     private_runtime_dir(&root);
 
     let primary = prepare_runtime_proof_plan(&guest, &root, "app-one", "session-a").unwrap();
-    let other_session =
-        prepare_runtime_proof_plan(&guest, &root, "app-one", "session-b").unwrap();
+    let other_session = prepare_runtime_proof_plan(&guest, &root, "app-one", "session-b").unwrap();
     let other_application =
         prepare_runtime_proof_plan(&guest, &root, "app-two", "session-a").unwrap();
     let observations_for = |plan: &VmRuntimeProofPlan| {
