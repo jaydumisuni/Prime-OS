@@ -256,6 +256,10 @@ pub enum ComponentAdmissionError {
     RollbackDigestUnchanged(String),
     #[error("component {0} requires explicit persistent-data migration before removal")]
     PersistentDataMigrationRequired(String),
+    #[error("component {0} has a duplicate migration-completion declaration")]
+    DuplicateMigrationAcknowledgement(String),
+    #[error("component {0} has a migration declaration outside the exact migration-required removal scope")]
+    UnexpectedMigrationAcknowledgement(String),
 }
 
 pub fn plan_component_transaction(
@@ -921,6 +925,72 @@ pub fn plan_component_data_removal(
         ),
         PersistentDataPolicy::Ephemeral => Ok(ComponentDataDisposition::DiscardEphemeral),
     }
+}
+
+/// Preview the exact dependent-closed unregistration order together with the
+/// persistent-data disposition for every component in that scope.
+///
+/// A caller must declare the complete scope and separately attest which
+/// ExplicitMigration policies have completed. Declarations for unrelated,
+/// non-migrating or duplicate components are rejected; missing migration
+/// declarations fail closed. These declarations are NOT authenticated migration
+/// evidence. This is source-only planning, never deletion, registration,
+/// component lifecycle execution, or permission to alter user/project data.
+pub fn plan_component_unregistration_data_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    migrated_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<(String, ComponentDataDisposition)>, ComponentAdmissionError> {
+    let order = plan_component_unregistration_explicit_scope_checked(
+        selected_component_ids,
+        explicit_scope_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let scope: BTreeSet<&str> = order.iter().map(String::as_str).collect();
+    let mut migrated = BTreeSet::new();
+    for &id in migrated_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !migrated.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateMigrationAcknowledgement(
+                id.to_owned(),
+            ));
+        }
+        if !scope.contains(id)
+            || !matches!(
+                &manifests
+                    .get(id)
+                    .expect("exact scope inventory validated")
+                    .persistent_data_policy,
+                PersistentDataPolicy::ExplicitMigration
+            )
+        {
+            return Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut dispositions = Vec::with_capacity(order.len());
+    for id in order {
+        let manifest = manifests
+            .get(id.as_str())
+            .expect("explicit dependent closure inventory validated");
+        let current = inventory
+            .get(id.as_str())
+            .expect("explicit dependent closure inventory validated");
+        let disposition =
+            plan_component_data_removal(manifest, current, migrated.contains(id.as_str()))?;
+        dispositions.push((id, disposition));
+    }
+    Ok(dispositions)
 }
 
 pub fn plan_component_rollback(
@@ -5221,6 +5291,154 @@ mod tests {
         assert!(matches!(
             plan_component_unregistration_order_checked(&installed, &[origins, consumer]),
             Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_unregistration_data_custody_requires_exact_migration_scope() {
+        // This is a source-only removal preview, never proof that migration
+        // happened or permission to mutate retained user/project data.
+        let make = |id: &str, policy: PersistentDataPolicy, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.persistent_data_policy = policy;
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make(
+                "consumer.runtime",
+                PersistentDataPolicy::Ephemeral,
+                &["provider.runtime"],
+            ),
+            make("origins.runtime", PersistentDataPolicy::RetainOnRemove, &[]),
+            make(
+                "provider.runtime",
+                PersistentDataPolicy::ExplicitMigration,
+                &["origins.runtime"],
+            ),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let selected = ["provider.runtime"];
+        let scope = ["provider.runtime", "consumer.runtime"];
+        let planned = plan_component_unregistration_data_checked(
+            &selected,
+            &scope,
+            &["provider.runtime"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(
+            planned,
+            vec![
+                (
+                    "consumer.runtime".to_owned(),
+                    ComponentDataDisposition::DiscardEphemeral
+                ),
+                (
+                    "provider.runtime".to_owned(),
+                    ComponentDataDisposition::Migrated
+                ),
+            ]
+        );
+        let all = plan_component_unregistration_data_checked(
+            &["origins.runtime"],
+            &["origins.runtime", "provider.runtime", "consumer.runtime"],
+            &["provider.runtime"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(
+            all,
+            vec![
+                (
+                    "consumer.runtime".to_owned(),
+                    ComponentDataDisposition::DiscardEphemeral
+                ),
+                (
+                    "provider.runtime".to_owned(),
+                    ComponentDataDisposition::Migrated
+                ),
+                (
+                    "origins.runtime".to_owned(),
+                    ComponentDataDisposition::Retain
+                ),
+            ]
+        );
+        let mut reordered = manifests.clone();
+        reordered.reverse();
+        assert_eq!(
+            plan_component_unregistration_data_checked(
+                &selected,
+                &["consumer.runtime", "provider.runtime"],
+                &["provider.runtime"],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            planned
+        );
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &[], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::PersistentDataMigrationRequired(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["origins.runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "origins.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["consumer.runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "consumer.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["provider.runtime", "provider.runtime"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::DuplicateMigrationAcknowledgement(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["Provider.Runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Provider.Runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &["provider.runtime"], &["provider.runtime"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(id))
+                if id == "consumer.runtime"
         ));
     }
 }
