@@ -1054,6 +1054,33 @@ def test_rejects_late_linked_worktree_commondir_redirection(
         commondir.write_bytes(original)
 
 
+def test_rejects_symlink_alias_for_linked_worktree_commondir(tmp_path: Path) -> None:
+    """A mutable alias can redirect common refs without changing commondir bytes.
+
+    Git resolves an alias to the same common directory initially. The alias
+    pathname itself is not in the captured epoch and could be redirected after
+    the final Git probe, so review input must require the literal canonical
+    common-directory path instead of only comparing resolved destinations.
+    """
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    alias = tmp_path / "mutable-common-alias"
+    alias.symlink_to(root / ".git", target_is_directory=True)
+    commondir.write_text(str(alias) + "\n", encoding="utf-8")
+    try:
+        assert git(linked, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="commondir"):
+            module.build_manifest(linked, head)
+    finally:
+        commondir.write_bytes(original)
+
+
 def test_separate_git_directory_is_valid_without_commondir(tmp_path: Path) -> None:
     """A gitfile can point to a standalone separate gitdir, not a linked worktree."""
     root, head = sample_repo(tmp_path)

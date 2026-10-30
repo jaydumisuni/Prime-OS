@@ -233,7 +233,11 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         if not common_target.is_absolute():
             common_target = head_path.parent / common_target
         expected_common = head_path.parent.parent.parent
-        if common_target.resolve() != expected_common.resolve():
+        # Comparing only resolved targets admits a mutable symlink alias in
+        # commondir. The alias can be redirected after the final Git probe
+        # without changing this pinned control file or its inode epoch.
+        # Normalize ordinary ../.. segments but reject any alternate pathname.
+        if Path(os.path.normpath(common_target)) != expected_common:
             raise ReviewInputError("linked worktree commondir differs from Git authority")
         require_private_directory(expected_common)
         require_protected_ancestors(expected_common)
