@@ -7018,6 +7018,11 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("halfwidth-hangul-filler", "\u{ffa0}"),
         // Braille pattern blank has distinct path bytes but no visible glyph.
         ("braille-pattern-blank", "\u{2800}"),
+        // Format controls are default-ignorable: distinct bytes, same visible proof path.
+        ("shorthand-format-letter-overlap", "\u{1bca0}"),
+        ("shorthand-format-up-step", "\u{1bca2}"),
+        ("musical-symbol-begin-beam", "\u{1d173}"),
+        ("musical-symbol-end-tie", "\u{1d17a}"),
         ("zero-width-space", "\u{200b}"),
         ("zero-width-joiner", "\u{200d}"),
         ("word-joiner", "\u{2060}"),
