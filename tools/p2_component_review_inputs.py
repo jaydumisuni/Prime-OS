@@ -714,6 +714,25 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # inventory and escape permission-only checks. Its ctime is part of the
     # previously pinned epoch, even when its final mode looks private.
     require_git_object_final_epochs(objects_path, object_epoch)
+    # The last object-entry walk is itself an untrusted interval. A config,
+    # pending lock, or alternates pointer created during that walk must not
+    # escape the preceding checks. Close the control epoch once more using
+    # filesystem-only reads; this does not claim race-free atomic admission.
+    require_verified_input_epochs(root, verified_inputs)
+    require_private_directory(root)
+    require_protected_ancestors(root)
+    if require_index_epoch(index_path) != index_epoch:
+        raise ReviewInputError("review index changed during final object epoch")
+    verify_head_epoch(head_epoch)
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
+    require_no_pending_git_control_locks(lock_paths)
+    require_no_object_alternates(alternates_path)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

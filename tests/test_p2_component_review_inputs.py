@@ -1822,3 +1822,46 @@ def test_rejects_transient_git_object_subdirectory_after_final_inventory(
     with pytest.raises(module.ReviewInputError, match="Git object store"):
         module.build_manifest(root, head)
     assert sweeps == 2 and fanout.is_dir()
+
+
+
+def test_rejects_late_control_after_final_object_epoch(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The final object-entry walk must not mask a later Git control change."""
+    import pytest
+
+    for kind, expected in (
+        ("config", "Git config appeared after final Git probe"),
+        ("lock", "pending Git control update"),
+        ("alternates", "unbound Git object alternates authority"),
+    ):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        targets = {
+            "config": module.git_control_path(root, "config.worktree"),
+            "lock": module.git_control_path(root, "index").with_name("index.lock"),
+            "alternates": module.git_control_path(root, "objects/info/alternates"),
+        }
+        target = targets[kind]
+        original = module.require_git_object_final_epochs
+        calls = 0
+
+        def mutate_after_final_object_walk(objects: Path, admitted: dict) -> None:
+            nonlocal calls
+            original(objects, admitted)
+            calls += 1
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("late untrusted Git control\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            module, "require_git_object_final_epochs",
+            mutate_after_final_object_walk,
+        )
+        try:
+            with pytest.raises(module.ReviewInputError, match=expected):
+                module.build_manifest(root, head)
+            assert calls == 1 and target.is_file()
+        finally:
+            monkeypatch.setattr(module, "require_git_object_final_epochs", original)
