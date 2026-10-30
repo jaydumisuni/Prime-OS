@@ -357,7 +357,7 @@ def require_no_object_alternates(path: Path) -> None:
 
 
 
-def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
+def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
     """Pin private, non-aliased local Git objects across review probes.
 
     Loose objects and pack/index sidecars share one object directory. A
@@ -365,7 +365,8 @@ def capture_git_object_epoch(root: Path) -> dict[str, tuple]:
     when HEAD and every working review input remain unchanged. Refuse such
     storage rather than presenting its bytes as independently held evidence.
     """
-    objects = git_control_path(root, "objects")
+    # Caller resolved this path before the final Git probes. Inventory must
+    # remain filesystem-only so no later Git subprocess can race input checks.
     if objects.resolve() != objects:
         raise ReviewInputError("noncanonical Git object store")
     require_private_directory(objects)
@@ -452,8 +453,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # Resolve Git's common object directory (also for linked worktrees).
     # Refuse external alternates before reading any committed review blobs.
     alternates_path = git_control_path(root, "objects/info/alternates")
+    objects_path = git_control_path(root, "objects")
     require_no_object_alternates(alternates_path)
-    object_epoch = capture_git_object_epoch(root)
+    object_epoch = capture_git_object_epoch(objects_path)
     head = git(repo, "rev-parse", "HEAD").decode().strip()
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
@@ -599,7 +601,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # No Git subprocess follows the final HEAD probe; the absence of an
     # external object-store pointer is part of the final review epoch.
     require_no_object_alternates(alternates_path)
-    if capture_git_object_epoch(root) != object_epoch:
+    if capture_git_object_epoch(objects_path) != object_epoch:
         raise ReviewInputError("Git object store changed after final Git probe")
     # The bounded object inventory is a filesystem-only operation. Reconfirm
     # the control epoch afterward without executing another Git subprocess.

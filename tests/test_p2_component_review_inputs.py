@@ -1558,3 +1558,33 @@ def test_private_git_object_root_protects_group_writable_descendants(
     loose = fanout / blob[2:]
     loose.chmod(loose.stat().st_mode | 0o020)
     assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"
+
+
+def test_object_inventory_uses_pinned_path_without_late_git(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """No Git subprocess may run after the final input filesystem sweep."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    head_reads = 0
+    object_lookups = 0
+    final_head_seen = False
+
+    def forbid_late_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, object_lookups, final_head_seen
+        if final_head_seen:
+            raise AssertionError(f"Git subprocess after final HEAD probe: {args}")
+        if args == ("rev-parse", "--git-path", "objects"):
+            object_lookups += 1
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                final_head_seen = True
+        return result
+
+    monkeypatch.setattr(module, "git", forbid_late_git)
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert head_reads == 2
+    assert object_lookups == 1
