@@ -2259,6 +2259,13 @@ fn guest_agent_reader_rejects_invalid_host_authority_before_consuming_frame() {
         ("zero revision", "guest-x86", 0, "a".repeat(64), "x86"),
         ("noncanonical digest", "guest-x86", 3, "A".repeat(64), "x86"),
         (
+            "zero sentinel digest",
+            "guest-x86",
+            3,
+            "0".repeat(64),
+            "x86",
+        ),
+        (
             "unsupported architecture",
             "guest-x86",
             3,
@@ -2301,6 +2308,81 @@ fn guest_agent_reader_rejects_invalid_host_authority_before_consuming_frame() {
     );
     assert!(valid.1 > 0);
     assert_eq!(valid.0.position() as usize, frame.len());
+}
+
+#[test]
+fn guest_agent_zero_digest_sentinel_cannot_authorize_a_matching_hello() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, read_guest_agent_hello_packet, validate_guest_agent_hello,
+        write_guest_agent_hello_packet, GuestAgentHello,
+    };
+    use std::io::Cursor;
+
+    // A 64-digit zero placeholder is syntactically hex, but it cannot
+    // authenticate an admitted immutable guest image.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "0".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let payload = serde_json::to_vec(&hello).unwrap();
+    assert!(validate_guest_agent_hello(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(parse_guest_agent_hello_json(
+        &payload,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(encode_guest_agent_hello_json(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+
+    let mut output = Vec::new();
+    assert!(write_guest_agent_hello_packet(
+        &mut output,
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(
+        output.is_empty(),
+        "invalid authority must not write a prefix"
+    );
+
+    let mut packet = Cursor::new([&(payload.len() as u32).to_be_bytes()[..], &payload].concat());
+    assert!(read_guest_agent_hello_packet(
+        &mut packet,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert_eq!(
+        packet.position(),
+        0,
+        "invalid authority must not consume a prefix"
+    );
 }
 
 #[test]

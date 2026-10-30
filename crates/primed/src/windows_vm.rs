@@ -286,7 +286,12 @@ fn validate_expected_guest_agent_authority(
             "invalid expected guest identity",
         ));
     }
-    if !canonical_sha256_hex(expected_guest_sha256) {
+    // A zero-filled SHA-256 is a common unbound placeholder, not immutable
+    // guest-image evidence. Do not let a matching synthetic hello turn that
+    // sentinel into apparent host/guest authority at any framing entry point.
+    if !canonical_sha256_hex(expected_guest_sha256)
+        || expected_guest_sha256.bytes().all(|byte| byte == b'0')
+    {
         return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
     }
     if !matches!(expected_workload_arch, "x86" | "x86_64") {
