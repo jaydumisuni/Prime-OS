@@ -1714,3 +1714,59 @@ def test_rejects_transient_object_root_mode_after_final_inventory(
     with pytest.raises(module.ReviewInputError, match="Git object store root changed"):
         module.build_manifest(root, head)
     assert sweeps == 2 and not (objects.stat().st_mode & 0o020)
+
+
+def test_rejects_transient_git_object_descendant_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An object-file permission epoch restored after inventory is not authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    object_file = root / ".git" / "objects" / head[:2] / head[2:]
+    assert object_file.is_file()
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = object_file.stat().st_mode & 0o7777
+            object_file.chmod(original_mode | 0o020)
+            object_file.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and object_file.is_file()
+
+
+def test_rejects_transient_git_object_subdirectory_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A restored object fanout directory cannot escape final epoch custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    fanout = root / ".git" / "objects" / head[:2]
+    assert fanout.is_dir()
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = fanout.stat().st_mode & 0o7777
+            fanout.chmod(original_mode | 0o020)
+            fanout.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and fanout.is_dir()

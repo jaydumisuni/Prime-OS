@@ -438,6 +438,39 @@ def require_git_object_root_epoch(objects: Path, admitted: tuple) -> None:
         raise ReviewInputError("Git object store root changed after final inventory")
 
 
+def require_git_object_final_epochs(
+    objects: Path, admitted: dict[str, tuple],
+) -> None:
+    """Recheck all inventoried object identities after the last input sweep.
+
+    A transient permission or inode change in a loose object or fanout
+    directory can be restored after the final full inventory without changing
+    the object-root inode. Parent directory epochs also bind new child names.
+    This check is filesystem-only; it must never invoke another Git process.
+    """
+    for relative, original in admitted.items():
+        if relative == ".":
+            continue
+        path = objects / relative
+        try:
+            state = path.lstat()
+        except OSError as exc:
+            raise ReviewInputError(
+                f"Git object store entry disappeared after final inventory: {relative}"
+            ) from exc
+        current = (
+            stat.S_IFMT(state.st_mode), state.st_uid,
+            state.st_mode & 0o7777, state.st_nlink,
+            *stat_identity(state),
+        )
+        if current != original:
+            raise ReviewInputError(
+                f"Git object store entry changed after final inventory: {relative}"
+            )
+    # Finish with the pinned root, which is the traversal authority.
+    require_git_object_root_epoch(objects, admitted["."])
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -662,7 +695,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # A transient writable object root can be restored after the final
     # inventory and escape permission-only checks. Its ctime is part of the
     # previously pinned epoch, even when its final mode looks private.
-    require_git_object_root_epoch(objects_path, object_epoch["."])
+    require_git_object_final_epochs(objects_path, object_epoch)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
