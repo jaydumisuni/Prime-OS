@@ -1588,3 +1588,29 @@ def test_object_inventory_uses_pinned_path_without_late_git(
     assert manifest["candidate_head"] == head
     assert head_reads == 2
     assert object_lookups == 1
+
+
+def test_rejects_input_changed_during_final_object_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The last object-store scan must not hide a subsequent input mutation."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    original_inventory = module.capture_git_object_epoch
+    inventory_calls = 0
+
+    def mutate_during_final_inventory(objects: Path) -> dict:
+        nonlocal inventory_calls
+        result = original_inventory(objects)
+        inventory_calls += 1
+        if inventory_calls == 2:
+            earlier.write_bytes(b"late input mutation during object inventory\n")
+        return result
+
+    monkeypatch.setattr(module, "capture_git_object_epoch",
+                        mutate_during_final_inventory)
+    with pytest.raises(module.ReviewInputError, match="review input changed"):
+        module.build_manifest(root, head)
+    assert inventory_calls == 2

@@ -438,6 +438,24 @@ def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
         return working
 
 
+def require_verified_input_epochs(
+    root: Path, verified_inputs: list[tuple[str, tuple[int, ...]]],
+) -> None:
+    """Reject late input substitution without invoking Git after final probes."""
+    for relative, admitted_identity in verified_inputs:
+        directory = root
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
+        file = root / relative
+        current = file.lstat()
+        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or current.st_uid not in (0, os.geteuid())
+                or current.st_mode & 0o022 or file.resolve() != file
+                or stat_identity(current) != admitted_identity):
+            raise ReviewInputError(f"review input changed after verification: {relative}")
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -571,18 +589,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         raise ReviewInputError("review candidate HEAD changed during inspection")
     # No Git subprocesses follow this point. Recheck every admitted input's
     # filesystem identity after all final Git probes have completed.
-    for relative, admitted_identity in verified_inputs:
-        directory = root
-        for component in Path(relative).parts[:-1]:
-            directory /= component
-            require_private_directory(directory)
-        file = root / relative
-        current = file.lstat()
-        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
-                or current.st_uid not in (0, os.geteuid())
-                or current.st_mode & 0o022 or file.resolve() != file
-                or stat_identity(current) != admitted_identity):
-            raise ReviewInputError(f"review input changed after verification: {relative}")
+    require_verified_input_epochs(root, verified_inputs)
     # The final Git and filesystem reads are untrusted intervals. Recheck
     # the worktree root and its ancestors before returning review evidence.
     require_private_directory(root)
@@ -603,6 +610,12 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     require_no_object_alternates(alternates_path)
     if capture_git_object_epoch(objects_path) != object_epoch:
         raise ReviewInputError("Git object store changed after final Git probe")
+    # Object inventory can take time. An input may change after the preceding
+    # filesystem sweep even when the object inventory itself remains stable.
+    # Recheck admitted input identities after inventory without invoking Git.
+    require_verified_input_epochs(root, verified_inputs)
+    require_private_directory(root)
+    require_protected_ancestors(root)
     # The bounded object inventory is a filesystem-only operation. Reconfirm
     # the control epoch afterward without executing another Git subprocess.
     if require_index_epoch(index_path) != index_epoch:
