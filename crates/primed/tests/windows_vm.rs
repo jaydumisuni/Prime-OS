@@ -7026,6 +7026,11 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("invisible-times", "\u{2062}"),
         ("invisible-separator", "\u{2063}"),
         ("invisible-plus", "\u{2064}"),
+        // Interlinear annotation controls alter rendered text while leaving
+        // distinct pathname bytes in the QEMU plan and proof record.
+        ("interlinear-annotation-anchor", "\u{fff9}"),
+        ("interlinear-annotation-separator", "\u{fffa}"),
+        ("interlinear-annotation-terminator", "\u{fffb}"),
         // Unicode tag controls are default-ignorable but have distinct bytes.
         ("language-tag", "\u{e0001}"),
         ("tag-space", "\u{e0020}"),
