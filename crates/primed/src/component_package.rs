@@ -1359,6 +1359,9 @@ fn private_package_inode(metadata: &fs::Metadata) -> bool {
         && metadata.nlink() == 1
         && (metadata.uid() == 0 || metadata.uid() == unsafe { libc::geteuid() })
         && metadata.mode() & 0o022 == 0
+        // Component packages are inert data files. A privileged execution
+        // mode is not package authority, even when bytes and signature match.
+        && metadata.mode() & 0o6000 == 0
 }
 
 #[cfg(unix)]
@@ -1618,6 +1621,38 @@ mod tests {
         assert_eq!(verified.component_id, "origins.runtime");
         assert_eq!(verified.package_digest, manifest.package_digest);
         assert_eq!(verified.package_path, path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn privileged_mode_bits_cannot_enter_offline_component_package_admission() {
+        use std::os::unix::fs::PermissionsExt;
+        // A .primepkg is an inert data artifact, not a privileged executable.
+        // Setuid/setgid bits must not survive even a valid digest/signature.
+        for special in [0o4000, 0o2000] {
+            let bytes = b"origins-package-v2";
+            let (_dir, path) = write_package(bytes);
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755 | special)).unwrap();
+            let mut signature_called = false;
+            let result = verify_offline_component_package(
+                &path,
+                &manifest(bytes),
+                &context(&[]),
+                |_| {
+                    signature_called = true;
+                    true
+                },
+                |_, _| true,
+            );
+            assert!(
+                matches!(result, Err(ComponentAdmissionError::UnsafePackagePath)),
+                "privileged mode {special:o} was admitted"
+            );
+            assert!(
+                !signature_called,
+                "unsafe package reached signature authority"
+            );
+        }
     }
 
     #[test]
