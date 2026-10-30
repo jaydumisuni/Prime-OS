@@ -7014,6 +7014,10 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("soft-hyphen", "\u{00ad}"),
         ("hangul-choseong-filler", "\u{115f}"),
         ("hangul-jungseong-filler", "\u{1160}"),
+        // Khmer inherent vowel signs have no standalone visible glyph; their
+        // bytes must not create a visually ambiguous VM proof path.
+        ("khmer-inherent-vowel-aq", "\u{17b4}"),
+        ("khmer-inherent-vowel-aa", "\u{17b5}"),
         ("hangul-filler", "\u{3164}"),
         ("halfwidth-hangul-filler", "\u{ffa0}"),
         // Braille pattern blank has distinct path bytes but no visible glyph.
