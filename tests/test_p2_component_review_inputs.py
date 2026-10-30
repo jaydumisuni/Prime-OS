@@ -1659,3 +1659,31 @@ def test_rejects_git_control_created_after_final_object_inventory(
         finally:
             monkeypatch.setattr(module, "capture_git_object_epoch",
                                 original_inventory)
+
+
+def test_rejects_transient_git_object_root_permission_epoch(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A temporary writable object root invalidates review custody even if restored."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_inventory = module.capture_git_object_epoch
+    calls = 0
+
+    def change_and_restore_root_mode(path: Path) -> dict:
+        nonlocal calls
+        snapshot = original_inventory(path)
+        calls += 1
+        if calls == 1:
+            original_mode = path.stat().st_mode & 0o7777
+            path.chmod(original_mode | 0o020)
+            path.chmod(original_mode)
+        return snapshot
+
+    monkeypatch.setattr(module, "capture_git_object_epoch",
+                        change_and_restore_root_mode)
+    with pytest.raises(module.ReviewInputError, match="Git object store changed"):
+        module.build_manifest(root, head)
+    assert calls == 2 and objects.is_dir()

@@ -374,8 +374,18 @@ def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
     # Mode 0700 on the object root protects descendants even when Git creates
     # group-writable fanout directories. If group traversal is allowed, a
     # group-writable descendant is independently mutable and must be rejected.
-    group_can_traverse_objects = bool(objects.lstat().st_mode & stat.S_IXGRP)
-    entries: dict[str, tuple] = {}
+    root_state = objects.lstat()
+    group_can_traverse_objects = bool(root_state.st_mode & stat.S_IXGRP)
+    # Descendant identity alone cannot detect a temporary group-writable
+    # object root restored before the final scan. Pin the root's own ctime,
+    # permissions and inode across the entire review epoch.
+    entries: dict[str, tuple] = {
+        ".": (
+            stat.S_IFMT(root_state.st_mode), root_state.st_uid,
+            root_state.st_mode & 0o7777, root_state.st_nlink,
+            *stat_identity(root_state),
+        )
+    }
     pending = [objects]
     while pending:
         directory = pending.pop()
@@ -410,6 +420,8 @@ def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
                 state.st_mode & 0o7777, state.st_nlink,
                 *stat_identity(state),
             )
+    if stat_identity(objects.lstat()) != stat_identity(root_state):
+        raise ReviewInputError("Git object store root changed during inventory")
     return entries
 
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
