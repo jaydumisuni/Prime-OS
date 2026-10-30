@@ -466,6 +466,9 @@ def require_git_object_final_epochs(
     the object-root inode. Parent directory epochs also bind new child names.
     This check is filesystem-only; it must never invoke another Git process.
     """
+    # The root is traversal authority. Reject a substituted root before
+    # resolving any descendant path through an untrusted symlink.
+    require_git_object_root_epoch(objects, admitted["."])
     for relative, original in admitted.items():
         if relative == ".":
             continue

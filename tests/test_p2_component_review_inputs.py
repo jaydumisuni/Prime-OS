@@ -1865,3 +1865,34 @@ def test_rejects_late_control_after_final_object_epoch(
             assert calls == 1 and target.is_file()
         finally:
             monkeypatch.setattr(module, "require_git_object_final_epochs", original)
+
+
+
+def test_rejects_replaced_object_root_before_descendant_path_access(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Do not follow a substituted object-root symlink into external storage."""
+    import pytest
+
+    root, _ = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    admitted = module.capture_git_object_epoch(objects)
+    outside = tmp_path / "external-object-store"
+    shutil.copytree(objects, outside)
+    objects.rename(tmp_path / "original-object-store")
+    objects.symlink_to(outside, target_is_directory=True)
+
+    original_lstat = Path.lstat
+    traversed_descendants = []
+
+    def track_lstat(path: Path):
+        if path != objects and objects in path.parents:
+            traversed_descendants.append(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", track_lstat)
+    with pytest.raises(module.ReviewInputError):
+        module.require_git_object_final_epochs(objects, admitted)
+    assert not traversed_descendants, (
+        "untrusted object-store descendants were traversed before root custody"
+    )
