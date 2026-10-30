@@ -6924,6 +6924,57 @@ fn guest_agent_flush_retry_budget_boundary_and_terminal_error_are_fail_closed() 
 
 #[cfg(unix)]
 #[test]
+fn w8_runtime_paths_reject_bidi_format_controls_before_vm_plan() {
+    use primed::windows_vm::vm_session_paths;
+
+    // Bidirectional formatting controls can disguise a QEMU runtime path
+    // in review evidence even when the underlying UTF-8 bytes are distinct.
+    // Ordinary visible Unicode remains permitted; this is host-only proof.
+    let dir = private_tempdir();
+    for (label, marker) in [
+        ("override", "\u{202e}"),
+        ("isolate", "\u{2067}"),
+        ("right-to-left-mark", "\u{200f}"),
+        ("arabic-letter-mark", "\u{061c}"),
+        ("deprecated-symmetric-swap", "\u{206a}"),
+    ] {
+        let runtime = dir.path().join(format!("w8-{label}-{marker}"));
+        private_runtime_dir(&runtime);
+        assert!(
+            vm_session_paths(&runtime, "app", "session").is_err(),
+            "{label} must not enter a W8 proof identity"
+        );
+        let overlay = runtime.join("overlay.qcow2");
+        private_overlay(&overlay);
+        let result = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay,
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        });
+        assert!(result.is_err(), "{label} must not reach QEMU: {result:?}");
+    }
+
+    let visible = dir.path().join("résumé");
+    private_runtime_dir(&visible);
+    assert!(vm_session_paths(&visible, "app", "session").is_ok());
+    let overlay = visible.join("overlay.qcow2");
+    private_overlay(&overlay);
+    assert!(build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: visible,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .is_ok());
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_agent_socket_path_counts_multibyte_utf8_in_bytes() {
     use std::os::unix::ffi::OsStrExt;
 

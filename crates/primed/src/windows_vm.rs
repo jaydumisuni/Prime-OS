@@ -518,6 +518,22 @@ pub fn validate_guest_agent_hello(
     Ok(())
 }
 
+fn runtime_path_has_unsafe_text(value: &str) -> bool {
+    // QEMU option separators are parser authority. Bidirectional formatting
+    // controls can also disguise the displayed path in a proof/review log.
+    // Ordinary visible Unicode remains valid, subject to the AF_UNIX byte cap.
+    let parser_delimiter = value
+        .bytes()
+        .any(|byte| byte == b',' || byte.is_ascii_control());
+    let bidi_control = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{206f}'
+        )
+    });
+    parser_delimiter || bidi_control
+}
+
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
     // Linux sockaddr_un.sun_path is 108 bytes including the trailing NUL.
     if path.as_os_str().as_bytes().len() >= 108 {
@@ -552,13 +568,9 @@ pub fn vm_session_paths(
     // The proof plan must never authorize a session root that QEMU would
     // later parse as extra -drive/-chardev options or cannot represent.
     // Reject these before producing a proof identity, not only at VM launch.
-    if root.to_str().is_none_or(|value| {
-        value
-            .bytes()
-            .any(|byte| byte == b',' || byte.is_ascii_control())
-    }) {
+    if root.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
-            "session root contains QEMU option delimiters",
+            "session root contains QEMU option delimiters or bidi controls",
         ));
     }
     let root_text = root.as_os_str().to_string_lossy();
@@ -1486,16 +1498,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     // Refuse paths that could change the requested VM isolation contract.
     if [&request.overlay_image, &request.runtime_dir]
         .iter()
-        .any(|path| {
-            path.to_str().is_none_or(|value| {
-                value
-                    .bytes()
-                    .any(|byte| byte == b',' || byte.is_ascii_control())
-            })
-        })
+        .any(|path| path.to_str().is_none_or(runtime_path_has_unsafe_text))
     {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime path contains QEMU option delimiters",
+            "runtime path contains QEMU option delimiters or bidi controls",
         ));
     }
     // Query the effective identity that will own the session, not the
