@@ -424,6 +424,20 @@ def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
         raise ReviewInputError("Git object store root changed during inventory")
     return entries
 
+def require_git_object_root_epoch(objects: Path, admitted: tuple) -> None:
+    """Recheck root custody after the final input sweep without another inventory."""
+    require_private_directory(objects)
+    require_protected_ancestors(objects)
+    current = objects.lstat()
+    epoch = (
+        stat.S_IFMT(current.st_mode), current.st_uid,
+        current.st_mode & 0o7777, current.st_nlink,
+        *stat_identity(current),
+    )
+    if epoch != admitted:
+        raise ReviewInputError("Git object store root changed after final inventory")
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -645,6 +659,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError("Git config appeared after final Git probe")
     require_no_pending_git_control_locks(lock_paths)
     require_no_object_alternates(alternates_path)
+    # A transient writable object root can be restored after the final
+    # inventory and escape permission-only checks. Its ctime is part of the
+    # previously pinned epoch, even when its final mode looks private.
+    require_git_object_root_epoch(objects_path, object_epoch["."])
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

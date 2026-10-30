@@ -1687,3 +1687,30 @@ def test_rejects_transient_git_object_root_permission_epoch(
     with pytest.raises(module.ReviewInputError, match="Git object store changed"):
         module.build_manifest(root, head)
     assert calls == 2 and objects.is_dir()
+
+
+def test_rejects_transient_object_root_mode_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A transient writable object root after inventory must invalidate custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = objects.stat().st_mode & 0o7777
+            objects.chmod(original_mode | 0o020)
+            objects.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store root changed"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and not (objects.stat().st_mode & 0o020)
