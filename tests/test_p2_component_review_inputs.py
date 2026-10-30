@@ -1896,3 +1896,41 @@ def test_rejects_replaced_object_root_before_descendant_path_access(
     assert not traversed_descendants, (
         "untrusted object-store descendants were traversed before root custody"
     )
+
+
+def test_rejects_symlinked_gitdir_pointer_alias(tmp_path: Path) -> None:
+    """A mutable gitfile alias cannot select a different HEAD after final probes."""
+    import pytest
+
+    root = tmp_path / "separate-worktree"
+    gitdir = tmp_path / "real-gitdir"
+    subprocess.run(
+        ["git", "init", "-q", "--separate-git-dir", str(gitdir), str(root)],
+        check=True,
+    )
+    for relative in module.INPUTS:
+        file = root / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(f"pinned review input: {relative}\n", encoding="utf-8")
+    git(root, "add", "--", *module.INPUTS)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: separate gitdir authority")
+    head = git(root, "rev-parse", "HEAD")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    alias = tmp_path / "mutable-gitdir-alias"
+    alias.symlink_to(gitdir, target_is_directory=True)
+    (root / ".git").write_text(f"gitdir: {alias}\n", encoding="utf-8")
+    # Git canonicalizes --git-path HEAD to the original directory. The .git
+    # pointer itself nevertheless traverses a mutable symlink.
+    assert git(root, "rev-parse", "--git-path", "HEAD") == str(gitdir / "HEAD")
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias"):
+        module.build_manifest(root, head)
+
+    # Relative gitfile pointers are valid when they traverse only canonical
+    # directories; a relative alias must not regain authority.
+    (root / ".git").write_text("gitdir: ../real-gitdir\n", encoding="utf-8")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    (root / ".git").write_text("gitdir: ../mutable-gitdir-alias\n", encoding="utf-8")
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias"):
+        module.build_manifest(root, head)

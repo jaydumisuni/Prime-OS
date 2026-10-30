@@ -185,7 +185,21 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
     target = Path(os.fsdecode(line[8:]))
     if not target.is_absolute():
         target = root / target
-    if target.resolve() != head_path.parent.resolve():
+    # Git canonicalizes --git-path HEAD, but the literal gitfile may still
+    # traverse a mutable symlink alias. A later alias redirect can rebind the
+    # repository without changing the pinned .git or HEAD control files.
+    # Preserve ordinary relative ../ segments while rejecting any symlink
+    # actually traversed before lexical normalization discards it.
+    cursor = Path(target.anchor)
+    for component in target.parts[1:]:
+        if component == "..":
+            cursor = cursor.parent
+        elif component != ".":
+            cursor /= component
+            if cursor.is_symlink():
+                raise ReviewInputError("worktree gitdir pointer traverses alias")
+    if (Path(os.path.normpath(target)) != head_path.parent
+            or target.resolve(strict=True) != head_path.parent.resolve(strict=True)):
         raise ReviewInputError("worktree gitdir control differs from HEAD authority")
     return (dotgit, 4096, epoch, digest)
 
