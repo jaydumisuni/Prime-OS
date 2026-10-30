@@ -3737,6 +3737,7 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         "guest\u{200b}image.qcow2",  // Zero-width path alias.
         "guest\u{1160}image.qcow2",  // Invisible Hangul Jungseong filler.
         "guest\u{ffa0}image.qcow2",  // Halfwidth Hangul filler.
+        "guest\u{2800}image.qcow2",  // Braille blank disguises path identity.
         "guest\u{2028}image.qcow2",  // Unicode line separator.
         "guest\u{e0001}image.qcow2", // Default-ignorable language tag.
     ] {
@@ -7015,6 +7016,8 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("hangul-jungseong-filler", "\u{1160}"),
         ("hangul-filler", "\u{3164}"),
         ("halfwidth-hangul-filler", "\u{ffa0}"),
+        // Braille pattern blank has distinct path bytes but no visible glyph.
+        ("braille-pattern-blank", "\u{2800}"),
         ("zero-width-space", "\u{200b}"),
         ("zero-width-joiner", "\u{200d}"),
         ("word-joiner", "\u{2060}"),
