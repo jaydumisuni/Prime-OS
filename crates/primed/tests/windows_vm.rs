@@ -6945,6 +6945,16 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("word-joiner", "\u{2060}"),
         ("variation-selector", "\u{fe0f}"),
         ("supplementary-variation-selector", "\u{e0100}"),
+        // Unicode newline separators can forge additional proof-log lines.
+        ("next-line-separator", "\u{0085}"),
+        ("unicode-line-separator", "\u{2028}"),
+        ("unicode-paragraph-separator", "\u{2029}"),
+        // Invisible mathematical operators are distinct path bytes with no
+        // visible proof-identity distinction.
+        ("invisible-function-application", "\u{2061}"),
+        ("invisible-times", "\u{2062}"),
+        ("invisible-separator", "\u{2063}"),
+        ("invisible-plus", "\u{2064}"),
     ] {
         let runtime = dir.path().join(format!("w8-{label}-{marker}"));
         private_runtime_dir(&runtime);

@@ -538,12 +538,17 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         matches!(
             character,
             '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{180b}'..='\u{180f}'
-                | '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{3164}'
+                | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{3164}'
                 | '\u{fe00}'..='\u{fe0f}' | '\u{feff}'
                 | '\u{e0100}'..='\u{e01ef}'
         )
     });
-    parser_delimiter || bidi_control || invisible_control
+    // Unicode NEL, line separator and paragraph separator can split a
+    // displayed proof/log entry even though none is an ASCII control byte.
+    let unicode_line_break = value
+        .chars()
+        .any(|character| matches!(character, '\u{0085}' | '\u{2028}' | '\u{2029}'));
+    parser_delimiter || bidi_control || invisible_control || unicode_line_break
 }
 
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
