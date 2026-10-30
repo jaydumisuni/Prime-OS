@@ -1989,3 +1989,22 @@ def test_rejects_gitdir_parent_alias_created_after_final_git_probe(
         module.build_manifest(root, head)
     assert injected and head_reads == 2
     assert git(root, "rev-parse", "HEAD") == foreign_head
+
+
+def test_malformed_git_metadata_is_structured_review_failure(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """Invalid Git metadata encoding must not escape the review CLI."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def invalid_metadata(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "--show-toplevel"):
+            return b"\xff\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", invalid_metadata)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("FAIL: ")
