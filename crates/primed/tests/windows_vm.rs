@@ -6955,6 +6955,11 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("invisible-times", "\u{2062}"),
         ("invisible-separator", "\u{2063}"),
         ("invisible-plus", "\u{2064}"),
+        // Unicode tag controls are default-ignorable but have distinct bytes.
+        ("language-tag", "\u{e0001}"),
+        ("tag-space", "\u{e0020}"),
+        ("tag-letter", "\u{e0061}"),
+        ("cancel-tag", "\u{e007f}"),
     ] {
         let runtime = dir.path().join(format!("w8-{label}-{marker}"));
         private_runtime_dir(&runtime);
