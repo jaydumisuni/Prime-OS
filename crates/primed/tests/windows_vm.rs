@@ -7037,6 +7037,12 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("narrow-no-break-space", "\u{202f}"),
         ("medium-mathematical-space", "\u{205f}"),
         ("ideographic-space", "\u{3000}"),
+        // C1 controls are Unicode scalar values but may still be interpreted
+        // as terminal/proof formatting instructions, not visible path text.
+        ("c1-padding-character", "\u{0080}"),
+        ("c1-control-sequence-introducer", "\u{009b}"),
+        ("c1-operating-system-command", "\u{009d}"),
+        ("c1-application-program-command", "\u{009f}"),
         // Unicode newline separators can forge additional proof-log lines.
         ("next-line-separator", "\u{0085}"),
         ("unicode-line-separator", "\u{2028}"),

@@ -552,6 +552,12 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let unicode_line_break = value
         .chars()
         .any(|character| matches!(character, '\u{0085}' | '\u{2028}' | '\u{2029}'));
+    // C1 control code points (including CSI/OSC-style terminal controls)
+    // are not ASCII bytes but can alter proof/log rendering. Reject the
+    // entire C1 range rather than relying on individual display aliases.
+    let unicode_c1_control = value
+        .chars()
+        .any(|character| matches!(character, '\u{0080}'..='\u{009f}'));
     // Unicode space separators have no distinctive glyph in many proof
     // renderers. They can make different path bytes appear as the same
     // whitespace-delimited session identity. Preserve ordinary ASCII spaces
@@ -567,6 +573,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         || bidi_control
         || invisible_control
         || unicode_line_break
+        || unicode_c1_control
         || unicode_space_alias
 }
 
