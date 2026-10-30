@@ -3727,6 +3727,32 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
 }
 
 #[test]
+fn guest_definition_rejects_disguised_unicode_image_path_authority() {
+    // A digest-valid base image must not carry the invisible/line-breaking
+    // characters already forbidden for runtime QEMU paths and proof roots.
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-unicode-image-path";
+    for name in [
+        "guest\u{202e}image.qcow2",  // Bidirectional display override.
+        "guest\u{200b}image.qcow2",  // Zero-width path alias.
+        "guest\u{2028}image.qcow2",  // Unicode line separator.
+        "guest\u{e0001}image.qcow2", // Default-ignorable language tag.
+    ] {
+        let image = dir.path().join(name);
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            error.to_string().contains("delimiter"),
+            "unsafe guest image pathname admitted: {name:?}; error: {error}"
+        );
+    }
+    // Visible Unicode is not an implicit rejection or an ASCII-only policy.
+    let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
+#[test]
 fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_envelope,

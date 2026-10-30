@@ -1253,15 +1253,12 @@ pub fn validate_guest_definition(
     if !image.is_absolute() {
         return Err(WindowsVmError::InvalidGuest("base image is not absolute"));
     }
-    // The guest definition is a later VM-preparation input. Do not admit
-    // QEMU option separators or control characters into its path authority.
-    if definition
-        .base_image
-        .bytes()
-        .any(|byte| byte == b',' || byte.is_ascii_control())
-    {
+    // The immutable guest-image authority must obey the same pathname
+    // visibility contract as runtime proof roots and QEMU plan paths.
+    // A digest match alone cannot make a bidi/invisible alias auditable.
+    if runtime_path_has_unsafe_text(&definition.base_image) {
         return Err(WindowsVmError::InvalidGuest(
-            "base image path contains QEMU option delimiters",
+            "base image path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     if fs::canonicalize(&image)? != image {
