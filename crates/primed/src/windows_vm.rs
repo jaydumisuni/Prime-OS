@@ -531,7 +531,18 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
             '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{206f}'
         )
     });
-    parser_delimiter || bidi_control
+    // Default-ignorable joiners, variation selectors and zero-width marks
+    // can create distinct runtime proof paths with indistinguishable display.
+    // Reject them before proof-id construction or QEMU option construction.
+    let invisible_control = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{034f}' | '\u{180b}'..='\u{180f}' | '\u{200b}'..='\u{200d}'
+                | '\u{2060}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}'
+                | '\u{e0100}'..='\u{e01ef}'
+        )
+    });
+    parser_delimiter || bidi_control || invisible_control
 }
 
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
@@ -570,7 +581,7 @@ pub fn vm_session_paths(
     // Reject these before producing a proof identity, not only at VM launch.
     if root.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
-            "session root contains QEMU option delimiters or bidi controls",
+            "session root contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     let root_text = root.as_os_str().to_string_lossy();
@@ -1501,7 +1512,7 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         .any(|path| path.to_str().is_none_or(runtime_path_has_unsafe_text))
     {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime path contains QEMU option delimiters or bidi controls",
+            "runtime path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     // Query the effective identity that will own the session, not the

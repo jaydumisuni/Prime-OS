@@ -6924,11 +6924,11 @@ fn guest_agent_flush_retry_budget_boundary_and_terminal_error_are_fail_closed() 
 
 #[cfg(unix)]
 #[test]
-fn w8_runtime_paths_reject_bidi_format_controls_before_vm_plan() {
+fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
     use primed::windows_vm::vm_session_paths;
 
-    // Bidirectional formatting controls can disguise a QEMU runtime path
-    // in review evidence even when the underlying UTF-8 bytes are distinct.
+    // Bidirectional and zero-width formatting controls can disguise a QEMU
+    // runtime path in review evidence despite distinct UTF-8 bytes.
     // Ordinary visible Unicode remains permitted; this is host-only proof.
     let dir = private_tempdir();
     for (label, marker) in [
@@ -6937,6 +6937,11 @@ fn w8_runtime_paths_reject_bidi_format_controls_before_vm_plan() {
         ("right-to-left-mark", "\u{200f}"),
         ("arabic-letter-mark", "\u{061c}"),
         ("deprecated-symmetric-swap", "\u{206a}"),
+        ("zero-width-space", "\u{200b}"),
+        ("zero-width-joiner", "\u{200d}"),
+        ("word-joiner", "\u{2060}"),
+        ("variation-selector", "\u{fe0f}"),
+        ("supplementary-variation-selector", "\u{e0100}"),
     ] {
         let runtime = dir.path().join(format!("w8-{label}-{marker}"));
         private_runtime_dir(&runtime);
