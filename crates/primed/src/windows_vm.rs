@@ -537,9 +537,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let invisible_control = value.chars().any(|character| {
         matches!(
             character,
-            '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{180b}'..='\u{180f}'
+            '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{1160}' | '\u{180b}'..='\u{180f}'
                 | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{3164}'
-                | '\u{fe00}'..='\u{fe0f}' | '\u{feff}'
+                | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}'
                 | '\u{fff9}'..='\u{fffb}' // Interlinear annotation controls alter rendered proof text.
                 | '\u{e0000}'..='\u{e007f}' // Default-ignorable Unicode language/tag controls.
                 | '\u{e0100}'..='\u{e01ef}'
