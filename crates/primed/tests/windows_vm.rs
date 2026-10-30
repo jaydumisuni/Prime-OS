@@ -2484,6 +2484,51 @@ fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
             "{case} must fail closed"
         );
     }
+
+    // Independent PR review: exercise mismatched wire authority through the
+    // public JSON parser, not only through validate_guest_agent_hello.
+    // A future parser regression must not silently skip identity validation.
+    for (case, field, replacement, expected_error) in [
+        (
+            "guest identity",
+            "guest_id",
+            serde_json::json!("different-windows-guest"),
+            "identity mismatch",
+        ),
+        (
+            "guest revision",
+            "guest_revision",
+            serde_json::json!(hello.guest_revision + 1),
+            "identity mismatch",
+        ),
+        (
+            "guest digest",
+            "guest_sha256",
+            serde_json::json!("b".repeat(64)),
+            "digest mismatch",
+        ),
+        (
+            "guest architecture",
+            "workload_arch",
+            serde_json::json!("x86"),
+            "architecture mismatch",
+        ),
+    ] {
+        let mut payload = serde_json::to_value(&hello).unwrap();
+        payload[field] = replacement;
+        let error = parse_guest_agent_hello_json(
+            &serde_json::to_vec(&payload).unwrap(),
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .expect_err("mismatched guest wire authority must fail closed");
+        assert!(
+            error.to_string().contains(expected_error),
+            "{case}: unexpected rejection reason: {error}"
+        );
+    }
 }
 
 #[test]
