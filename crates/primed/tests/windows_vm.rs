@@ -7028,6 +7028,15 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("word-joiner", "\u{2060}"),
         ("variation-selector", "\u{fe0f}"),
         ("supplementary-variation-selector", "\u{e0100}"),
+        // Unicode space separators can display as ordinary spacing while
+        // preserving distinct runtime proof and QEMU pathname bytes.
+        ("no-break-space", "\u{00a0}"),
+        ("ogham-space-mark", "\u{1680}"),
+        ("en-quad", "\u{2000}"),
+        ("hair-space", "\u{200a}"),
+        ("narrow-no-break-space", "\u{202f}"),
+        ("medium-mathematical-space", "\u{205f}"),
+        ("ideographic-space", "\u{3000}"),
         // Unicode newline separators can forge additional proof-log lines.
         ("next-line-separator", "\u{0085}"),
         ("unicode-line-separator", "\u{2028}"),

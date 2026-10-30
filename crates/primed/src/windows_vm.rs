@@ -552,7 +552,22 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let unicode_line_break = value
         .chars()
         .any(|character| matches!(character, '\u{0085}' | '\u{2028}' | '\u{2029}'));
-    parser_delimiter || bidi_control || invisible_control || unicode_line_break
+    // Unicode space separators have no distinctive glyph in many proof
+    // renderers. They can make different path bytes appear as the same
+    // whitespace-delimited session identity. Preserve ordinary ASCII spaces
+    // and visible Unicode, but deny these unbound spacing aliases.
+    let unicode_space_alias = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{00a0}' | '\u{1680}' | '\u{2000}'
+                ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
+        )
+    });
+    parser_delimiter
+        || bidi_control
+        || invisible_control
+        || unicode_line_break
+        || unicode_space_alias
 }
 
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
