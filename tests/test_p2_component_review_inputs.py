@@ -1934,3 +1934,58 @@ def test_rejects_symlinked_gitdir_pointer_alias(tmp_path: Path) -> None:
     (root / ".git").write_text("gitdir: ../mutable-gitdir-alias\n", encoding="utf-8")
     with pytest.raises(module.ReviewInputError, match="gitdir.*alias"):
         module.build_manifest(root, head)
+
+
+
+def test_rejects_gitdir_parent_alias_created_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late alias on the gitfile path cannot redirect Git without changing .git."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+    original_gitdir = metadata / "gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(original_gitdir))
+    alias = metadata / "alias"
+    alias.mkdir()
+    (root / ".git").write_text(
+        f"gitdir: {metadata}/alias/../gitdir\n", encoding="utf-8"
+    )
+    assert git(root, "rev-parse", "HEAD") == head
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    foreign_parent = tmp_path / "foreign"
+    foreign_parent.mkdir()
+    foreign_root, _ = sample_repo(foreign_parent)
+    (foreign_root / module.INPUTS[0]).write_text("foreign committed P2 input\\n")
+    git(foreign_root, "add", "--", module.INPUTS[0])
+    git(foreign_root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: foreign source successor")
+    foreign_head = git(foreign_root, "rev-parse", "HEAD")
+    foreign_gitdir = foreign_parent / "gitdir"
+    git(foreign_root, "init", "-q", "--separate-git-dir", str(foreign_gitdir))
+    (foreign_parent / "child").mkdir()
+    assert foreign_head != head
+
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                alias.rmdir()
+                alias.symlink_to(foreign_parent / "child", target_is_directory=True)
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_head)
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+    assert git(root, "rev-parse", "HEAD") == foreign_head

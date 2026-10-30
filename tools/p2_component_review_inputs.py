@@ -191,17 +191,25 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
     # Preserve ordinary relative ../ segments while rejecting any symlink
     # actually traversed before lexical normalization discards it.
     cursor = Path(target.anchor)
+    traversed_dirs = []
     for component in target.parts[1:]:
         if component == "..":
             cursor = cursor.parent
         elif component != ".":
             cursor /= component
-            if cursor.is_symlink():
+            # Pin each literal path component, including a directory later
+            # discarded by /.. . A post-probe directory-to-symlink swap can
+            # otherwise redirect Git while the .git file stays unchanged.
+            state = cursor.lstat()
+            if not stat.S_ISDIR(state.st_mode):
                 raise ReviewInputError("worktree gitdir pointer traverses alias")
+            traversed_dirs.append((
+                cursor, stat_identity(state), state.st_mode & 0o7777, state.st_uid,
+            ))
     if (Path(os.path.normpath(target)) != head_path.parent
             or target.resolve(strict=True) != head_path.parent.resolve(strict=True)):
         raise ReviewInputError("worktree gitdir control differs from HEAD authority")
-    return (dotgit, 4096, epoch, digest)
+    return (dotgit, 4096, epoch, digest, tuple(traversed_dirs))
 
 
 def capture_head_epoch(root: Path, expected_head: str) -> tuple:
@@ -310,10 +318,14 @@ def verify_head_epoch(snapshot: tuple) -> None:
     """No Git subprocess follows the final HEAD probe; verify pinned ref files."""
     files, absent_ref, absent_commondir = snapshot
     try:
-        for path, limit, epoch, digest in files:
+        traversed_dirs = []
+        for record in files:
+            path, limit, epoch, digest = record[:4]
             current, current_digest, _ = control_file_epoch(path, limit)
             if current != epoch or current_digest != digest:
                 raise ReviewInputError("HEAD ref changed after final Git probe")
+            if len(record) > 4:
+                traversed_dirs.extend(record[4])
         # Both packed-ref absence and standalone gitdir commondir absence
         # are inode claims: even a dangling symlink invalidates the epoch.
         for missing in (absent_ref, absent_commondir):
@@ -327,6 +339,14 @@ def verify_head_epoch(snapshot: tuple) -> None:
                 if missing == absent_ref:
                     raise ReviewInputError("HEAD ref changed from packed to loose")
                 raise ReviewInputError("HEAD commondir appeared after final Git probe")
+        # Check path traversal last, after specific control-file absence gates.
+        for directory, identity, mode, owner in traversed_dirs:
+            state = directory.lstat()
+            if (not stat.S_ISDIR(state.st_mode)
+                    or stat_identity(state) != identity
+                    or state.st_mode & 0o7777 != mode
+                    or state.st_uid != owner):
+                raise ReviewInputError("worktree gitdir path alias changed")
     except OSError as exc:
         raise ReviewInputError("HEAD ref changed after final Git probe") from exc
 
@@ -664,7 +684,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         git_control_path(root, "packed-refs"),
         *config_paths,
     ]
-    control_paths.extend(path for path, _, _, _ in head_files)
+    control_paths.extend(record[0] for record in head_files)
     if absent_ref is not None:
         control_paths.append(absent_ref)
     if absent_commondir is not None:
