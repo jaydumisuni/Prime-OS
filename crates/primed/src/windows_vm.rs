@@ -537,8 +537,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let invisible_control = value.chars().any(|character| {
         matches!(
             character,
-            '\u{034f}' | '\u{180b}'..='\u{180f}' | '\u{200b}'..='\u{200d}'
-                | '\u{2060}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}'
+            '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{180b}'..='\u{180f}'
+                | '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{3164}'
+                | '\u{fe00}'..='\u{fe0f}' | '\u{feff}'
                 | '\u{e0100}'..='\u{e01ef}'
         )
     });
