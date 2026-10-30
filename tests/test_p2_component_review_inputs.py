@@ -1081,6 +1081,31 @@ def test_rejects_symlink_alias_for_linked_worktree_commondir(tmp_path: Path) -> 
         commondir.write_bytes(original)
 
 
+def test_rejects_symlink_hidden_by_commondir_parent_segments(tmp_path: Path) -> None:
+    """Lexical alias/../../.. must not erase a traversed symlink from custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    nested = root / ".git" / "custody-fixture" / "nested" / "leaf"
+    nested.mkdir(parents=True)
+    alias = gitdir / "mutable-alias"
+    alias.symlink_to(nested, target_is_directory=True)
+    # Lexical normpath reaches root/.git; real filesystem traversal follows
+    # mutable-alias first, and its target can later be redirected elsewhere.
+    commondir.write_text("mutable-alias/../../..\n", encoding="utf-8")
+    try:
+        assert git(linked, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="commondir|symlink"):
+            module.build_manifest(linked, head)
+    finally:
+        commondir.write_bytes(original)
+
+
 def test_separate_git_directory_is_valid_without_commondir(tmp_path: Path) -> None:
     """A gitfile can point to a standalone separate gitdir, not a linked worktree."""
     root, head = sample_repo(tmp_path)

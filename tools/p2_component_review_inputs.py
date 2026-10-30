@@ -229,15 +229,29 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         if (not common_line or b"\n" in common_line
                 or b"\r" in common_line or b"\x00" in common_line):
             raise ReviewInputError("invalid linked worktree commondir control")
-        common_target = Path(os.fsdecode(common_line))
-        if not common_target.is_absolute():
-            common_target = head_path.parent / common_target
+        common_reference = Path(os.fsdecode(common_line))
         expected_common = head_path.parent.parent.parent
-        # Comparing only resolved targets admits a mutable symlink alias in
-        # commondir. The alias can be redirected after the final Git probe
-        # without changing this pinned control file or its inode epoch.
-        # Normalize ordinary ../.. segments but reject any alternate pathname.
+        # A linked worktree's ordinary relative commondir climbs to the
+        # shared Git directory with parent segments (normally ../..).
+        # Do not normalize a named segment followed by ..: that erases a
+        # traversed symlink from lexical inspection. Its target could be
+        # redirected after the final HEAD probe without changing commondir.
+        # Absolute references must name the exact pinned common directory.
+        if common_reference.is_absolute():
+            if common_reference != expected_common:
+                raise ReviewInputError("linked worktree commondir uses an alternate path")
+            common_target = common_reference
+        else:
+            if any(part not in (".", "..") for part in common_reference.parts):
+                raise ReviewInputError("linked worktree commondir contains an unpinned path segment")
+            common_target = head_path.parent / common_reference
         if Path(os.path.normpath(common_target)) != expected_common:
+            raise ReviewInputError("linked worktree commondir differs from Git authority")
+        try:
+            resolved_common = common_target.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ReviewInputError("linked worktree commondir cannot be resolved") from exc
+        if resolved_common != expected_common.resolve(strict=True):
             raise ReviewInputError("linked worktree commondir differs from Git authority")
         require_private_directory(expected_common)
         require_protected_ancestors(expected_common)
