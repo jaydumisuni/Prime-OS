@@ -1614,3 +1614,48 @@ def test_rejects_input_changed_during_final_object_inventory(
     with pytest.raises(module.ReviewInputError, match="review input changed"):
         module.build_manifest(root, head)
     assert inventory_calls == 2
+
+
+def test_rejects_git_control_created_after_final_object_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The last object inventory must not hide a later config, lock or alternate."""
+    import pytest
+
+    for kind, expected in (
+        ("config", "Git config appeared after final Git probe"),
+        ("lock", "pending Git control update"),
+        ("alternates", "unbound Git object alternates authority"),
+    ):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        targets = {
+            "config": module.git_control_path(root, "config.worktree"),
+            "lock": module.git_control_path(root, "index").with_name("index.lock"),
+            "alternates": module.git_control_path(root, "objects/info/alternates"),
+        }
+        target = targets[kind]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original_inventory = module.capture_git_object_epoch
+        inventory_calls = 0
+
+        def mutate_after_inventory(objects: Path) -> dict:
+            nonlocal inventory_calls
+            result = original_inventory(objects)
+            inventory_calls += 1
+            if inventory_calls == 2:
+                target.write_text("[core]\n\tbare = false\n" if kind == "config"
+                                  else "pending untrusted Git control\n",
+                                  encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(module, "capture_git_object_epoch",
+                            mutate_after_inventory)
+        try:
+            with pytest.raises(module.ReviewInputError, match=expected):
+                module.build_manifest(root, head)
+            assert inventory_calls == 2 and target.is_file()
+        finally:
+            monkeypatch.setattr(module, "capture_git_object_epoch",
+                                original_inventory)

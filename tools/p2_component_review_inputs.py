@@ -621,6 +621,18 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if require_index_epoch(index_path) != index_epoch:
         raise ReviewInputError("review index changed after object-store verification")
     verify_head_epoch(head_epoch)
+    # The object inventory is the last potentially lengthy inspection. A
+    # config.worktree creation, pending metadata lock, or new alternates
+    # pointer after its preceding sweep must not escape the final epoch.
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
+    require_no_pending_git_control_locks(lock_paths)
+    require_no_object_alternates(alternates_path)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
