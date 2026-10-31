@@ -1,0 +1,18 @@
+name: Prime F04 Ptah manifest source-only preflight
+on:
+  pull_request:
+    paths:
+      - 'tools/ptah_f04_manifest_preflight.py'
+      - 'tests/test_ptah_f04_manifest_preflight.py'
+      - 'docs/contracts/PRIME_PTAH_F04_PACKAGE_PREFLIGHT_PROPOSAL.md'
+      - '.github/workflows/ptah-f04-preflight.yml'
+permissions:
+  contents: read
+jobs:
+  source-only-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python preflight regressions (no installation or devices)
+        run: python3 -m unittest discover -s tests -p 'test_ptah_f04_manifest_preflight.py' -v
