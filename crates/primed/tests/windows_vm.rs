@@ -3325,7 +3325,7 @@ fn runtime_proof_rejects_rehashed_zero_evidence_digest_placeholder() {
     let root = dir.path().join("runtime");
     private_runtime_dir(&root);
     let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
-    let mut observations: Vec<_> = plan
+    let observations: Vec<_> = plan
         .required_cases
         .iter()
         .cloned()
@@ -3349,28 +3349,33 @@ fn runtime_proof_rejects_rehashed_zero_evidence_digest_placeholder() {
     // Observation IDs are public hashes, not independent evidence authority.
     // A canonical but all-zero evidence digest must never be treated as a
     // real payload merely because its observation ID was recomputed.
-    observations[0].evidence_sha256 = "0".repeat(64);
-    let observation = &observations[0];
-    let body = serde_json::json!({
-        "schema": WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA,
-        "proof_id": observation.proof_id,
-        "case": observation.case,
-        "guest_id": observation.guest_id,
-        "guest_revision": observation.guest_revision,
-        "guest_sha256": observation.guest_sha256,
-        "application_id": observation.application_id,
-        "session_id": observation.session_id,
-        "passed": observation.passed,
-        "zero_residual_state": observation.zero_residual_state,
-        "evidence_schema": observation.evidence_schema,
-        "evidence_sha256": observation.evidence_sha256,
-    });
-    observations[0].observation_id = digest(&serde_json::to_vec(&body).unwrap());
-    assert_eq!(
-        evaluate_runtime_proof(&plan, &observations),
-        VmRuntimeProofState::Pending,
-        "an all-zero evidence digest cannot be promoted by rehashing a public observation"
-    );
+    // The SHA-256 of empty bytes is also a canonical, public digest. It
+    // cannot represent an admitted envelope because empty evidence is denied.
+    for rejected_digest in ["0".repeat(64), digest(b"")] {
+        let mut forged = observations.clone();
+        forged[0].evidence_sha256 = rejected_digest;
+        let observation = &forged[0];
+        let body = serde_json::json!({
+            "schema": WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA,
+            "proof_id": observation.proof_id,
+            "case": observation.case,
+            "guest_id": observation.guest_id,
+            "guest_revision": observation.guest_revision,
+            "guest_sha256": observation.guest_sha256,
+            "application_id": observation.application_id,
+            "session_id": observation.session_id,
+            "passed": observation.passed,
+            "zero_residual_state": observation.zero_residual_state,
+            "evidence_schema": observation.evidence_schema,
+            "evidence_sha256": observation.evidence_sha256,
+        });
+        forged[0].observation_id = digest(&serde_json::to_vec(&body).unwrap());
+        assert_eq!(
+            evaluate_runtime_proof(&plan, &forged),
+            VmRuntimeProofState::Pending,
+            "empty or zero evidence cannot be promoted by rehashing a public observation"
+        );
+    }
 }
 
 #[test]
