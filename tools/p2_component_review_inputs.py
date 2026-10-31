@@ -737,7 +737,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # can change Git's staged interpretation without changing the pinned
     # index or HEAD. Fail closed until sharedindex epochs are independently
     # captured and verified; ordinary and linked full indexes remain valid.
-    if git(root, "rev-parse", "--shared-index-path").strip():
+    # Only a zero-byte result means no shared index. Whitespace or a forged
+    # blank record is still nonempty Git control evidence and must fail closed.
+    if git(root, "rev-parse", "--shared-index-path"):
         raise ReviewInputError("unbound Git split index sharedindex authority")
     # The index is a Git control pathname too. Do not strip extra framing
     # newlines, carriage returns or undecodable bytes into a trusted path.
