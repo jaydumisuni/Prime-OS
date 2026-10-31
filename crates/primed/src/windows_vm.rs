@@ -876,7 +876,7 @@ fn create_runtime_proof_observation(
     zero_residual_state: bool,
     evidence_sha256: &str,
 ) -> Result<VmRuntimeProofObservation, WindowsVmError> {
-    if !canonical_sha256_hex(evidence_sha256) || evidence_sha256.bytes().all(|byte| byte == b'0') {
+    if !bound_runtime_evidence_sha256(evidence_sha256) {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence digest is not a bound SHA-256",
         ));
@@ -974,10 +974,7 @@ pub fn evaluate_runtime_proof(
         if observation.proof_id != plan.proof_id
             || observation.observation_id != expected_observation_id
             || observation.evidence_schema != WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA
-            || !canonical_sha256_hex(&observation.evidence_sha256)
-            // Public observation IDs can be recomputed around placeholder
-            // digests. A zero-filled digest cannot identify real evidence.
-            || observation.evidence_sha256.bytes().all(|byte| byte == b'0')
+            || !bound_runtime_evidence_sha256(&observation.evidence_sha256)
             || observation.guest_id != plan.guest_id
             || observation.guest_revision != plan.guest_revision
             || observation.guest_sha256 != plan.guest_sha256
@@ -1038,6 +1035,16 @@ fn runtime_observation_id(observation: &VmRuntimeProofObservation) -> String {
 fn sha256_json(value: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(value).expect("runtime proof identity JSON is serializable");
     format!("{:x}", Sha256::digest(bytes))
+}
+
+// An empty payload is rejected by envelope admission. Its public SHA-256
+// cannot be accepted later through a rehashed, caller-supplied observation.
+fn bound_runtime_evidence_sha256(value: &str) -> bool {
+    const EMPTY_EVIDENCE_SHA256: &str =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    canonical_sha256_hex(value)
+        && !value.bytes().all(|byte| byte == b'0')
+        && value != EMPTY_EVIDENCE_SHA256
 }
 
 fn canonical_sha256_hex(value: &str) -> bool {
