@@ -289,9 +289,11 @@ fn validate_expected_guest_agent_authority(
     // A zero-filled SHA-256 is a common unbound placeholder, not immutable
     // guest-image evidence. Do not let a matching synthetic hello turn that
     // sentinel into apparent host/guest authority at any framing entry point.
-    if !canonical_sha256_hex(expected_guest_sha256)
-        || expected_guest_sha256.bytes().all(|byte| byte == b'0')
-    {
+    // The guest-image validator rejects empty images. A caller cannot turn
+    // SHA-256(empty) into guest authority by supplying a matching hello.
+    // Share the runtime-proof digest admission contract to reject both the
+    // zero placeholder and the empty-payload digest.
+    if !bound_nonempty_payload_sha256(expected_guest_sha256) {
         return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
     }
     if !matches!(expected_workload_arch, "x86" | "x86_64") {
