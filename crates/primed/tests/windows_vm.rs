@@ -4111,6 +4111,11 @@ fn w8_proof_session_root_rejects_confusable_unicode_path_separators() {
         "root\u{2215}shadow",
         "root\u{ff0f}shadow",
         "root\u{ff3c}shadow",
+        "root\u{2216}shadow", // Set minus resembles a backslash.
+        "root\u{29f5}shadow", // Reverse solidus operator.
+        "root\u{29f8}shadow", // Big solidus.
+        "root\u{29f9}shadow", // Big reverse solidus.
+        "root\u{fe68}shadow", // Small reverse solidus; NFKC folds to backslash.
     ] {
         let root = dir.path().join(name);
         private_runtime_dir(&root);
@@ -4196,6 +4201,11 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         "guest\u{2215}image.qcow2",   // Division slash, confusable with '/'.
         "guest\u{ff0f}image.qcow2",   // Fullwidth solidus.
         "guest\u{ff3c}image.qcow2",   // Fullwidth reverse solidus.
+        "guest\u{2216}image.qcow2",   // Set minus resembles a backslash.
+        "guest\u{29f5}image.qcow2",   // Reverse solidus operator.
+        "guest\u{29f8}image.qcow2",   // Big solidus.
+        "guest\u{29f9}image.qcow2",   // Big reverse solidus.
+        "guest\u{fe68}image.qcow2",   // Small reverse solidus; NFKC folds to backslash.
         "guest\u{e0001}image.qcow2",  // Default-ignorable language tag.
     ] {
         let image = dir.path().join(name);
