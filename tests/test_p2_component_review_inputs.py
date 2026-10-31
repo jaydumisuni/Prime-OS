@@ -2416,3 +2416,39 @@ def test_rejects_nonempty_shared_index_probe_even_when_whitespace_only(
         with pytest.raises(module.ReviewInputError, match="split index"):
             module.build_manifest(root, head)
     monkeypatch.setattr(module, "git", original_git)
+
+
+def test_rejects_noncanonical_git_blob_size_control_records(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The pinned blob-size probe must carry one unsigned decimal and one LF."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    relative = module.INPUTS[0]
+    command = ("cat-file", "-s", f"{head}:{relative}")
+    canonical = original_git(root, *command)
+    assert canonical.endswith(b"\n") and canonical[:-1].isdigit()
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    hostile_records = (
+        canonical + b"\n",               # extra record
+        canonical[:-1] + b"\r\n",        # CRLF
+        canonical[:-1],                   # missing LF
+        b" " + canonical,                 # leading whitespace
+        b"+" + canonical,                 # signed integer
+        b"0" + canonical,                 # leading zero
+        canonical[:-1] + b" \n",         # trailing whitespace
+        b"9" * 64 + b"\n",              # unbounded integer record
+    )
+    for forged in hostile_records:
+        def forged_git(repo: Path, *args: str) -> bytes:
+            if args == command:
+                return forged
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_git)
+        with pytest.raises(module.ReviewInputError, match="invalid committed review input size"):
+            module.build_manifest(root, head)
+    monkeypatch.setattr(module, "git", original_git)
