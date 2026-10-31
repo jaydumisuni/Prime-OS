@@ -199,9 +199,13 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
     epoch, digest, data = control_file_epoch(dotgit, 4096)
     # Git worktree pointers may be relative to the worktree. Do not trust a
     # different gitdir merely because it resolves the same commit and inputs.
-    line = data.rstrip(b"\n")
+    # Git accepts multiple trailing LFs in gitfile pointers. Review custody
+    # requires exactly one framing LF, never a normalized ambiguous record.
+    if not data.endswith(b"\n") or data.count(b"\n") != 1:
+        raise ReviewInputError("invalid worktree gitdir control")
+    line = data[:-1]
     if (not line.startswith(b"gitdir: ") or not line[8:]
-            or b"\n" in line or b"\r" in line or b"\x00" in line):
+            or b"\r" in line or b"\x00" in line):
         # Path operations raise an uncaught ValueError on embedded NUL. Reject
         # malformed Git authority before traversing any gitfile path.
         raise ReviewInputError("invalid worktree gitdir control")
@@ -270,9 +274,12 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         common_epoch, common_digest, common_data = control_file_epoch(
             commondir, 4096
         )
-        common_line = common_data.rstrip(b"\n")
-        if (not common_line or b"\n" in common_line
-                or b"\r" in common_line or b"\x00" in common_line):
+        # A linked commondir pointer has the same single-LF control framing.
+        # Do not silently collapse Git-tolerated extra trailing newlines.
+        if not common_data.endswith(b"\n") or common_data.count(b"\n") != 1:
+            raise ReviewInputError("invalid linked worktree commondir control")
+        common_line = common_data[:-1]
+        if (not common_line or b"\r" in common_line or b"\x00" in common_line):
             raise ReviewInputError("invalid linked worktree commondir control")
         common_reference = Path(os.fsdecode(common_line))
         expected_common = head_path.parent.parent.parent

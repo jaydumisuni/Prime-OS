@@ -962,6 +962,32 @@ def test_head_epoch_supports_packed_detached_and_linked_worktrees(
     assert module.build_manifest(linked, head)["candidate_head"] == head
 
 
+def test_linked_worktree_control_files_require_one_framing_lf(
+    tmp_path: Path,
+) -> None:
+    """Git tolerates extra LFs, but review custody must not normalize them."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    pointer = linked / ".git"
+    gitdir = Path(pointer.read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    assert module.build_manifest(linked, head)["candidate_head"] == head
+
+    for control in (pointer, commondir):
+        original = control.read_bytes()
+        try:
+            control.write_bytes(original + b"\n")
+            assert git(linked, "rev-parse", "HEAD") == head
+            with pytest.raises(module.ReviewInputError, match="gitdir|commondir"):
+                module.build_manifest(linked, head)
+        finally:
+            control.write_bytes(original)
+    assert module.build_manifest(linked, head)["candidate_head"] == head
+
+
 def test_rejects_dangling_loose_ref_after_packed_head_snapshot(
     tmp_path: Path,
 ) -> None:
