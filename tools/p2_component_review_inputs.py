@@ -64,6 +64,12 @@ def git(repo: Path, *args: str) -> bytes:
         raise ReviewInputError(
             f"Git verification timed out: {' '.join(args)}"
         ) from exc
+    except OSError as exc:
+        # A pinned executable may disappear or lose execute permission between
+        # resolution and spawn. Never turn that host failure into review proof.
+        raise ReviewInputError(
+            f"Git verification could not start: {' '.join(args)}"
+        ) from exc
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout

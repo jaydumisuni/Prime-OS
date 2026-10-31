@@ -574,6 +574,26 @@ def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) ->
         raise AssertionError("review input path substitution admitted")
     assert opened, "review input was not opened through descriptor-bound custody"
 
+def test_git_process_spawn_failures_are_structured_review_errors(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A disappearing or non-executable pinned Git cannot escape review custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    for failure in (
+        FileNotFoundError("pinned Git removed"),
+        PermissionError("pinned Git not executable"),
+        OSError("Git process could not start"),
+    ):
+        def fail_spawn(*args, **kwargs):
+            raise failure
+
+        monkeypatch.setattr(module.subprocess, "run", fail_spawn)
+        with pytest.raises(module.ReviewInputError, match="Git verification could not start"):
+            module.build_manifest(root, head)
+
+
 def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> None:
     """An unresponsive Git metadata probe must not hang review custody."""
     root, head = sample_repo(tmp_path)
