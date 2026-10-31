@@ -962,6 +962,48 @@ def test_head_epoch_supports_packed_detached_and_linked_worktrees(
     assert module.build_manifest(linked, head)["candidate_head"] == head
 
 
+def test_rejects_non_utf8_symbolic_head_before_ref_admission(tmp_path: Path) -> None:
+    """Git accepts non-UTF8 branch bytes; review evidence must deny them."""
+    import pytest
+
+    if os.name != "posix":
+        pytest.skip("raw-byte Git refname regression requires POSIX argv")
+    root, head = sample_repo(tmp_path)
+    raw_ref = b"refs/heads/nonutf8-\xff"
+    git_exe = os.fsencode(shutil.which("git", path=os.defpath) or "git")
+    subprocess.check_call([
+        git_exe, b"-C", os.fsencode(root), b"update-ref",
+        raw_ref, head.encode("ascii"),
+    ])
+    subprocess.check_call([
+        git_exe, b"-C", os.fsencode(root), b"symbolic-ref", b"HEAD", raw_ref,
+    ])
+    assert git(root, "rev-parse", "HEAD") == head
+    with pytest.raises(module.ReviewInputError, match="symbolic HEAD UTF-8"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_ambiguous_symbolic_head_command_framing(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A second LF must not be silently normalized into review authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    original_git = module.git
+
+    def ambiguous_symbolic(repo: Path, *args: str) -> bytes:
+        data = original_git(repo, *args)
+        if args == ("rev-parse", "--symbolic-full-name", "HEAD"):
+            return data + b"\n"
+        return data
+
+    monkeypatch.setattr(module, "git", ambiguous_symbolic)
+    with pytest.raises(module.ReviewInputError, match="symbolic HEAD control framing"):
+        module.build_manifest(root, head)
+
+
 def test_linked_worktree_control_files_require_one_framing_lf(
     tmp_path: Path,
 ) -> None:
