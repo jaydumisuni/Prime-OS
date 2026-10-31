@@ -739,10 +739,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # captured and verified; ordinary and linked full indexes remain valid.
     if git(root, "rev-parse", "--shared-index-path").strip():
         raise ReviewInputError("unbound Git split index sharedindex authority")
-    index_name = git(root, "rev-parse", "--git-path", "index").decode().strip()
-    index_path = Path(index_name)
-    if not index_path.is_absolute():
-        index_path = root / index_path
+    # The index is a Git control pathname too. Do not strip extra framing
+    # newlines, carriage returns or undecodable bytes into a trusted path.
+    index_path = git_control_path(root, "index")
     index_epoch = require_index_epoch(index_path)
     # Git writes metadata via adjacent *.lock files before atomically
     # replacing the authoritative pathname. A stable current inode alone
