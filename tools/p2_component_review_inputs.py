@@ -242,7 +242,16 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
 def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     """Pin HEAD, linked gitdir and branch refs without granting release authority."""
     head_path = git_control_path(root, "HEAD")
-    symbolic = git(root, "rev-parse", "--symbolic-full-name", "HEAD").decode().strip()
+    # Git refnames may contain arbitrary non-NUL bytes. Do not let an invalid
+    # UTF-8 symbolic branch or ambiguous command framing escape the structured
+    # review-denial boundary (or become normalized by str.strip()).
+    symbolic_raw = git(root, "rev-parse", "--symbolic-full-name", "HEAD")
+    if not symbolic_raw.endswith(b"\n") or symbolic_raw.count(b"\n") != 1:
+        raise ReviewInputError("invalid symbolic HEAD control framing")
+    try:
+        symbolic = symbolic_raw[:-1].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ReviewInputError("invalid symbolic HEAD UTF-8 identity") from exc
     head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
     files = [(head_path, 4096, head_epoch, head_digest)]
     absent_commondir = None
