@@ -2430,6 +2430,94 @@ fn guest_agent_zero_digest_sentinel_cannot_authorize_a_matching_hello() {
 }
 
 #[test]
+fn guest_agent_empty_image_digest_cannot_authorize_matching_hello() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, read_guest_agent_hello_frame, read_guest_agent_hello_packet,
+        validate_guest_agent_hello, write_guest_agent_hello_packet, GuestAgentHello,
+    };
+    use std::io::Cursor;
+
+    // validate_guest_definition rejects an empty guest image. A matching
+    // handshake must not convert SHA-256(empty) into guest-image authority.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned(),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let payload = serde_json::to_vec(&hello).unwrap();
+    assert!(validate_guest_agent_hello(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(parse_guest_agent_hello_json(
+        &payload,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(encode_guest_agent_hello_json(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+
+    let mut frame = Cursor::new(payload.clone());
+    assert!(read_guest_agent_hello_frame(
+        &mut frame,
+        payload.len(),
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert_eq!(
+        frame.position(),
+        0,
+        "invalid authority consumed frame bytes"
+    );
+
+    let mut packet = Cursor::new([&(payload.len() as u32).to_be_bytes()[..], &payload].concat());
+    assert!(read_guest_agent_hello_packet(
+        &mut packet,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert_eq!(
+        packet.position(),
+        0,
+        "invalid authority consumed packet prefix"
+    );
+
+    let mut output = Vec::new();
+    assert!(write_guest_agent_hello_packet(
+        &mut output,
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(output.is_empty(), "invalid authority wrote a packet");
+}
+
+#[test]
 fn guest_agent_json_rejects_invalid_caller_expectations() {
     use primed::windows_vm::GuestAgentHello;
 
