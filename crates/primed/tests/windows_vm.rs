@@ -3,8 +3,8 @@ use prime_contracts::{
     MechanicalCompatibilityState, PolicyReference, RuntimeFamily, APPLICATION_PROFILE_SCHEMA,
 };
 use primed::windows_vm::{
-    build_qemu_plan, validate_guest_definition, validate_vm_profile, VmGuestDefinition,
-    VmPlanRequest,
+    build_qemu_plan, parse_guest_agent_hello_json, validate_guest_definition, validate_vm_profile,
+    VmGuestDefinition, VmPlanRequest,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -1807,6 +1807,33 @@ fn vm_fallback_is_explicit_backend_authority_not_personality_retry() {
 }
 
 #[test]
+fn vm_fallback_requires_matching_pe_format_and_workload_architecture() {
+    // PE32 is the 32-bit x86 image format; PE32+ is the x86_64 image format
+    // in W8's explicitly limited x86/x86_64 workload domain. A caller must
+    // not authorize a mismatched binary through a separately valid arch.
+    for (format, arch) in [
+        (ArtifactFormat::Pe32, "x86_64"),
+        (ArtifactFormat::Pe32Plus, "x86"),
+    ] {
+        let mut profile = vm_profile(ExecutionBackend::Vm);
+        profile.artifact.format = format;
+        profile.artifact.workload_arch = Some(arch.to_owned());
+        let error = validate_vm_profile(&profile).unwrap_err();
+        assert!(error.to_string().contains("architecture"), "{error}");
+    }
+
+    for (format, arch) in [
+        (ArtifactFormat::Pe32, "x86"),
+        (ArtifactFormat::Pe32Plus, "x86_64"),
+    ] {
+        let mut profile = vm_profile(ExecutionBackend::Vm);
+        profile.artifact.format = format;
+        profile.artifact.workload_arch = Some(arch.to_owned());
+        validate_vm_profile(&profile).unwrap();
+    }
+}
+
+#[test]
 fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
     use primed::windows_vm::{
         validate_guest_agent_hello, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
@@ -1875,6 +1902,783 @@ fn guest_agent_handshake_is_versioned_arch_bound_and_digest_bound() {
         "x86_64"
     )
     .is_err());
+}
+
+#[test]
+fn guest_agent_json_admission_bounds_bytes_before_deserialization() {
+    use primed::windows_vm::GuestAgentHello;
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let json = serde_json::to_vec(&hello).unwrap();
+    let accepted = parse_guest_agent_hello_json(
+        &json,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap();
+    assert_eq!(accepted, hello);
+
+    // Whitespace is legal JSON. The exact limit is accepted, but one extra
+    // byte must fail before the JSON decoder sees a potentially huge payload.
+    assert!(json.len() < 8192);
+    let mut boundary = vec![b' '; 8192 - json.len()];
+    boundary.extend_from_slice(&json);
+    assert!(parse_guest_agent_hello_json(
+        &boundary,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_ok());
+    let mut oversized = boundary;
+    oversized.push(b' ');
+    let error = parse_guest_agent_hello_json(
+        &oversized,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("size limit"), "{error}");
+
+    for invalid in [b"".as_slice(), b"{".as_slice(), b"[]".as_slice()] {
+        assert!(parse_guest_agent_hello_json(
+            invalid,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .is_err());
+    }
+
+    // Exercise the JSON entry point, not just the lower-level validator:
+    // decoding a valid but unauthorized hello must never bypass identity custody.
+    let mismatches = [
+        (
+            "guest_id",
+            GuestAgentHello {
+                guest_id: "different-guest".to_owned(),
+                ..hello.clone()
+            },
+        ),
+        (
+            "guest_revision",
+            GuestAgentHello {
+                guest_revision: hello.guest_revision + 1,
+                ..hello.clone()
+            },
+        ),
+        (
+            "guest_sha256",
+            GuestAgentHello {
+                guest_sha256: "b".repeat(64),
+                ..hello.clone()
+            },
+        ),
+        (
+            "workload_arch",
+            GuestAgentHello {
+                workload_arch: "x86".to_owned(),
+                ..hello.clone()
+            },
+        ),
+    ];
+    for (field, mismatched) in mismatches {
+        let payload = serde_json::to_vec(&mismatched).unwrap();
+        let error = parse_guest_agent_hello_json(
+            &payload,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("mismatch"), "{field}: {error}");
+    }
+}
+
+#[test]
+fn guest_agent_harness_json_encoder_is_deterministic_and_authority_checked() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, parse_guest_agent_hello_json, GuestAgentHello,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES,
+    };
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-harness-x64".to_owned(),
+        guest_revision: 7,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let encode = |candidate: &GuestAgentHello| {
+        encode_guest_agent_hello_json(
+            candidate,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+    };
+    let encoded = encode(&hello).unwrap();
+    assert_eq!(encoded, serde_json::to_vec(&hello).unwrap());
+    assert!(encoded.len() <= WINDOWS_VM_AGENT_HELLO_MAX_BYTES);
+    assert_eq!(encode(&hello).unwrap(), encoded);
+    assert_eq!(
+        parse_guest_agent_hello_json(
+            &encoded,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .unwrap(),
+        hello
+    );
+
+    // A local harness must not manufacture a plausible hello for a different
+    // guest, protocol, digest, or architecture. This is not guest attestation.
+    let mut invalid = hello.clone();
+    invalid.guest_id = "other-guest".to_owned();
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.protocol_revision = 2;
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.guest_sha256 = "d".repeat(64);
+    assert!(encode(&invalid).is_err());
+    invalid = hello.clone();
+    invalid.workload_arch = "x86".to_owned();
+    assert!(encode(&invalid).is_err());
+    assert!(encode_guest_agent_hello_json(
+        &hello,
+        &hello.guest_id,
+        0,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_err());
+}
+
+#[test]
+fn guest_agent_length_delimited_reader_admits_only_one_bounded_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_frame, GuestAgentHello, WINDOWS_VM_AGENT_HELLO_MAX_BYTES,
+    };
+    use std::io::Cursor;
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-x86".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+
+    // Explicit frame length is the caller's transport boundary. Do not
+    // consume bytes belonging to a subsequent message on the same stream.
+    let mut stream = Cursor::new([frame.as_slice(), b"NEXT"].concat());
+    let accepted = read_guest_agent_hello_frame(
+        &mut stream,
+        frame.len(),
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap();
+    assert_eq!(accepted, hello);
+    assert_eq!(stream.position() as usize, frame.len());
+
+    // Reject oversized lengths before touching the reader or allocating a
+    // payload. Truncated frames and empty frames are not valid handshakes.
+    let mut oversized = Cursor::new(frame.clone());
+    let error = read_guest_agent_hello_frame(
+        &mut oversized,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES + 1,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("size limit"), "{error}");
+    assert_eq!(oversized.position(), 0);
+
+    let mut truncated = Cursor::new(frame[..frame.len() - 1].to_vec());
+    let error = read_guest_agent_hello_frame(
+        &mut truncated,
+        frame.len(),
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("truncated"), "{error}");
+
+    let mut empty = Cursor::new(frame.clone());
+    assert!(read_guest_agent_hello_frame(
+        &mut empty,
+        0,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .is_err());
+    assert_eq!(empty.position(), 0);
+
+    // A complete frame is still untrusted until identity/digest validation.
+    let mut mismatched = Cursor::new(frame);
+    let mismatch_len = mismatched.get_ref().len();
+    assert!(read_guest_agent_hello_frame(
+        &mut mismatched,
+        mismatch_len,
+        &hello.guest_id,
+        hello.guest_revision,
+        &"d".repeat(64),
+        "x86",
+    )
+    .is_err());
+}
+
+#[test]
+fn guest_agent_length_delimited_reader_preserves_split_frames_and_io_failures() {
+    use primed::windows_vm::{read_guest_agent_hello_frame, GuestAgentHello, WindowsVmError};
+    use std::io::{self, Cursor, Read};
+
+    // A socket-like reader may deliver a complete frame in arbitrarily small
+    // chunks. The first admission must not borrow bytes from the next frame.
+    struct Fragmented(Cursor<Vec<u8>>);
+    impl Read for Fragmented {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let limit = buf.len().min(3);
+            self.0.read(&mut buf[..limit])
+        }
+    }
+
+    let x86 = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "guest-x86".to_owned(),
+        guest_revision: 3,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let mut x64 = x86.clone();
+    x64.guest_id = "guest-x64".to_owned();
+    x64.guest_revision = 4;
+    x64.guest_sha256 = "b".repeat(64);
+    x64.workload_arch = "x86_64".to_owned();
+    let first = serde_json::to_vec(&x86).unwrap();
+    let second = serde_json::to_vec(&x64).unwrap();
+    let mut reader = Fragmented(Cursor::new([first.as_slice(), second.as_slice()].concat()));
+
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut reader,
+            first.len(),
+            &x86.guest_id,
+            x86.guest_revision,
+            &x86.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        x86,
+    );
+    assert_eq!(reader.0.position() as usize, first.len());
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut reader,
+            second.len(),
+            &x64.guest_id,
+            x64.guest_revision,
+            &x64.guest_sha256,
+            "x86_64",
+        )
+        .unwrap(),
+        x64,
+    );
+    assert_eq!(reader.0.position() as usize, first.len() + second.len());
+
+    // A transport permission failure is not a malformed guest identity and
+    // must remain an I/O failure for the future socket owner to handle.
+    struct Denied;
+    impl Read for Denied {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        }
+    }
+    assert!(matches!(
+        read_guest_agent_hello_frame(
+            &mut Denied, first.len(), "guest-x86", 3, &"a".repeat(64), "x86",
+        ),
+        Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
+    ));
+}
+
+#[test]
+fn guest_agent_reader_rejects_invalid_host_authority_before_consuming_frame() {
+    use primed::windows_vm::{read_guest_agent_hello_frame, GuestAgentHello};
+    use std::io::{self, Cursor, Read};
+
+    struct Counted(Cursor<Vec<u8>>, usize);
+    impl Read for Counted {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.1 += 1;
+            self.0.read(buffer)
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "guest-x86".to_owned(),
+        guest_revision: 3,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+    for (case, guest_id, revision, digest, arch) in [
+        ("invalid ID", "guest/alias", 3, "a".repeat(64), "x86"),
+        ("zero revision", "guest-x86", 0, "a".repeat(64), "x86"),
+        ("noncanonical digest", "guest-x86", 3, "A".repeat(64), "x86"),
+        (
+            "zero sentinel digest",
+            "guest-x86",
+            3,
+            "0".repeat(64),
+            "x86",
+        ),
+        (
+            "unsupported architecture",
+            "guest-x86",
+            3,
+            "a".repeat(64),
+            "arm64",
+        ),
+    ] {
+        let mut reader = Counted(Cursor::new(frame.clone()), 0);
+        assert!(
+            read_guest_agent_hello_frame(
+                &mut reader,
+                frame.len(),
+                guest_id,
+                revision,
+                &digest,
+                arch,
+            )
+            .is_err(),
+            "{case}: invalid caller authority must fail closed"
+        );
+        assert_eq!(
+            reader.1, 0,
+            "{case}: invalid host authority consumed a frame"
+        );
+        assert_eq!(reader.0.position(), 0, "{case}: stream position changed");
+    }
+
+    let mut valid = Counted(Cursor::new(frame.clone()), 0);
+    assert_eq!(
+        read_guest_agent_hello_frame(
+            &mut valid,
+            frame.len(),
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        hello
+    );
+    assert!(valid.1 > 0);
+    assert_eq!(valid.0.position() as usize, frame.len());
+}
+
+#[test]
+fn guest_agent_zero_digest_sentinel_cannot_authorize_a_matching_hello() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, read_guest_agent_hello_packet, validate_guest_agent_hello,
+        write_guest_agent_hello_packet, GuestAgentHello,
+    };
+    use std::io::Cursor;
+
+    // A 64-digit zero placeholder is syntactically hex, but it cannot
+    // authenticate an admitted immutable guest image.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "0".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let payload = serde_json::to_vec(&hello).unwrap();
+    assert!(validate_guest_agent_hello(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(parse_guest_agent_hello_json(
+        &payload,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(encode_guest_agent_hello_json(
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+
+    let mut output = Vec::new();
+    assert!(write_guest_agent_hello_packet(
+        &mut output,
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert!(
+        output.is_empty(),
+        "invalid authority must not write a prefix"
+    );
+
+    let mut packet = Cursor::new([&(payload.len() as u32).to_be_bytes()[..], &payload].concat());
+    assert!(read_guest_agent_hello_packet(
+        &mut packet,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64"
+    )
+    .is_err());
+    assert_eq!(
+        packet.position(),
+        0,
+        "invalid authority must not consume a prefix"
+    );
+}
+
+#[test]
+fn guest_agent_json_rejects_invalid_caller_expectations() {
+    use primed::windows_vm::GuestAgentHello;
+
+    // The frame may be authentic JSON while the host's claimed authority is
+    // malformed. Exercise the parser boundary, not only the inner validator.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let frame = serde_json::to_vec(&hello).unwrap();
+
+    for invalid_id in ["", "guest/alias", " leading", "guest\nname"] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                invalid_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "invalid host guest identity {invalid_id:?} was accepted"
+        );
+    }
+
+    assert!(parse_guest_agent_hello_json(
+        &frame,
+        &hello.guest_id,
+        0,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .is_err());
+
+    for invalid_digest in ["A".repeat(64), "a".repeat(63)] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                &hello.guest_id,
+                hello.guest_revision,
+                &invalid_digest,
+                "x86_64",
+            )
+            .is_err(),
+            "invalid host digest was accepted"
+        );
+    }
+
+    for invalid_arch in ["arm64", "X86_64", ""] {
+        assert!(
+            parse_guest_agent_hello_json(
+                &frame,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                invalid_arch,
+            )
+            .is_err(),
+            "invalid host workload architecture {invalid_arch:?} was accepted"
+        );
+    }
+}
+
+#[test]
+fn guest_agent_json_parser_preflights_host_authority_before_untrusted_decode() {
+    use primed::windows_vm::parse_guest_agent_hello_json;
+
+    // Malformed guest input must not determine the admission outcome when
+    // the host's own claimed identity, digest, or architecture is invalid.
+    let malformed_wire = br#"{not-a-json-document"#;
+    for (case, id, revision, digest, arch, expected_error) in [
+        (
+            "invalid id",
+            "guest/name",
+            1,
+            "a".repeat(64),
+            "x86_64",
+            "invalid expected guest identity",
+        ),
+        (
+            "zero revision",
+            "guest-test",
+            0,
+            "a".repeat(64),
+            "x86_64",
+            "invalid expected guest identity",
+        ),
+        (
+            "invalid digest",
+            "guest-test",
+            1,
+            "A".repeat(64),
+            "x86_64",
+            "guest-agent digest mismatch",
+        ),
+        (
+            "invalid arch",
+            "guest-test",
+            1,
+            "a".repeat(64),
+            "arm64",
+            "guest-agent workload architecture mismatch",
+        ),
+    ] {
+        let error =
+            parse_guest_agent_hello_json(malformed_wire, id, revision, &digest, arch).unwrap_err();
+        assert!(
+            error.to_string().contains(expected_error),
+            "{case}: {error}"
+        );
+    }
+}
+
+#[test]
+fn guest_agent_json_rejects_ambiguous_and_unauthorized_wire_shapes() {
+    use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
+
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-test".to_owned(),
+        guest_revision: 1,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let canonical = serde_json::to_string(&hello).unwrap();
+
+    // An attacker must not hide a conflicting identity behind duplicate JSON
+    // keys, add host-control fields, or append a second protocol document.
+    let duplicate_id = format!(r#"{{"guest_id":"shadow",{}"#, &canonical[1..]);
+    let host_override = format!(r#"{{"host_override":true,{}"#, &canonical[1..]);
+    let trailing_document = format!("{canonical}{{}}");
+    for (case, payload) in [
+        ("duplicate guest ID", duplicate_id),
+        ("undeclared host override", host_override),
+        ("trailing document", trailing_document),
+    ] {
+        assert!(
+            parse_guest_agent_hello_json(
+                payload.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "{case} must not be admitted as guest identity"
+        );
+    }
+
+    for (case, field, replacement) in [
+        (
+            "unsupported schema",
+            "schema",
+            serde_json::json!("prime.windows-vm-agent.v2"),
+        ),
+        (
+            "unsupported revision",
+            "protocol_revision",
+            serde_json::json!(2),
+        ),
+    ] {
+        let mut payload = serde_json::to_value(&hello).unwrap();
+        payload[field] = replacement;
+        assert!(
+            parse_guest_agent_hello_json(
+                &serde_json::to_vec(&payload).unwrap(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                "x86_64",
+            )
+            .is_err(),
+            "{case} must fail closed"
+        );
+    }
+
+    // Independent PR review: exercise mismatched wire authority through the
+    // public JSON parser, not only through validate_guest_agent_hello.
+    // A future parser regression must not silently skip identity validation.
+    for (case, field, replacement, expected_error) in [
+        (
+            "guest identity",
+            "guest_id",
+            serde_json::json!("different-windows-guest"),
+            "identity mismatch",
+        ),
+        (
+            "guest revision",
+            "guest_revision",
+            serde_json::json!(hello.guest_revision + 1),
+            "identity mismatch",
+        ),
+        (
+            "guest digest",
+            "guest_sha256",
+            serde_json::json!("b".repeat(64)),
+            "digest mismatch",
+        ),
+        (
+            "guest architecture",
+            "workload_arch",
+            serde_json::json!("x86"),
+            "architecture mismatch",
+        ),
+    ] {
+        let mut payload = serde_json::to_value(&hello).unwrap();
+        payload[field] = replacement;
+        let error = parse_guest_agent_hello_json(
+            &serde_json::to_vec(&payload).unwrap(),
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86_64",
+        )
+        .expect_err("mismatched guest wire authority must fail closed");
+        assert!(
+            error.to_string().contains(expected_error),
+            "{case}: unexpected rejection reason: {error}"
+        );
+    }
+}
+
+#[test]
+fn guest_agent_json_x86_handoff_is_arch_and_digest_bound() {
+    use primed::windows_vm::{parse_guest_agent_hello_json, GuestAgentHello};
+
+    // Gate 6 explicitly requires both x86 and x86_64 workload handoff.
+    // The x86 JSON path must admit its own identity while refusing an x64
+    // expectation, an x64 wire identity, or a different pinned image digest.
+    let hello = GuestAgentHello {
+        schema: "prime.windows-vm-agent.v1".to_owned(),
+        protocol_revision: 1,
+        guest_id: "windows-fallback-x86".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "c".repeat(64),
+        workload_arch: "x86".to_owned(),
+    };
+    let wire = serde_json::to_vec(&hello).unwrap();
+    assert_eq!(
+        parse_guest_agent_hello_json(
+            &wire,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            "x86",
+        )
+        .unwrap(),
+        hello
+    );
+
+    let wrong_expected_arch = parse_guest_agent_hello_json(
+        &wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap_err();
+    assert!(wrong_expected_arch
+        .to_string()
+        .contains("architecture mismatch"));
+
+    let wrong_expected_digest = parse_guest_agent_hello_json(
+        &wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &"d".repeat(64),
+        "x86",
+    )
+    .unwrap_err();
+    assert!(wrong_expected_digest
+        .to_string()
+        .contains("digest mismatch"));
+
+    let mut wrong_wire_arch = hello.clone();
+    wrong_wire_arch.workload_arch = "x86_64".to_owned();
+    let wrong_wire = serde_json::to_vec(&wrong_wire_arch).unwrap();
+    let wrong_wire_arch_error = parse_guest_agent_hello_json(
+        &wrong_wire,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        "x86",
+    )
+    .unwrap_err();
+    assert!(wrong_wire_arch_error
+        .to_string()
+        .contains("architecture mismatch"));
 }
 
 #[test]
@@ -2169,6 +2973,211 @@ fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state()
     .unwrap();
     assert_eq!(
         evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending
+    );
+}
+
+#[test]
+fn runtime_proof_rejects_identity_valid_failed_and_residual_observations() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState,
+    };
+
+    // A negative observation must remain negative even when its identity
+    // digest is correctly recomputed by the trusted observation factory.
+    // This is source-only Gate 8 custody, not a Windows guest acceptance.
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"w8-failure-observation-identity";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    let make = |case, passed, zero_residual_state| {
+        create_runtime_proof_observation_from_evidence(
+            &plan,
+            case,
+            passed,
+            zero_residual_state,
+            b"w8-identity-valid-evidence",
+        )
+        .unwrap()
+    };
+    let mut valid: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, case)| {
+            create_runtime_proof_observation_from_evidence(
+                &plan,
+                case,
+                true,
+                true,
+                format!("w8-distinct-evidence-{index}").as_bytes(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &valid),
+        VmRuntimeProofState::Pass
+    );
+
+    for (passed, zero_residual_state) in [(false, true), (true, false), (false, false)] {
+        let original = valid[0].clone();
+        let replacement = make(original.case.clone(), passed, zero_residual_state);
+        assert_ne!(replacement.observation_id, original.observation_id);
+        assert_eq!(replacement.proof_id, plan.proof_id);
+        valid[0] = replacement;
+        assert_eq!(
+            evaluate_runtime_proof(&plan, &valid),
+            VmRuntimeProofState::Pending,
+            "a correctly hashed negative observation cannot complete Gate 8"
+        );
+        valid[0] = original;
+    }
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &valid),
+        VmRuntimeProofState::Pass
+    );
+}
+
+#[test]
+fn runtime_proof_observations_cannot_cross_application_or_session_scopes() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofPlan, VmRuntimeProofState,
+    };
+
+    // Gate 8/9 source-only isolation: a successful case from one scope
+    // cannot complete another scope's otherwise valid four-case evidence.
+    // This does not claim an authorized Windows guest or runtime execution.
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"w8-scoped-runtime-observation";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+
+    let primary = prepare_runtime_proof_plan(&guest, &root, "app-one", "session-a").unwrap();
+    let other_session = prepare_runtime_proof_plan(&guest, &root, "app-one", "session-b").unwrap();
+    let other_application =
+        prepare_runtime_proof_plan(&guest, &root, "app-two", "session-a").unwrap();
+    let observations_for = |plan: &VmRuntimeProofPlan| {
+        plan.required_cases
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, case)| {
+                let evidence = format!("w8-isolation-{}-{index}", plan.proof_id);
+                create_runtime_proof_observation_from_evidence(
+                    plan,
+                    case,
+                    true,
+                    true,
+                    evidence.as_bytes(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let primary_observations = observations_for(&primary);
+    assert_eq!(
+        evaluate_runtime_proof(&primary, &primary_observations),
+        VmRuntimeProofState::Pass
+    );
+
+    for other in [&other_session, &other_application] {
+        let own_observations = observations_for(other);
+        assert_ne!(other.proof_id, primary.proof_id);
+        assert_eq!(
+            evaluate_runtime_proof(other, &own_observations),
+            VmRuntimeProofState::Pass
+        );
+        let mut spliced = own_observations;
+        spliced[0] = primary_observations[0].clone();
+        assert_eq!(
+            evaluate_runtime_proof(other, &spliced),
+            VmRuntimeProofState::Pending,
+            "cross-scope evidence must not satisfy an otherwise complete plan"
+        );
+    }
+}
+
+#[test]
+fn runtime_proof_observations_cannot_cross_guest_digests_in_same_session() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofPlan, VmRuntimeProofState,
+    };
+
+    // Gate 8 source-only regression: matching application/session paths do not
+    // authorize evidence from a different digest-bound guest image.
+    let dir = private_tempdir();
+    let image_a = dir.path().join("guest-a.qcow2");
+    let image_b = dir.path().join("guest-b.qcow2");
+    let bytes_a = b"w8-proof-guest-image-a";
+    let bytes_b = b"w8-proof-guest-image-b";
+    private_guest_image(&image_a, bytes_a);
+    private_guest_image(&image_b, bytes_b);
+    let guest_a = validate_guest_definition(&definition(&image_a, bytes_a)).unwrap();
+    let guest_b = validate_guest_definition(&definition(&image_b, bytes_b)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+
+    let plan_a = prepare_runtime_proof_plan(&guest_a, &root, "same-app", "same-session").unwrap();
+    let plan_b = prepare_runtime_proof_plan(&guest_b, &root, "same-app", "same-session").unwrap();
+    assert_ne!(plan_a.guest_sha256, plan_b.guest_sha256);
+    assert_ne!(plan_a.proof_id, plan_b.proof_id);
+
+    let observations_for = |plan: &VmRuntimeProofPlan| {
+        plan.required_cases
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, case)| {
+                create_runtime_proof_observation_from_evidence(
+                    plan,
+                    case,
+                    true,
+                    true,
+                    format!("guest-digest-{}-{index}", plan.proof_id).as_bytes(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let observations_a = observations_for(&plan_a);
+    let observations_b = observations_for(&plan_b);
+    assert_eq!(
+        evaluate_runtime_proof(&plan_a, &observations_a),
+        VmRuntimeProofState::Pass
+    );
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &observations_b),
+        VmRuntimeProofState::Pass
+    );
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &observations_a),
+        VmRuntimeProofState::Pending
+    );
+
+    // Collection order is irrelevant, but replacing one valid observation
+    // with a different guest's observation must fail even after reordering.
+    let mut reversed = observations_b;
+    reversed.reverse();
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &reversed),
+        VmRuntimeProofState::Pass
+    );
+    reversed[3] = observations_a[0].clone();
+    assert_eq!(
+        evaluate_runtime_proof(&plan_b, &reversed),
         VmRuntimeProofState::Pending
     );
 }
@@ -2800,6 +3809,41 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
 }
 
 #[test]
+fn guest_definition_rejects_disguised_unicode_image_path_authority() {
+    // A digest-valid base image must not carry the invisible/line-breaking
+    // characters already forbidden for runtime QEMU paths and proof roots.
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-unicode-image-path";
+    for name in [
+        "guest\u{202e}image.qcow2",   // Bidirectional display override.
+        "guest\u{200b}image.qcow2",   // Zero-width path alias.
+        "guest\u{1160}image.qcow2",   // Invisible Hangul Jungseong filler.
+        "guest\u{ffa0}image.qcow2",   // Halfwidth Hangul filler.
+        "guest\u{2800}image.qcow2",   // Braille blank disguises path identity.
+        "guest\u{13430}image.qcow2",  // Egyptian hieroglyph vertical joiner.
+        "guest\u{1343f}image.qcow2",  // Egyptian hieroglyph enclosure terminator.
+        "guest\u{fdd0}image.qcow2",   // Unicode noncharacter (BMP interior).
+        "guest\u{ffff}image.qcow2",   // Unicode noncharacter (BMP plane end).
+        "guest\u{1fffe}image.qcow2",  // Unicode noncharacter (supplementary plane end).
+        "guest\u{10ffff}image.qcow2", // Unicode noncharacter (last scalar).
+        "guest\u{2028}image.qcow2",   // Unicode line separator.
+        "guest\u{e0001}image.qcow2",  // Default-ignorable language tag.
+    ] {
+        let image = dir.path().join(name);
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            error.to_string().contains("delimiter"),
+            "unsafe guest image pathname admitted: {name:?}; error: {error}"
+        );
+    }
+    // Visible Unicode is not an implicit rejection or an ASCII-only policy.
+    let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
+#[test]
 fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_envelope,
@@ -2879,4 +3923,3363 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     let mut serialized = serde_json::to_value(&observation).unwrap();
     serialized["authority"] = serde_json::json!("guest-attested");
     assert!(serde_json::from_value::<VmRuntimeProofObservation>(serialized).is_err());
+}
+
+#[test]
+fn guest_agent_harness_payload_writer_is_bounded_and_fail_closed() {
+    use primed::windows_vm::{
+        encode_guest_agent_hello_json, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct CountedWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        fail: bool,
+    }
+    impl Write for CountedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.fail {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            // Model a fragmented transport, without owning its framing.
+            let count = buf.len().min(3);
+            self.bytes.extend_from_slice(&buf[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "harness-guest".to_owned(),
+            guest_revision: 7,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut writer = CountedWriter {
+            bytes: Vec::new(),
+            calls: 0,
+            fail: false,
+        };
+        let expected =
+            encode_guest_agent_hello_json(&hello, &hello.guest_id, 7, &hello.guest_sha256, arch)
+                .unwrap();
+        let written = write_guest_agent_hello_payload(
+            &mut writer,
+            &hello,
+            &hello.guest_id,
+            7,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(written, expected.len());
+        assert_eq!(writer.bytes, expected);
+        assert!(writer.calls > 1, "fragmented writer was not exercised");
+
+        for (id, revision, digest, workload_arch) in [
+            ("guest/invalid", 7, "a".repeat(64), arch),
+            ("harness-guest", 0, "a".repeat(64), arch),
+            ("harness-guest", 7, "A".repeat(64), arch),
+            ("harness-guest", 7, "a".repeat(64), "arm64"),
+            ("foreign-guest", 7, "a".repeat(64), arch),
+        ] {
+            let mut denied = CountedWriter {
+                bytes: Vec::new(),
+                calls: 0,
+                fail: false,
+            };
+            assert!(write_guest_agent_hello_payload(
+                &mut denied,
+                &hello,
+                id,
+                revision,
+                &digest,
+                workload_arch,
+            )
+            .is_err());
+            assert_eq!(denied.calls, 0, "invalid authority touched the writer");
+            assert!(denied.bytes.is_empty());
+        }
+
+        let mut denied = CountedWriter {
+            bytes: Vec::new(),
+            calls: 0,
+            fail: true,
+        };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut denied, &hello, &hello.guest_id, 7, &hello.guest_sha256, arch,
+            ),
+            Err(WindowsVmError::Io(error))
+                if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(denied.calls, 1);
+        assert!(denied.bytes.is_empty());
+
+        // A transport failure after a partial write must not report success.
+        struct PartialThenDenied {
+            bytes: Vec<u8>,
+        }
+        impl Write for PartialThenDenied {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if self.bytes.is_empty() {
+                    self.bytes.extend_from_slice(&buf[..buf.len().min(3)]);
+                    return Ok(buf.len().min(3));
+                }
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut partial = PartialThenDenied { bytes: Vec::new() };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut partial, &hello, &hello.guest_id, 7, &hello.guest_sha256, arch,
+            ),
+            Err(WindowsVmError::Io(error))
+                if error.kind() == io::ErrorKind::PermissionDenied
+        ));
+        assert_eq!(partial.bytes, expected[..3]);
+    }
+}
+
+#[test]
+fn guest_agent_harness_payload_writer_handles_interrupted_and_zero_progress_io() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    #[derive(Default)]
+    struct InterruptedOrZeroWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        zero_progress: bool,
+    }
+    impl Write for InterruptedOrZeroWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            if self.zero_progress {
+                return Ok(0);
+            }
+            let count = bytes.len().min(2);
+            self.bytes.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "harness-guest".to_owned(),
+        guest_revision: 7,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let expected = serde_json::to_vec(&hello).unwrap();
+
+    let mut interrupted = InterruptedOrZeroWriter::default();
+    let written = write_guest_agent_hello_payload(
+        &mut interrupted,
+        &hello,
+        &hello.guest_id,
+        7,
+        &hello.guest_sha256,
+        "x86_64",
+    )
+    .unwrap();
+    assert_eq!(written, expected.len());
+    assert_eq!(interrupted.bytes, expected);
+    assert!(
+        interrupted.calls > 2,
+        "interrupted and fragmented I/O was not exercised"
+    );
+
+    let mut zero = InterruptedOrZeroWriter {
+        zero_progress: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        write_guest_agent_hello_payload(
+            &mut zero, &hello, &hello.guest_id, 7, &hello.guest_sha256, "x86_64",
+        ),
+        Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::WriteZero
+    ));
+    assert_eq!(zero.calls, 2);
+    assert!(
+        zero.bytes.is_empty(),
+        "zero-progress writer must not be accepted"
+    );
+}
+
+#[test]
+fn guest_agent_harness_length_prefixed_packet_roundtrip_and_adversarial() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_HELLO_MAX_BYTES, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Write};
+
+    struct FragmentedWriter(Vec<u8>);
+    impl Write for FragmentedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let n = bytes.len().min(2);
+            self.0.extend_from_slice(&bytes[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-harness".to_owned(),
+            guest_revision: 9,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = FragmentedWriter(Vec::new());
+        let written = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let payload = serde_json::to_vec(&hello).unwrap();
+        assert_eq!(written, payload.len() + 4);
+        assert_eq!(&wire.0[..4], &(payload.len() as u32).to_be_bytes());
+        assert_eq!(&wire.0[4..], payload.as_slice());
+
+        let mut stream = Cursor::new([wire.0.as_slice(), b"NEXT"].concat());
+        let admitted = read_guest_agent_hello_packet(
+            &mut stream,
+            &hello.guest_id,
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(admitted, hello);
+        assert_eq!(stream.position() as usize, written);
+
+        let mut denied_writer = FragmentedWriter(Vec::new());
+        assert!(write_guest_agent_hello_packet(
+            &mut denied_writer,
+            &hello,
+            "wrong-guest",
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert!(denied_writer.0.is_empty());
+        let mut denied_reader = Cursor::new(wire.0.clone());
+        assert!(read_guest_agent_hello_packet(
+            &mut denied_reader,
+            "invalid/guest",
+            9,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(
+            denied_reader.position(),
+            0,
+            "host preflight must not read header"
+        );
+
+        for length in [0u32, WINDOWS_VM_AGENT_HELLO_MAX_BYTES as u32 + 1, u32::MAX] {
+            let mut hostile = Cursor::new([length.to_be_bytes().as_slice(), b"NEXT"].concat());
+            assert!(read_guest_agent_hello_packet(
+                &mut hostile,
+                &hello.guest_id,
+                9,
+                &hello.guest_sha256,
+                arch,
+            )
+            .is_err());
+            assert_eq!(hostile.position(), 4, "invalid length consumed payload");
+        }
+
+        for truncated in [&wire.0[..3], &wire.0[..wire.0.len() - 1]] {
+            let mut stream = Cursor::new(truncated);
+            assert!(read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                9,
+                &hello.guest_sha256,
+                arch,
+            )
+            .is_err());
+        }
+    }
+
+    struct PartialThenDenied {
+        writes: usize,
+        bytes: Vec<u8>,
+    }
+    impl Write for PartialThenDenied {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes > 1 {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            self.bytes.push(bytes[0]);
+            Ok(1)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-harness".to_owned(),
+        guest_revision: 9,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let mut broken = PartialThenDenied {
+        writes: 0,
+        bytes: Vec::new(),
+    };
+    assert!(matches!(write_guest_agent_hello_packet(
+        &mut broken, &hello, &hello.guest_id, 9, &hello.guest_sha256, "x86_64",
+    ), Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied));
+    assert_eq!(
+        broken.bytes.len(),
+        1,
+        "partial frame must not report success"
+    );
+}
+
+#[test]
+fn guest_agent_harness_packet_stream_two_packets_are_independently_admitted() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    // The caller owns stream framing. A fragmented, once-interrupted reader
+    // must admit two distinct packets without borrowing the next frame's bytes.
+    struct FragmentedInterruptedReader {
+        inner: Cursor<Vec<u8>>,
+        interrupt_once: bool,
+    }
+    impl Read for FragmentedInterruptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.interrupt_once {
+                self.interrupt_once = false;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let chunk = buf.len().min(1);
+            self.inner.read(&mut buf[..chunk])
+        }
+    }
+
+    let first = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "first-harness".to_owned(),
+        guest_revision: 11,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let second = GuestAgentHello {
+        guest_id: "second-harness".to_owned(),
+        guest_revision: 12,
+        guest_sha256: "b".repeat(64),
+        workload_arch: "x86".to_owned(),
+        ..first.clone()
+    };
+    let mut wire = Vec::new();
+    let first_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &first,
+        &first.guest_id,
+        first.guest_revision,
+        &first.guest_sha256,
+        &first.workload_arch,
+    )
+    .unwrap();
+    let second_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &second,
+        &second.guest_id,
+        second.guest_revision,
+        &second.guest_sha256,
+        &second.workload_arch,
+    )
+    .unwrap();
+    assert_eq!(wire.len(), first_bytes + second_bytes);
+    wire.extend_from_slice(b"TRAILER");
+    let mut reader = FragmentedInterruptedReader {
+        inner: Cursor::new(wire),
+        interrupt_once: true,
+    };
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &first.guest_id,
+            first.guest_revision,
+            &first.guest_sha256,
+            &first.workload_arch,
+        )
+        .unwrap(),
+        first
+    );
+    assert_eq!(reader.inner.position() as usize, first_bytes);
+    // Invalid caller authority must not consume the second packet's prefix.
+    assert!(read_guest_agent_hello_packet(
+        &mut reader,
+        "invalid/host",
+        second.guest_revision,
+        &second.guest_sha256,
+        &second.workload_arch,
+    )
+    .is_err());
+    assert_eq!(reader.inner.position() as usize, first_bytes);
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &second.guest_id,
+            second.guest_revision,
+            &second.guest_sha256,
+            &second.workload_arch,
+        )
+        .unwrap(),
+        second
+    );
+    assert_eq!(reader.inner.position() as usize, first_bytes + second_bytes);
+    let mut trailer = [0u8; 7];
+    reader.read_exact(&mut trailer).unwrap();
+    assert_eq!(&trailer, b"TRAILER");
+}
+
+#[test]
+fn guest_agent_harness_rejected_packet_preserves_following_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    let authorized = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "authorized-harness".to_owned(),
+        guest_revision: 13,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let wrong_identity = GuestAgentHello {
+        guest_id: "untrusted-harness".to_owned(),
+        ..authorized.clone()
+    };
+    // Both a structurally valid but unauthorized frame and malformed JSON
+    // must be rejected without consuming the next independently framed hello.
+    for (case, rejected) in [
+        (
+            "wrong identity",
+            serde_json::to_vec(&wrong_identity).unwrap(),
+        ),
+        ("malformed JSON", b"{invalid".to_vec()),
+    ] {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(rejected.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&rejected);
+        let next_frame_start = wire.len();
+        let next_frame_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &authorized,
+            &authorized.guest_id,
+            authorized.guest_revision,
+            &authorized.guest_sha256,
+            &authorized.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &authorized.guest_id,
+                authorized.guest_revision,
+                &authorized.guest_sha256,
+                &authorized.workload_arch,
+            )
+            .is_err(),
+            "{case} must not be admitted"
+        );
+        assert_eq!(reader.position() as usize, next_frame_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &authorized.guest_id,
+                authorized.guest_revision,
+                &authorized.guest_sha256,
+                &authorized.workload_arch,
+            )
+            .unwrap(),
+            authorized,
+            "{case}"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            next_frame_start + next_frame_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
+
+#[test]
+fn guest_agent_empty_packet_preserves_following_authorized_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A zero-length declaration has no body to discard. Reject that frame
+    // without consuming the next independently length-delimited hello.
+    // This is a host-side framing regression, not Windows guest qualification.
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-next-frame".to_owned(),
+        guest_revision: 17,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let mut wire = 0u32.to_be_bytes().to_vec();
+    let next_frame_start = wire.len();
+    let next_frame_bytes = write_guest_agent_hello_packet(
+        &mut wire,
+        &hello,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        &hello.workload_arch,
+    )
+    .unwrap();
+    wire.extend_from_slice(b"TRAILER");
+    let mut reader = Cursor::new(wire);
+
+    let error = read_guest_agent_hello_packet(
+        &mut reader,
+        &hello.guest_id,
+        hello.guest_revision,
+        &hello.guest_sha256,
+        &hello.workload_arch,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        WindowsVmError::InvalidGuest("empty guest-agent hello frame")
+    ));
+    assert_eq!(reader.position() as usize, next_frame_start);
+
+    assert_eq!(
+        read_guest_agent_hello_packet(
+            &mut reader,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            &hello.workload_arch,
+        )
+        .unwrap(),
+        hello
+    );
+    assert_eq!(
+        reader.position() as usize,
+        next_frame_start + next_frame_bytes
+    );
+    let mut trailer = [0u8; 7];
+    reader.read_exact(&mut trailer).unwrap();
+    assert_eq!(&trailer, b"TRAILER");
+}
+
+#[test]
+fn guest_agent_harness_maximum_length_packet_keeps_next_packet_isolated() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_HELLO_MAX_BYTES, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // The direct JSON parser's 8 KiB bound must also hold at the actual
+    // length-prefixed stream boundary. A full-sized rejected frame may not
+    // borrow any bytes from the next independent packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-boundary-harness".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&hello).unwrap();
+        assert!(canonical.len() < WINDOWS_VM_AGENT_HELLO_MAX_BYTES);
+        let mut boundary = vec![b' '; WINDOWS_VM_AGENT_HELLO_MAX_BYTES - canonical.len()];
+        boundary.extend_from_slice(&canonical);
+
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(boundary.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&boundary);
+        let second_start = wire.len();
+        let second_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+        let mut stream = Cursor::new(wire);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(stream.position() as usize, second_start);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(stream.position() as usize, second_start + second_len);
+        let mut trailer = [0u8; 7];
+        stream.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER");
+
+        let mut untrusted = hello.clone();
+        untrusted.guest_id = "unauthorized-boundary".to_owned();
+        let unauthorized_json = serde_json::to_vec(&untrusted).unwrap();
+        let mut unauthorized =
+            vec![b' '; WINDOWS_VM_AGENT_HELLO_MAX_BYTES - unauthorized_json.len()];
+        unauthorized.extend_from_slice(&unauthorized_json);
+        let mut rejected_wire = Vec::new();
+        rejected_wire.extend_from_slice(&(unauthorized.len() as u32).to_be_bytes());
+        rejected_wire.extend_from_slice(&unauthorized);
+        let next_start = rejected_wire.len();
+        write_guest_agent_hello_packet(
+            &mut rejected_wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let mut rejected_stream = Cursor::new(rejected_wire);
+        assert!(read_guest_agent_hello_packet(
+            &mut rejected_stream,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(rejected_stream.position() as usize, next_start);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut rejected_stream,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+
+        // An oversized declaration is rejected after its prefix only. It is
+        // not safe to infer a new frame boundary after a dishonest length.
+        let mut oversized = Cursor::new(
+            [
+                (WINDOWS_VM_AGENT_HELLO_MAX_BYTES as u32 + 1)
+                    .to_be_bytes()
+                    .as_slice(),
+                b"NEXT",
+            ]
+            .concat(),
+        );
+        assert!(read_guest_agent_hello_packet(
+            &mut oversized,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert_eq!(oversized.position(), 4);
+    }
+}
+
+#[test]
+fn guest_agent_packet_flush_failure_cannot_report_success() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // A buffered transport may accept the complete packet into memory and
+    // fail only when flush transfers it to the underlying writer. Success
+    // must not be reported before that failure is observed.
+    struct FlushProbe {
+        bytes: Vec<u8>,
+        flushes: usize,
+        deny_flush: bool,
+    }
+    impl Write for FlushProbe {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.deny_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(())
+        }
+    }
+
+    let hello = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-flush-harness".to_owned(),
+        guest_revision: 19,
+        guest_sha256: "d".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    for deny_flush in [false, true] {
+        let mut writer = FlushProbe {
+            bytes: Vec::new(),
+            flushes: 0,
+            deny_flush,
+        };
+        let result = write_guest_agent_hello_packet(
+            &mut writer,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            &hello.workload_arch,
+        );
+        assert_eq!(writer.flushes, 1, "complete packet requires one flush");
+        let payload = serde_json::to_vec(&hello).unwrap();
+        assert_eq!(&writer.bytes[..4], &(payload.len() as u32).to_be_bytes());
+        assert_eq!(&writer.bytes[4..], payload.as_slice());
+        if deny_flush {
+            assert!(matches!(
+                result,
+                Err(WindowsVmError::Io(error))
+                    if error.kind() == io::ErrorKind::BrokenPipe
+            ));
+        } else {
+            assert_eq!(result.unwrap(), payload.len() + 4);
+        }
+    }
+}
+
+#[test]
+fn guest_agent_packet_writer_retries_interruption_and_denies_zero_progress() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // Gate 6's length prefix and JSON body are one transport operation.
+    // Interrupted writes are retried, while zero progress in either region
+    // must fail without flushing or claiming packet completion.
+    struct FragmentedFaultWriter {
+        bytes: Vec<u8>,
+        interrupted: bool,
+        calls: usize,
+        flushes: usize,
+        stop_after: Option<usize>,
+    }
+    impl Write for FragmentedFaultWriter {
+        fn write(&mut self, chunk: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let remaining = self
+                .stop_after
+                .map(|limit| limit.saturating_sub(self.bytes.len()))
+                .unwrap_or(chunk.len());
+            if remaining == 0 {
+                return Ok(0);
+            }
+            let n = chunk.len().min(remaining).min(2);
+            self.bytes.extend_from_slice(&chunk[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-io-harness".to_owned(),
+            guest_revision: 29,
+            guest_sha256: "f".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        let mut expected = (payload.len() as u32).to_be_bytes().to_vec();
+        expected.extend_from_slice(&payload);
+        for stop_after in [None, Some(0), Some(2), Some(4), Some(7)] {
+            let mut writer = FragmentedFaultWriter {
+                bytes: Vec::new(),
+                interrupted: false,
+                calls: 0,
+                flushes: 0,
+                stop_after,
+            };
+            let result = write_guest_agent_hello_packet(
+                &mut writer,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            match stop_after {
+                None => {
+                    assert_eq!(result.unwrap(), expected.len());
+                    assert_eq!(writer.bytes, expected);
+                    assert_eq!(writer.flushes, 1);
+                }
+                Some(limit) => {
+                    assert!(matches!(
+                        result,
+                        Err(WindowsVmError::Io(error))
+                            if error.kind() == io::ErrorKind::WriteZero
+                    ));
+                    assert_eq!(writer.bytes, expected[..limit]);
+                    assert_eq!(writer.flushes, 0, "failed packet cannot flush");
+                }
+            }
+            assert!(writer.interrupted);
+            assert!(writer.calls >= 2);
+        }
+    }
+}
+
+#[test]
+fn guest_agent_harness_replay_mismatch_isolates_following_packet() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A valid JSON frame from a different guest, revision, image or workload
+    // architecture is not a handshake for this host-owned authority. Rejection
+    // must consume exactly the declared frame, never the next packet.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-authorized".to_owned(),
+        guest_revision: 23,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let cases = [
+        (
+            "guest identity",
+            GuestAgentHello {
+                guest_id: "w8-replayed".to_owned(),
+                ..expected.clone()
+            },
+        ),
+        (
+            "guest revision",
+            GuestAgentHello {
+                guest_revision: expected.guest_revision + 1,
+                ..expected.clone()
+            },
+        ),
+        (
+            "guest image digest",
+            GuestAgentHello {
+                guest_sha256: "b".repeat(64),
+                ..expected.clone()
+            },
+        ),
+        (
+            "workload architecture",
+            GuestAgentHello {
+                workload_arch: "x86".to_owned(),
+                ..expected.clone()
+            },
+        ),
+        (
+            "protocol revision",
+            GuestAgentHello {
+                protocol_revision: 2,
+                ..expected.clone()
+            },
+        ),
+        (
+            "protocol schema",
+            GuestAgentHello {
+                schema: "prime.windows-vm-agent.v2".to_owned(),
+                ..expected.clone()
+            },
+        ),
+    ];
+
+    for (case, rejected) in cases {
+        let mut wire = Vec::new();
+        let rejected_json = serde_json::to_vec(&rejected).unwrap();
+        wire.extend_from_slice(&(rejected_json.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&rejected_json);
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .is_err(),
+            "{case} replay must be denied"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
+
+#[test]
+fn guest_agent_packet_reader_faults_are_bounded_to_the_current_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    // Exercise interruptions at the length prefix, payload boundary and
+    // inside the payload, not only before the first read. Other I/O failures
+    // must remain transport errors rather than guest-identity failures.
+    struct FaultReader {
+        inner: Cursor<Vec<u8>>,
+        fault_at: usize,
+        fault_kind: io::ErrorKind,
+        faulted: bool,
+    }
+    impl Read for FaultReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if !self.faulted && self.inner.position() as usize >= self.fault_at {
+                self.faulted = true;
+                return Err(self.fault_kind.into());
+            }
+            let count = buffer.len().min(2);
+            self.inner.read(&mut buffer[..count])
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "fault-reader-harness".to_owned(),
+            guest_revision: 31,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut packet = Vec::new();
+        let packet_len = write_guest_agent_hello_packet(
+            &mut packet,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        assert_eq!(packet_len, packet.len());
+        packet.extend_from_slice(b"TRAILER");
+
+        let near_end = (packet_len - 1) & !1;
+        for fault_at in [0, 2, 4, 8, near_end] {
+            let mut interrupted = FaultReader {
+                inner: Cursor::new(packet.clone()),
+                fault_at,
+                fault_kind: io::ErrorKind::Interrupted,
+                faulted: false,
+            };
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut interrupted,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}: interruption at {fault_at}",
+            );
+            assert!(interrupted.faulted, "{arch}: fault not exercised");
+            assert_eq!(interrupted.inner.position() as usize, packet_len);
+            let mut trailer = [0u8; 7];
+            interrupted.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+
+        for fault_kind in [io::ErrorKind::PermissionDenied, io::ErrorKind::WouldBlock] {
+            for fault_at in [0, 2, 4, 8] {
+                let mut denied = FaultReader {
+                    inner: Cursor::new(packet.clone()),
+                    fault_at,
+                    fault_kind,
+                    faulted: false,
+                };
+                assert!(matches!(
+                    read_guest_agent_hello_packet(
+                        &mut denied,
+                        &hello.guest_id,
+                        hello.guest_revision,
+                        &hello.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::Io(error)) if error.kind() == fault_kind
+                ));
+                assert!(denied.faulted);
+                assert!(
+                    denied.inner.position() as usize <= packet_len,
+                    "transport failure borrowed trailing bytes"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn guest_agent_harness_malformed_json_packet_isolates_following_frame() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Gate 6's framed reader must consume exactly one declared packet even
+    // when JSON decoding fails. A hostile first packet must not swallow or
+    // lend authority to a valid following packet or its trailing bytes.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-authorized".to_owned(),
+        guest_revision: 43,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let valid_json = serde_json::to_string(&expected).unwrap();
+    let duplicate_schema = valid_json.replacen(
+        "\"schema\":",
+        "\"schema\":\"prime.windows-vm-agent.v1\",\"schema\":",
+        1,
+    );
+    let unknown_field = valid_json.replacen("\"schema\":", "\"unexpected\":true,\"schema\":", 1);
+    let wrong_type = valid_json.replacen("\"guest_revision\":43", "\"guest_revision\":\"43\"", 1);
+    let cases: [(&str, Vec<u8>); 6] = [
+        ("truncated JSON", b"{".to_vec()),
+        ("trailing garbage", format!("{valid_json}X").into_bytes()),
+        ("duplicate schema", duplicate_schema.into_bytes()),
+        ("unknown field", unknown_field.into_bytes()),
+        ("wrong revision type", wrong_type.into_bytes()),
+        ("wrong JSON root", b"[]".to_vec()),
+    ];
+    for (case, rejected) in cases {
+        let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(&rejected);
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            matches!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: malformed packet must fail closed"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}: next packet must remain independently readable"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
+
+#[test]
+fn guest_agent_revision_numeric_tokens_fail_closed_without_frame_bleed() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A guest revision is an exact u64 authority binding, not a numeric
+    // approximation or a permissive JSON coercion. The next packet remains
+    // independently framed even when a hostile revision token is rejected.
+    let expected = GuestAgentHello {
+        schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+        protocol_revision: 1,
+        guest_id: "w8-revision-custody".to_owned(),
+        guest_revision: 43,
+        guest_sha256: "a".repeat(64),
+        workload_arch: "x86_64".to_owned(),
+    };
+    let valid_json = serde_json::to_string(&expected).unwrap();
+    assert!(valid_json.contains("\"guest_revision\":43"));
+    for (case, token) in [
+        ("negative", "-1"),
+        ("fraction", "43.0"),
+        ("exponent", "4.3e1"),
+        ("u64 overflow", "18446744073709551616"),
+        ("u64 maximum mismatch", "18446744073709551615"),
+        ("leading zero", "043"),
+        ("zero", "0"),
+        ("string coercion", "\"43\""),
+        ("null coercion", "null"),
+        ("boolean coercion", "true"),
+    ] {
+        let rejected = valid_json.replacen(
+            "\"guest_revision\":43",
+            &format!("\"guest_revision\":{token}"),
+            1,
+        );
+        assert_ne!(rejected, valid_json, "{case}");
+        assert!(
+            matches!(
+                parse_guest_agent_hello_json(
+                    rejected.as_bytes(),
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: direct JSON admission must reject the revision token"
+        );
+
+        let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(rejected.as_bytes());
+        let following_start = wire.len();
+        let following_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &expected,
+            &expected.guest_id,
+            expected.guest_revision,
+            &expected.guest_sha256,
+            &expected.workload_arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+
+        let mut reader = Cursor::new(wire);
+        assert!(
+            matches!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    &expected.workload_arch,
+                ),
+                Err(WindowsVmError::InvalidGuest(_))
+            ),
+            "{case}: framed admission must reject the revision token"
+        );
+        assert_eq!(reader.position() as usize, following_start, "{case}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                &expected.workload_arch,
+            )
+            .unwrap(),
+            expected,
+            "{case}: the following packet must remain independently admitted"
+        );
+        assert_eq!(
+            reader.position() as usize,
+            following_start + following_len,
+            "{case}"
+        );
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{case}");
+    }
+}
+
+#[test]
+fn guest_agent_harness_payload_writer_flush_custody() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    // A buffered transport can accept every write while refusing the flush.
+    // Payload-only success must not conceal that failure. This remains a
+    // non-production Gate 6 fixture, not guest delivery acknowledgement.
+    #[derive(Default)]
+    struct BufferedWriter {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        flushes: usize,
+        fail_flush: bool,
+    }
+    impl Write for BufferedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_flush {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "flush-payload-harness".to_owned(),
+            guest_revision: 47,
+            guest_sha256: "f".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let expected = serde_json::to_vec(&hello).unwrap();
+        let mut failing = BufferedWriter {
+            fail_flush: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            write_guest_agent_hello_payload(
+                &mut failing,
+                &hello,
+                &hello.guest_id,
+                47,
+                &hello.guest_sha256,
+                arch,
+            ),
+            Err(WindowsVmError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
+        ));
+        assert_eq!(failing.flushes, 1, "{arch}: flush must be attempted");
+        assert_eq!(failing.staged, expected);
+        assert!(failing.delivered.is_empty());
+
+        let mut admitted = BufferedWriter::default();
+        assert_eq!(
+            write_guest_agent_hello_payload(
+                &mut admitted,
+                &hello,
+                &hello.guest_id,
+                47,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            expected.len()
+        );
+        assert_eq!(admitted.flushes, 1);
+        assert_eq!(admitted.delivered, expected);
+        assert!(admitted.staged.is_empty());
+
+        let mut denied = BufferedWriter::default();
+        assert!(write_guest_agent_hello_payload(
+            &mut denied,
+            &hello,
+            "unauthorized",
+            47,
+            &hello.guest_sha256,
+            arch,
+        )
+        .is_err());
+        assert!(denied.staged.is_empty());
+        assert_eq!(denied.flushes, 0, "authority failure must precede I/O");
+    }
+}
+
+#[test]
+fn guest_agent_protocol_revision_numeric_tokens_fail_closed_without_frame_bleed() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // The protocol revision is a strict integer contract, not a JSON number
+    // that can be rounded, coerced, or interpreted as another protocol.
+    // A rejected frame must not consume a following authorized frame.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-protocol-token".to_owned(),
+            guest_revision: 49,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let valid_json = serde_json::to_string(&expected).unwrap();
+        assert!(valid_json.contains("\"protocol_revision\":1"));
+        for (case, token) in [
+            ("zero", "0"),
+            ("unsupported future", "2"),
+            ("negative", "-1"),
+            ("fraction", "1.0"),
+            ("exponent", "1e0"),
+            ("leading zero", "01"),
+            ("u64 overflow", "18446744073709551616"),
+            ("string coercion", "\"1\""),
+            ("null coercion", "null"),
+            ("boolean coercion", "true"),
+        ] {
+            let rejected = valid_json.replacen(
+                "\"protocol_revision\":1",
+                &format!("\"protocol_revision\":{token}"),
+                1,
+            );
+            assert_ne!(rejected, valid_json, "{arch}/{case}");
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        rejected.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct admission must reject noncanonical protocol revision"
+            );
+
+            let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(rejected.as_bytes());
+            let next_frame_start = wire.len();
+            let next_frame_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed admission must reject protocol token"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                next_frame_start,
+                "{arch}/{case}"
+            );
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following authorized frame must remain readable"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                next_frame_start + next_frame_len,
+                "{arch}/{case}"
+            );
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_duplicate_authority_fields_cannot_shadow_next_frame() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A malicious peer may prepend a conflicting key and rely on a different
+    // JSON consumer choosing first-key versus last-key semantics. Reject all
+    // six authority fields, not only the guest ID, before admitting a frame.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-duplicate-custody".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let valid = serde_json::to_string(&expected).unwrap();
+        for (field, forged) in [
+            ("schema", r#""prime.windows-vm-agent.v2""#),
+            ("protocol_revision", "2"),
+            ("guest_id", r#""shadow-guest""#),
+            ("guest_revision", "18"),
+            ("guest_sha256", r#""#),
+            ("workload_arch", r#""unsupported""#),
+        ] {
+            let forged = if field == "guest_sha256" {
+                format!("\"{}\"", "e".repeat(64))
+            } else {
+                forged.to_owned()
+            };
+            let duplicate = format!("{{\"{field}\":{forged},{}", &valid[1..]);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        duplicate.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: duplicate authority must fail direct admission"
+            );
+
+            let mut wire = (duplicate.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(duplicate.as_bytes());
+            let following_start = wire.len();
+            let following_size = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: duplicate authority must fail framed admission"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                following_start,
+                "{arch}/{field}"
+            );
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{field}: next frame must remain independently admissible"
+            );
+            assert_eq!(
+                reader.position() as usize,
+                following_start + following_size,
+                "{arch}/{field}"
+            );
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{field}");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_escaped_duplicate_keys_cannot_shadow_next_packet() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A JSON key escaped as \uXXXX has the same decoded identity as its
+    // ordinary spelling. Reject duplicate or undeclared authority keys
+    // before either x86 or x64 framed handoff can be admitted.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-escaped-key-custody".to_owned(),
+            guest_revision: 19,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_string(&expected).unwrap();
+        for (field, forged) in [
+            ("schema", r#""prime.windows-vm-agent.v2""#.to_owned()),
+            ("protocol_revision", "2".to_owned()),
+            ("guest_id", r#""shadow-guest""#.to_owned()),
+            ("guest_revision", "20".to_owned()),
+            ("guest_sha256", format!("\"{}\"", "b".repeat(64))),
+            ("workload_arch", r#""unsupported""#.to_owned()),
+            ("host_override", "true".to_owned()),
+        ] {
+            let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+            let hostile = format!("{{\"{escaped}\":{forged},{}", &canonical[1..]);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        hostile.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: escaped authority alias must fail direct admission"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(hostile.as_bytes());
+            let next_start = wire.len();
+            let next_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{field}: escaped alias must fail framed admission"
+            );
+            assert_eq!(reader.position() as usize, next_start, "{arch}/{field}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{field}: following packet must retain independent authority"
+            );
+            assert_eq!(reader.position() as usize, next_start + next_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_malformed_unicode_and_utf8_packets_preserve_next_frame() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A malformed UTF-8/UTF-16 escape is not a guest identity. Even when the
+    // caller keeps a stream for forensic replay, a rejected bounded packet
+    // must not consume the following independently authorized packet.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-unicode-frame".to_owned(),
+            guest_revision: 53,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&expected).unwrap();
+        let needle = b"\"guest_id\":\"w8-unicode-frame\"";
+        let start = canonical
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .unwrap();
+        let prefix = &canonical[..start];
+        let suffix = &canonical[start + needle.len()..];
+
+        let hostile_values: Vec<(&str, Vec<u8>)> = vec![
+            ("unpaired high surrogate", br#""\ud800""#.to_vec()),
+            ("unpaired low surrogate", br#""\udc00""#.to_vec()),
+            ("high surrogate then ASCII", br#""\ud800x""#.to_vec()),
+            ("nonhex unicode escape", br#""\u12g4""#.to_vec()),
+            ("short unicode escape", br#""\u12""#.to_vec()),
+            ("invalid UTF-8", b"\"\xff\"".to_vec()),
+            ("raw NUL", b"\"bad\x00id\"".to_vec()),
+            ("raw newline", b"\"bad\nid\"".to_vec()),
+            (
+                "valid invisible identity mismatch",
+                br#""w8-\u200bunicode-frame""#.to_vec(),
+            ),
+            (
+                "valid supplementary identity mismatch",
+                br#""\ud83d\ude00""#.to_vec(),
+            ),
+        ];
+
+        for (case, value) in hostile_values {
+            let mut hostile = prefix.to_vec();
+            hostile.extend_from_slice(b"\"guest_id\":");
+            hostile.extend_from_slice(&value);
+            hostile.extend_from_slice(suffix);
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        &hostile,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct admission must fail closed"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(&hostile);
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed admission must fail closed"
+            );
+            assert_eq!(reader.position() as usize, following_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following packet must remain independent"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_nonstandard_json_envelopes_cannot_bleed_into_next_packet() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Gate 6 uses strict JSON rather than a permissive JSON-like envelope.
+    // A valid second packet must remain independent after the first is denied.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-strict-json-envelope".to_owned(),
+            guest_revision: 61,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_vec(&expected).unwrap();
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.extend_from_slice(&canonical);
+        let mut second_document = canonical.clone();
+        second_document.extend_from_slice(b"{}");
+        let comma = canonical.iter().position(|byte| *byte == b',').unwrap();
+        let mut form_feed = canonical.clone();
+        form_feed.insert(comma + 1, 0x0c);
+        let mut vertical_tab = canonical.clone();
+        vertical_tab.insert(comma + 1, 0x0b);
+        let mut nonbreaking_space = canonical.clone();
+        nonbreaking_space.splice(comma + 1..comma + 1, [0xc2, 0xa0]);
+        let mut json_comment = canonical.clone();
+        json_comment.splice(comma + 1..comma + 1, b"/*not-json*/".iter().copied());
+
+        for (case, hostile) in [
+            ("UTF-8 BOM", bom),
+            ("second JSON document", second_document),
+            ("form-feed whitespace", form_feed),
+            ("vertical-tab whitespace", vertical_tab),
+            ("nonbreaking-space whitespace", nonbreaking_space),
+            ("JSON comment", json_comment),
+        ] {
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        &hostile,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: direct JSON admission must fail"
+            );
+            let mut wire = (hostile.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(&hostile);
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: framed JSON admission must fail"
+            );
+            assert_eq!(reader.position() as usize, following_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: following packet must remain admissible"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+
+        // RFC 8259 permits exactly space, horizontal tab, CR and LF around a
+        // JSON document. Do not accidentally reject the legitimate envelope.
+        let mut legal = b" \t\r\n".to_vec();
+        legal.extend_from_slice(&canonical);
+        legal.extend_from_slice(b"\n\r\t ");
+        assert_eq!(
+            parse_guest_agent_hello_json(
+                &legal,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn guest_agent_escaped_authority_values_are_semantic_and_frame_isolated() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // JSON string escapes represent decoded values, not a second authority.
+    // Reject a changed decoded identity or digest while keeping the next
+    // independently framed hello and trailing bytes untouched.
+    for arch in ["x86", "x86_64"] {
+        let expected = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-value-custody".to_owned(),
+            guest_revision: 67,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_string(&expected).unwrap();
+        let escaped_id = canonical.replacen("w8-value-custody", r"\u00778-value-custody", 1);
+        let escaped_digest =
+            canonical.replacen(&"c".repeat(64), &format!(r"\u0063{}", "c".repeat(63)), 1);
+        for (case, json) in [
+            ("escaped identity", escaped_id),
+            ("escaped digest", escaped_digest),
+        ] {
+            assert_ne!(
+                json, canonical,
+                "{arch}/{case}: fixture must contain an escape"
+            );
+            assert_eq!(
+                parse_guest_agent_hello_json(
+                    json.as_bytes(),
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected,
+                "{arch}/{case}: equivalent decoded authority must remain valid"
+            );
+        }
+
+        let wrong_id = canonical.replacen("w8-value-custody", r"\u00778-value-custodx", 1);
+        let wrong_digest =
+            canonical.replacen(&"c".repeat(64), &format!(r"\u0043{}", "c".repeat(63)), 1);
+        for (case, rejected) in [
+            ("escaped wrong identity", wrong_id),
+            ("escaped uppercase digest", wrong_digest),
+        ] {
+            assert!(
+                matches!(
+                    parse_guest_agent_hello_json(
+                        rejected.as_bytes(),
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: decoded authority mismatch must fail"
+            );
+            let mut wire = (rejected.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(rejected.as_bytes());
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &expected,
+                &expected.guest_id,
+                expected.guest_revision,
+                &expected.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert!(
+                matches!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &expected.guest_id,
+                        expected.guest_revision,
+                        &expected.guest_sha256,
+                        arch,
+                    ),
+                    Err(WindowsVmError::InvalidGuest(_))
+                ),
+                "{arch}/{case}: rejected frame"
+            );
+            assert_eq!(reader.position() as usize, following_start);
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &expected.guest_id,
+                    expected.guest_revision,
+                    &expected.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                expected
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_reordered_json_fields_keep_authority_and_frame_isolation() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // JSON object member order has no authority. Gate 6 must accept a valid
+    // guest that sends fields in reverse order, without weakening strict
+    // identity/digest checks or borrowing bytes from the next packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-field-order".to_owned(),
+            guest_revision: 73,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let reversed = format!(
+            "{{\"workload_arch\":{},\"guest_sha256\":{},\"guest_revision\":73,\"guest_id\":{},\"protocol_revision\":1,\"schema\":{}}}",
+            serde_json::to_string(arch).unwrap(),
+            serde_json::to_string(&hello.guest_sha256).unwrap(),
+            serde_json::to_string(&hello.guest_id).unwrap(),
+            serde_json::to_string(WINDOWS_VM_AGENT_SCHEMA).unwrap(),
+        );
+        assert_eq!(
+            parse_guest_agent_hello_json(
+                reversed.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+            "{arch}: reordered valid fields must retain semantic authority"
+        );
+
+        let mut wire = (reversed.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(reversed.as_bytes());
+        let next_offset = wire.len();
+        let next_len = write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        wire.extend_from_slice(b"TRAILER");
+        let mut reader = Cursor::new(wire);
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello
+        );
+        assert_eq!(reader.position() as usize, next_offset, "{arch}");
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello
+        );
+        assert_eq!(reader.position() as usize, next_offset + next_len);
+        let mut trailer = [0u8; 7];
+        reader.read_exact(&mut trailer).unwrap();
+        assert_eq!(&trailer, b"TRAILER", "{arch}");
+    }
+}
+
+#[test]
+fn guest_agent_single_escaped_member_name_preserves_semantic_authority() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // A single escaped JSON member name is the same field after decoding.
+    // Duplicate aliases are rejected separately; do not reject a valid guest
+    // merely because its encoder chose an equivalent spelling.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-escaped-member".to_owned(),
+            guest_revision: 79,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let canonical = serde_json::to_string(&hello).unwrap();
+        for (field, escaped) in [
+            ("schema", r"\u0073chema"),
+            ("protocol_revision", r"\u0070rotocol_revision"),
+            ("guest_id", r"\u0067uest_id"),
+            ("guest_revision", r"\u0067uest_revision"),
+            ("guest_sha256", r"\u0067uest_sha256"),
+            ("workload_arch", r"\u0077orkload_arch"),
+        ] {
+            let escaped_json =
+                canonical.replacen(&format!("\"{field}\":"), &format!("\"{escaped}\":"), 1);
+            assert_ne!(escaped_json, canonical, "{arch}/{field}: fixture");
+            assert_eq!(
+                parse_guest_agent_hello_json(
+                    escaped_json.as_bytes(),
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: decoded member identity"
+            );
+
+            let mut wire = (escaped_json.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(escaped_json.as_bytes());
+            let following_start = wire.len();
+            let following_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: framed admission"
+            );
+            assert_eq!(reader.position() as usize, following_start);
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{field}: next packet"
+            );
+            assert_eq!(reader.position() as usize, following_start + following_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{field}");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_mixed_escaped_keys_reordered_fields_and_values_preserve_packet_custody() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // JSON member order and equivalent Unicode escapes can occur together.
+    // Admission is semantic: a valid single occurrence is accepted, while
+    // a mismatched decoded revision still fails without consuming the next
+    // independently length-delimited packet.
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-combined-escapes".to_owned(),
+            guest_revision: 83,
+            guest_sha256: "e".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let escaped_id = serde_json::to_string(&hello.guest_id)
+            .unwrap()
+            .replace('-', r"\u002d");
+        let mixed = format!(
+            r#"{{"workload_\u0061rch":{},"guest_sh\u0061256":{},"guest_revis\u0069on":83,"g\u0075est_id":{},"protocol_\u0072evision":1,"sch\u0065ma":{}}}"#,
+            serde_json::to_string(arch).unwrap(),
+            serde_json::to_string(&hello.guest_sha256).unwrap(),
+            escaped_id,
+            serde_json::to_string(WINDOWS_VM_AGENT_SCHEMA).unwrap(),
+        );
+        let wrong_revision = mixed.replacen(
+            r#""guest_revis\u0069on":83"#,
+            r#""guest_revis\u0069on":84"#,
+            1,
+        );
+        assert_ne!(wrong_revision, mixed, "{arch}: hostile fixture");
+
+        for (case, payload, accepted) in [
+            ("valid combined escapes", mixed.as_str(), true),
+            ("wrong decoded revision", wrong_revision.as_str(), false),
+        ] {
+            let direct = parse_guest_agent_hello_json(
+                payload.as_bytes(),
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            if accepted {
+                assert_eq!(direct.unwrap(), hello, "{arch}/{case}");
+            } else {
+                assert!(
+                    matches!(direct, Err(WindowsVmError::InvalidGuest(_))),
+                    "{arch}/{case}: unauthorized identity must be rejected"
+                );
+            }
+
+            let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+            wire.extend_from_slice(payload.as_bytes());
+            let next_start = wire.len();
+            let next_len = write_guest_agent_hello_packet(
+                &mut wire,
+                &hello,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap();
+            wire.extend_from_slice(b"TRAILER");
+            let mut reader = Cursor::new(wire);
+            let first = read_guest_agent_hello_packet(
+                &mut reader,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            );
+            if accepted {
+                assert_eq!(first.unwrap(), hello, "{arch}/{case}");
+            } else {
+                assert!(
+                    matches!(first, Err(WindowsVmError::InvalidGuest(_))),
+                    "{arch}/{case}: framed mismatch must be rejected"
+                );
+            }
+            assert_eq!(reader.position() as usize, next_start, "{arch}/{case}");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    hello.guest_revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{case}: following packet"
+            );
+            assert_eq!(reader.position() as usize, next_start + next_len);
+            let mut trailer = [0u8; 7];
+            reader.read_exact(&mut trailer).unwrap();
+            assert_eq!(&trailer, b"TRAILER", "{arch}/{case}");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_high_u64_revision_preserves_exact_authority_and_packet_boundary() {
+    use primed::windows_vm::{
+        parse_guest_agent_hello_json, read_guest_agent_hello_packet,
+        write_guest_agent_hello_packet, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{Cursor, Read};
+
+    // Revisions are u64 identities, not floating-point JSON numbers. In
+    // particular, values above the IEEE-754 exact-integer boundary must not
+    // alias a neighboring revision or consume the following packet.
+    for arch in ["x86", "x86_64"] {
+        for revision in [(1_u64 << 53) + 1, u64::MAX] {
+            let hello = GuestAgentHello {
+                schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+                protocol_revision: 1,
+                guest_id: "w8-exact-revision".to_owned(),
+                guest_revision: revision,
+                guest_sha256: "f".repeat(64),
+                workload_arch: arch.to_owned(),
+            };
+            let valid = serde_json::to_vec(&hello).unwrap();
+            let mut neighboring = hello.clone();
+            neighboring.guest_revision = revision - 1;
+            let neighbor = serde_json::to_vec(&neighboring).unwrap();
+            let canonical = String::from_utf8(valid.clone()).unwrap();
+            let oversized = canonical.replacen(
+                &format!("\"guest_revision\":{revision}"),
+                "\"guest_revision\":18446744073709551616",
+                1,
+            );
+            assert_ne!(oversized, canonical, "{arch}/{revision}: overflow fixture");
+
+            for (case, payload, accepted) in [
+                ("exact revision", valid.clone(), true),
+                ("adjacent revision", neighbor, false),
+                ("overflow revision", oversized.into_bytes(), false),
+            ] {
+                let direct = parse_guest_agent_hello_json(
+                    &payload,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                );
+                if accepted {
+                    assert_eq!(direct.unwrap(), hello, "{arch}/{revision}/{case}");
+                } else {
+                    assert!(
+                        matches!(direct, Err(WindowsVmError::InvalidGuest(_))),
+                        "{arch}/{revision}/{case}: mismatched or unrepresentable revision"
+                    );
+                }
+
+                let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+                wire.extend_from_slice(&payload);
+                let next_start = wire.len();
+                let next_len = write_guest_agent_hello_packet(
+                    &mut wire,
+                    &hello,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap();
+                wire.extend_from_slice(b"TRAILER");
+                let mut reader = Cursor::new(wire);
+                let first = read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    revision,
+                    &hello.guest_sha256,
+                    arch,
+                );
+                if accepted {
+                    assert_eq!(first.unwrap(), hello, "{arch}/{revision}/{case}");
+                } else {
+                    assert!(
+                        matches!(first, Err(WindowsVmError::InvalidGuest(_))),
+                        "{arch}/{revision}/{case}: rejected packet"
+                    );
+                }
+                assert_eq!(reader.position() as usize, next_start);
+                assert_eq!(
+                    read_guest_agent_hello_packet(
+                        &mut reader,
+                        &hello.guest_id,
+                        revision,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                    .unwrap(),
+                    hello
+                );
+                assert_eq!(reader.position() as usize, next_start + next_len);
+                let mut trailer = [0_u8; 7];
+                reader.read_exact(&mut trailer).unwrap();
+                assert_eq!(&trailer, b"TRAILER", "{arch}/{revision}/{case}");
+            }
+        }
+    }
+}
+
+#[test]
+fn guest_agent_writers_bound_consecutive_interruptions() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct InterruptWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+        flushes: usize,
+        pending_interrupts: usize,
+        burst_after_first_byte: bool,
+        burst_armed: bool,
+    }
+    impl Write for InterruptWriter {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.pending_interrupts > 0 {
+                self.pending_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let count = if self.burst_after_first_byte && !self.burst_armed {
+                1
+            } else {
+                data.len()
+            };
+            self.bytes.extend_from_slice(&data[..count]);
+            if self.burst_after_first_byte && !self.burst_armed {
+                self.burst_armed = true;
+                self.pending_interrupts = 33;
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-interrupted-writer".to_owned(),
+            guest_revision: 31,
+            guest_sha256: "b".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        for packet in [false, true] {
+            for burst_after_first_byte in [false, true] {
+                let mut writer = InterruptWriter {
+                    bytes: Vec::new(),
+                    calls: 0,
+                    flushes: 0,
+                    pending_interrupts: if burst_after_first_byte { 0 } else { 33 },
+                    burst_after_first_byte,
+                    burst_armed: false,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        31,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        31,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                assert!(
+                    matches!(result, Err(WindowsVmError::Io(ref err))
+                        if err.kind() == io::ErrorKind::Interrupted),
+                    "{arch}/packet={packet}/after-progress={burst_after_first_byte}: {result:?}"
+                );
+                assert!(writer.calls <= 34, "{arch}: unbounded interrupted writes");
+                assert_eq!(writer.bytes.len(), usize::from(burst_after_first_byte));
+                assert_eq!(writer.flushes, 0, "failed frame cannot flush");
+            }
+        }
+    }
+}
+
+#[test]
+fn guest_agent_writer_interrupt_budget_resets_after_progress() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct BurstyWriter {
+        bytes: Vec<u8>,
+        pending_interrupts: usize,
+        first_byte_written: bool,
+        flushes: usize,
+    }
+    impl Write for BurstyWriter {
+        fn write(&mut self, chunk: &[u8]) -> io::Result<usize> {
+            if self.pending_interrupts > 0 {
+                self.pending_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let count = if self.first_byte_written {
+                chunk.len()
+            } else {
+                1
+            };
+            self.bytes.extend_from_slice(&chunk[..count]);
+            if !self.first_byte_written {
+                self.first_byte_written = true;
+                self.pending_interrupts = 32;
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-write-progress".to_owned(),
+            guest_revision: 37,
+            guest_sha256: "c".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            let mut writer = BurstyWriter {
+                bytes: Vec::new(),
+                pending_interrupts: 32,
+                first_byte_written: false,
+                flushes: 0,
+            };
+            let result = if packet {
+                write_guest_agent_hello_packet(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    37,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            } else {
+                write_guest_agent_hello_payload(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    37,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            };
+            let mut expected = if packet {
+                (payload.len() as u32).to_be_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+            expected.extend_from_slice(&payload);
+            assert_eq!(result.unwrap(), expected.len(), "{arch}/packet={packet}");
+            assert_eq!(writer.bytes, expected, "{arch}/packet={packet}");
+            assert_eq!(writer.flushes, 1, "{arch}/packet={packet}");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_packet_reader_bounds_perpetual_interrupted_io() {
+    use primed::windows_vm::{read_guest_agent_hello_packet, WindowsVmError};
+    use std::io::{self, Read};
+
+    struct AlwaysInterrupted {
+        calls: usize,
+    }
+    impl Read for AlwaysInterrupted {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Err(io::ErrorKind::Interrupted.into())
+        }
+    }
+
+    // An untrusted transport must not spin forever without progress.
+    for arch in ["x86", "x86_64"] {
+        let mut reader = AlwaysInterrupted { calls: 0 };
+        let error = read_guest_agent_hello_packet(
+            &mut reader,
+            "w8-interrupt-budget",
+            11,
+            &"a".repeat(64),
+            arch,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::Io(ref io_error)
+                if io_error.kind() == io::ErrorKind::Interrupted),
+            "{arch}: {error}"
+        );
+        assert!(reader.calls <= 33, "{arch}: unbounded interrupted reads");
+    }
+}
+
+#[test]
+fn guest_agent_packet_reader_interrupt_budget_resets_after_progress() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read};
+
+    struct BurstyReader {
+        inner: Cursor<Vec<u8>>,
+        interrupts: usize,
+        reads: usize,
+        stall_after: Option<usize>,
+    }
+    impl Read for BurstyReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self
+                .stall_after
+                .is_some_and(|at| self.inner.position() as usize >= at)
+            {
+                self.reads += 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if self.interrupts < 32 {
+                self.interrupts += 1;
+                self.reads += 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.interrupts = 0;
+            let count = buffer.len().min(1);
+            self.inner.read(&mut buffer[..count])
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-bounded-interrupts".to_owned(),
+            guest_revision: 17,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = Vec::new();
+        write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        let frame_len = wire.len();
+        wire.extend_from_slice(b"TRAILER");
+        let mut progress = BurstyReader {
+            inner: Cursor::new(wire.clone()),
+            interrupts: 0,
+            reads: 0,
+            stall_after: None,
+        };
+        assert_eq!(
+            read_guest_agent_hello_packet(
+                &mut progress,
+                &hello.guest_id,
+                hello.guest_revision,
+                &hello.guest_sha256,
+                arch,
+            )
+            .unwrap(),
+            hello,
+        );
+        assert_eq!(progress.inner.position() as usize, frame_len);
+        assert!(progress.reads > 32, "{arch}: retries were not exercised");
+
+        let mut stalled = BurstyReader {
+            inner: Cursor::new(wire),
+            interrupts: 32,
+            reads: 0,
+            stall_after: Some(2),
+        };
+        let error = read_guest_agent_hello_packet(
+            &mut stalled,
+            &hello.guest_id,
+            hello.guest_revision,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::Io(ref err)
+                if err.kind() == io::ErrorKind::Interrupted),
+            "{arch}: {error}"
+        );
+        assert_eq!(stalled.inner.position(), 2, "{arch}: stalled prefix");
+        assert!(
+            stalled.reads <= 68,
+            "{arch}: unbounded stalled-prefix retry"
+        );
+    }
+}
+
+#[test]
+fn guest_agent_harness_rejects_overreported_io_counts() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet,
+        write_guest_agent_hello_payload, GuestAgentHello, WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Read, Write};
+
+    // A hostile or defective transport implementation must never be allowed
+    // to claim more progress than the caller-supplied buffer permits.
+    struct OverreportReader {
+        calls: usize,
+    }
+    impl Read for OverreportReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Ok(buffer.len() + 1)
+        }
+    }
+    struct OverreportWriter {
+        calls: usize,
+        flushes: usize,
+    }
+    impl Write for OverreportWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            Ok(buffer.len() + 1)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-overreported-io".to_owned(),
+            guest_revision: 41,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut reader = OverreportReader { calls: 0 };
+        assert!(matches!(
+            read_guest_agent_hello_packet(
+                &mut reader, &hello.guest_id, 41, &hello.guest_sha256, arch
+            ),
+            Err(WindowsVmError::Io(ref error))
+                if error.kind() == io::ErrorKind::InvalidData
+        ));
+        assert_eq!(reader.calls, 1, "{arch}: invalid read count must stop");
+
+        for packet in [false, true] {
+            let mut writer = OverreportWriter {
+                calls: 0,
+                flushes: 0,
+            };
+            let result = if packet {
+                write_guest_agent_hello_packet(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    41,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            } else {
+                write_guest_agent_hello_payload(
+                    &mut writer,
+                    &hello,
+                    &hello.guest_id,
+                    41,
+                    &hello.guest_sha256,
+                    arch,
+                )
+            };
+            assert!(
+                matches!(
+                    result,
+                    Err(WindowsVmError::Io(ref error))
+                        if error.kind() == io::ErrorKind::InvalidData
+                ),
+                "{arch}/packet={packet}: {result:?}"
+            );
+            assert_eq!(writer.calls, 1);
+            assert_eq!(writer.flushes, 0, "failed frame cannot flush");
+        }
+    }
+}
+
+#[test]
+fn guest_agent_packet_preflights_host_authority_before_transport_io() {
+    use primed::windows_vm::{
+        read_guest_agent_hello_packet, write_guest_agent_hello_packet,
+        write_guest_agent_hello_payload, GuestAgentHello, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Cursor, Read, Write};
+
+    // Host authority is checked before either framed or payload-only I/O.
+    // A rejected caller must not consume the next packet or flush a writer.
+    #[derive(Default)]
+    struct ProbeWriter {
+        writes: usize,
+        flushes: usize,
+    }
+    impl Write for ProbeWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+    struct ProbeReader {
+        inner: Cursor<Vec<u8>>,
+        reads: usize,
+    }
+    impl Read for ProbeReader {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.inner.read(bytes)
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-preflight-io".to_owned(),
+            guest_revision: 43,
+            guest_sha256: "d".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let mut wire = Vec::new();
+        write_guest_agent_hello_packet(
+            &mut wire,
+            &hello,
+            &hello.guest_id,
+            43,
+            &hello.guest_sha256,
+            arch,
+        )
+        .unwrap();
+        for (case, id, revision, digest, workload_arch) in [
+            ("bad-id", "guest/alias", 43, "d".repeat(64), arch),
+            ("zero-revision", "w8-preflight-io", 0, "d".repeat(64), arch),
+            ("bad-digest", "w8-preflight-io", 43, "D".repeat(64), arch),
+            ("bad-arch", "w8-preflight-io", 43, "d".repeat(64), "arm64"),
+        ] {
+            for packet in [false, true] {
+                let mut writer = ProbeWriter::default();
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        id,
+                        revision,
+                        &digest,
+                        workload_arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        id,
+                        revision,
+                        &digest,
+                        workload_arch,
+                    )
+                };
+                assert!(result.is_err(), "{arch}/{case}/packet={packet}");
+                assert_eq!(writer.writes, 0, "{arch}/{case}: preflight wrote bytes");
+                assert_eq!(writer.flushes, 0, "{arch}/{case}: preflight flushed");
+            }
+            let mut reader = ProbeReader {
+                inner: Cursor::new(wire.clone()),
+                reads: 0,
+            };
+            assert!(
+                read_guest_agent_hello_packet(&mut reader, id, revision, &digest, workload_arch,)
+                    .is_err(),
+                "{arch}/{case}: invalid host authority admitted"
+            );
+            assert_eq!(reader.reads, 0, "{arch}/{case}: preflight read bytes");
+            assert_eq!(reader.inner.position(), 0, "{arch}/{case}: consumed prefix");
+            assert_eq!(
+                read_guest_agent_hello_packet(
+                    &mut reader,
+                    &hello.guest_id,
+                    43,
+                    &hello.guest_sha256,
+                    arch,
+                )
+                .unwrap(),
+                hello,
+                "{arch}/{case}: valid packet was lost after rejected preflight"
+            );
+            assert_eq!(reader.inner.position() as usize, wire.len());
+        }
+    }
+}
+
+#[test]
+fn guest_agent_harness_flush_interruptions_are_bounded_and_recoverable() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct FlushInterrupted {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        remaining_interrupts: usize,
+        flush_calls: usize,
+    }
+    impl Write for FlushInterrupted {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            if self.remaining_interrupts > 0 {
+                self.remaining_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-flush-eintr".to_owned(),
+            guest_revision: 59,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            for interruptions in [2usize, 40] {
+                let mut writer = FlushInterrupted {
+                    staged: Vec::new(),
+                    delivered: Vec::new(),
+                    remaining_interrupts: interruptions,
+                    flush_calls: 0,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        59,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        59,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                let mut expected = Vec::new();
+                if packet {
+                    expected.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+                }
+                expected.extend_from_slice(&payload);
+                if interruptions == 2 {
+                    assert_eq!(result.unwrap(), expected.len(), "{arch}/packet={packet}");
+                    assert_eq!(writer.flush_calls, 3);
+                    assert_eq!(writer.delivered, expected);
+                    assert!(writer.staged.is_empty());
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(WindowsVmError::Io(ref error))
+                            if error.kind() == io::ErrorKind::Interrupted
+                    ));
+                    assert!(writer.flush_calls <= 34, "{arch}: unbounded flush retry");
+                    assert!(
+                        writer.delivered.is_empty(),
+                        "{arch}: unflushed packet delivered"
+                    );
+                    assert_eq!(writer.staged, expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn guest_agent_flush_retry_budget_boundary_and_terminal_error_are_fail_closed() {
+    use primed::windows_vm::{
+        write_guest_agent_hello_packet, write_guest_agent_hello_payload, GuestAgentHello,
+        WindowsVmError, WINDOWS_VM_AGENT_SCHEMA,
+    };
+    use std::io::{self, Write};
+
+    struct BoundaryFlush {
+        staged: Vec<u8>,
+        delivered: Vec<u8>,
+        remaining_interrupts: usize,
+        terminal_error: Option<io::ErrorKind>,
+        flush_calls: usize,
+    }
+    impl Write for BoundaryFlush {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.staged.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            if let Some(kind) = self.terminal_error {
+                return Err(kind.into());
+            }
+            if self.remaining_interrupts > 0 {
+                self.remaining_interrupts -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.delivered.append(&mut self.staged);
+            Ok(())
+        }
+    }
+
+    for arch in ["x86", "x86_64"] {
+        let hello = GuestAgentHello {
+            schema: WINDOWS_VM_AGENT_SCHEMA.to_owned(),
+            protocol_revision: 1,
+            guest_id: "w8-flush-boundary".to_owned(),
+            guest_revision: 61,
+            guest_sha256: "a".repeat(64),
+            workload_arch: arch.to_owned(),
+        };
+        let payload = serde_json::to_vec(&hello).unwrap();
+        for packet in [false, true] {
+            let mut expected = Vec::new();
+            if packet {
+                expected.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            }
+            expected.extend_from_slice(&payload);
+            for (interruptions, terminal_error, success, calls) in [
+                (32, None, true, 33),
+                (33, None, false, 33),
+                (0, Some(io::ErrorKind::BrokenPipe), false, 1),
+            ] {
+                let mut writer = BoundaryFlush {
+                    staged: Vec::new(),
+                    delivered: Vec::new(),
+                    remaining_interrupts: interruptions,
+                    terminal_error,
+                    flush_calls: 0,
+                };
+                let result = if packet {
+                    write_guest_agent_hello_packet(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        61,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                } else {
+                    write_guest_agent_hello_payload(
+                        &mut writer,
+                        &hello,
+                        &hello.guest_id,
+                        61,
+                        &hello.guest_sha256,
+                        arch,
+                    )
+                };
+                assert_eq!(writer.flush_calls, calls, "{arch}/packet={packet}");
+                if success {
+                    assert_eq!(result.unwrap(), expected.len());
+                    assert_eq!(writer.delivered, expected);
+                    assert!(writer.staged.is_empty());
+                } else {
+                    let expected_kind = terminal_error.unwrap_or(io::ErrorKind::Interrupted);
+                    assert!(
+                        matches!(
+                            result,
+                            Err(WindowsVmError::Io(ref error)) if error.kind() == expected_kind
+                        ),
+                        "{arch}/packet={packet}/interruptions={interruptions}: {result:?}"
+                    );
+                    assert!(writer.delivered.is_empty(), "failed flush admitted frame");
+                    assert_eq!(writer.staged, expected, "failed frame lost staged bytes");
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
+    use primed::windows_vm::vm_session_paths;
+
+    // Bidirectional and zero-width formatting controls can disguise a QEMU
+    // runtime path in review evidence despite distinct UTF-8 bytes.
+    // Ordinary visible Unicode remains permitted; this is host-only proof.
+    let dir = private_tempdir();
+    for (label, marker) in [
+        ("override", "\u{202e}"),
+        ("isolate", "\u{2067}"),
+        ("right-to-left-mark", "\u{200f}"),
+        ("arabic-letter-mark", "\u{061c}"),
+        ("deprecated-symmetric-swap", "\u{206a}"),
+        ("soft-hyphen", "\u{00ad}"),
+        ("hangul-choseong-filler", "\u{115f}"),
+        ("hangul-jungseong-filler", "\u{1160}"),
+        // Khmer inherent vowel signs have no standalone visible glyph; their
+        // bytes must not create a visually ambiguous VM proof path.
+        ("khmer-inherent-vowel-aq", "\u{17b4}"),
+        ("khmer-inherent-vowel-aa", "\u{17b5}"),
+        ("hangul-filler", "\u{3164}"),
+        ("halfwidth-hangul-filler", "\u{ffa0}"),
+        // Braille pattern blank has distinct path bytes but no visible glyph.
+        ("braille-pattern-blank", "\u{2800}"),
+        // Format controls are default-ignorable: distinct bytes, same visible proof path.
+        ("shorthand-format-letter-overlap", "\u{1bca0}"),
+        ("shorthand-format-up-step", "\u{1bca2}"),
+        ("musical-symbol-begin-beam", "\u{1d173}"),
+        ("musical-symbol-end-tie", "\u{1d17a}"),
+        ("egyptian-hieroglyph-vertical-joiner", "\u{13430}"),
+        ("egyptian-hieroglyph-end-enclosure", "\u{1343f}"),
+        ("bmp-noncharacter", "\u{fdd0}"),
+        ("bmp-plane-end-noncharacter", "\u{ffff}"),
+        ("supplementary-plane-end-noncharacter", "\u{1fffe}"),
+        ("last-scalar-noncharacter", "\u{10ffff}"),
+        ("zero-width-space", "\u{200b}"),
+        ("zero-width-joiner", "\u{200d}"),
+        ("word-joiner", "\u{2060}"),
+        ("variation-selector", "\u{fe0f}"),
+        ("supplementary-variation-selector", "\u{e0100}"),
+        // Unicode space separators can display as ordinary spacing while
+        // preserving distinct runtime proof and QEMU pathname bytes.
+        ("no-break-space", "\u{00a0}"),
+        ("ogham-space-mark", "\u{1680}"),
+        ("en-quad", "\u{2000}"),
+        ("hair-space", "\u{200a}"),
+        ("narrow-no-break-space", "\u{202f}"),
+        ("medium-mathematical-space", "\u{205f}"),
+        ("ideographic-space", "\u{3000}"),
+        // C1 controls are Unicode scalar values but may still be interpreted
+        // as terminal/proof formatting instructions, not visible path text.
+        ("c1-padding-character", "\u{0080}"),
+        ("c1-control-sequence-introducer", "\u{009b}"),
+        ("c1-operating-system-command", "\u{009d}"),
+        ("c1-application-program-command", "\u{009f}"),
+        // Unicode newline separators can forge additional proof-log lines.
+        ("next-line-separator", "\u{0085}"),
+        ("unicode-line-separator", "\u{2028}"),
+        ("unicode-paragraph-separator", "\u{2029}"),
+        // Invisible mathematical operators are distinct path bytes with no
+        // visible proof-identity distinction.
+        ("invisible-function-application", "\u{2061}"),
+        ("invisible-times", "\u{2062}"),
+        ("invisible-separator", "\u{2063}"),
+        ("invisible-plus", "\u{2064}"),
+        // Interlinear annotation controls alter rendered text while leaving
+        // distinct pathname bytes in the QEMU plan and proof record.
+        ("interlinear-annotation-anchor", "\u{fff9}"),
+        ("interlinear-annotation-separator", "\u{fffa}"),
+        ("interlinear-annotation-terminator", "\u{fffb}"),
+        // Unicode tag controls are default-ignorable but have distinct bytes.
+        ("language-tag", "\u{e0001}"),
+        ("tag-space", "\u{e0020}"),
+        ("tag-letter", "\u{e0061}"),
+        ("cancel-tag", "\u{e007f}"),
+    ] {
+        let runtime = dir.path().join(format!("w8-{label}-{marker}"));
+        private_runtime_dir(&runtime);
+        assert!(
+            vm_session_paths(&runtime, "app", "session").is_err(),
+            "{label} must not enter a W8 proof identity"
+        );
+        let overlay = runtime.join("overlay.qcow2");
+        private_overlay(&overlay);
+        let result = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay,
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        });
+        assert!(result.is_err(), "{label} must not reach QEMU: {result:?}");
+    }
+
+    let visible = dir.path().join("résumé");
+    private_runtime_dir(&visible);
+    assert!(vm_session_paths(&visible, "app", "session").is_ok());
+    let overlay = visible.join("overlay.qcow2");
+    private_overlay(&overlay);
+    assert!(build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: visible,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn qemu_agent_socket_path_counts_multibyte_utf8_in_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+
+    // AF_UNIX is byte-counted, not Unicode-character-counted. A valid
+    // multibyte runtime path must fit the same 107-byte pathname limit.
+    // This remains host-only W8 planning proof; no guest is launched.
+    let dir = private_tempdir();
+    let prefix_bytes = dir.path().as_os_str().as_bytes().len() + 1;
+    let suffix_bytes = b"/agent.sock".len();
+    for (socket_bytes, admitted) in [(107usize, true), (108, false)] {
+        let component_bytes = socket_bytes
+            .checked_sub(prefix_bytes + suffix_bytes)
+            .expect("test root leaves room for an AF_UNIX pathname");
+        let component = format!(
+            "{}{}",
+            "é".repeat(component_bytes / 2),
+            if component_bytes % 2 == 0 { "" } else { "x" }
+        );
+        assert!(component.chars().count() < component_bytes);
+        let runtime = dir.path().join(component);
+        private_runtime_dir(&runtime);
+        let overlay = runtime.join("overlay.qcow2");
+        private_overlay(&overlay);
+        assert_eq!(
+            runtime.join("agent.sock").as_os_str().as_bytes().len(),
+            socket_bytes
+        );
+        let result = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay,
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        });
+        if admitted {
+            assert!(result.is_ok(), "107-byte Unicode pathname: {result:?}");
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("AF_UNIX"), "{error}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn qemu_agent_socket_path_accepts_exact_unix_boundary_and_rejects_overflow() {
+    use std::os::unix::ffi::OsStrExt;
+
+    // sockaddr_un.sun_path has 108 bytes, including the NUL terminator.
+    // Exactly 107 pathname bytes must be admitted; 108 must fail before QEMU.
+    // This is host-only path-boundary proof, not Windows guest qualification.
+    let dir = private_tempdir();
+    let root_bytes = dir.path().as_os_str().as_bytes().len();
+    let suffix_bytes = b"/agent.sock".len();
+    for (socket_bytes, admitted) in [(107usize, true), (108, false)] {
+        let component_bytes = socket_bytes
+            .checked_sub(root_bytes + 1 + suffix_bytes)
+            .expect("test root leaves room for an AF_UNIX pathname");
+        let runtime = dir.path().join("s".repeat(component_bytes));
+        private_runtime_dir(&runtime);
+        let overlay = runtime.join("overlay.qcow2");
+        private_overlay(&overlay);
+        let socket = runtime.join("agent.sock");
+        assert_eq!(socket.as_os_str().as_bytes().len(), socket_bytes);
+        let result = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay,
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        });
+        if admitted {
+            assert!(
+                result.is_ok(),
+                "107-byte AF_UNIX pathname must fit: {result:?}"
+            );
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("AF_UNIX"), "{error}");
+        }
+    }
 }

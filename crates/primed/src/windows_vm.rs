@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::CStr;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -19,6 +19,8 @@ pub const WINDOWS_VM_RUNTIME_PROOF_SCHEMA: &str = "prime.windows-vm-runtime-proo
 pub const WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA: &str = "prime.windows-vm-runtime-observation.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA: &str = "prime.windows-vm-runtime-evidence.v1";
 pub const WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES: usize = 1024 * 1024;
+/// Maximum JSON handshake payload admitted before decoding (8 KiB).
+pub const WINDOWS_VM_AGENT_HELLO_MAX_BYTES: usize = 8 * 1024;
 const WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES: usize = 15;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -151,14 +153,128 @@ pub enum WindowsVmError {
     Io(#[from] io::Error),
 }
 
-pub fn validate_guest_agent_hello(
+/// Parse a bounded guest-agent hello without granting guest-runtime authority.
+///
+/// A future socket reader must first bound the received frame, then use this
+/// entry point. This is only source-level handshake admission: it does not
+/// establish a live guest connection or certify Windows workload execution.
+pub fn parse_guest_agent_hello_json(
+    bytes: &[u8],
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    if bytes.len() > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    // Caller-owned host expectations must be admitted before spending any
+    // parsing work on an untrusted guest payload, even at the direct JSON API.
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let hello: GuestAgentHello = serde_json::from_slice(bytes)
+        .map_err(|_| WindowsVmError::InvalidGuest("malformed guest-agent hello JSON"))?;
+    validate_guest_agent_hello(
+        &hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    Ok(hello)
+}
+
+/// Construct deterministic, bounded hello JSON for a non-production guest
+/// harness. This is only fixture construction: it does not attest a guest,
+/// open a transport, or authorize Windows execution. The caller retains
+/// ownership of the frame length and any transport framing.
+pub fn encode_guest_agent_hello_json(
     hello: &GuestAgentHello,
     expected_guest_id: &str,
     expected_guest_revision: u64,
     expected_guest_sha256: &str,
     expected_workload_arch: &str,
+) -> Result<Vec<u8>, WindowsVmError> {
+    // Reuse the same fail-closed host and guest identity admission as the
+    // decoder. A harness must not serialize an unauthorized guest identity.
+    validate_guest_agent_hello(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let encoded = serde_json::to_vec(hello)
+        .map_err(|_| WindowsVmError::InvalidGuest("cannot encode guest-agent hello JSON"))?;
+    if encoded.len() > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    Ok(encoded)
+}
+
+/// Write exactly one validated, bounded JSON payload for a non-production
+/// W8 harness. The caller owns the length delimiter and transport; this
+/// function does not open a socket, start a guest, or grant runtime authority.
+///
+/// Invalid host or guest authority is rejected before any writer call.
+/// Completion includes Write::flush, so a buffered transport failure cannot
+/// be mistaken for a completed payload. This is not guest acknowledgement.
+/// Any write or flush error invalidates the caller-owned stream/frame.
+pub fn write_guest_agent_hello_payload<W: Write>(
+    writer: &mut W,
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<usize, WindowsVmError> {
+    let payload = encode_guest_agent_hello_json(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    write_all_guest_agent_bounded(writer, &payload)?;
+    flush_guest_agent_bounded(writer)?;
+    Ok(payload.len())
+}
+
+// An interrupted buffered flush is not acknowledgement or a fatal stream error.
+// Retry transient EINTR, but never allow a non-progressing transport to pin
+// the Gate 6 host worker. Any terminal error invalidates the caller-owned frame.
+fn flush_guest_agent_bounded<W: Write>(writer: &mut W) -> io::Result<()> {
+    let mut interruptions = 0;
+    loop {
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                interruptions += 1;
+                if interruptions > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+// Caller-owned expectations must be valid before consuming an untrusted
+// transport frame. A failed host preflight must leave the stream untouched.
+fn validate_expected_guest_agent_authority(
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
 ) -> Result<(), WindowsVmError> {
-    // Expected identity is caller-supplied; matching an invalid expectation is not authority.
     if expected_guest_id.is_empty()
         || expected_guest_id.len() > 128
         || !expected_guest_id
@@ -170,6 +286,220 @@ pub fn validate_guest_agent_hello(
             "invalid expected guest identity",
         ));
     }
+    // A zero-filled SHA-256 is a common unbound placeholder, not immutable
+    // guest-image evidence. Do not let a matching synthetic hello turn that
+    // sentinel into apparent host/guest authority at any framing entry point.
+    if !canonical_sha256_hex(expected_guest_sha256)
+        || expected_guest_sha256.bytes().all(|byte| byte == b'0')
+    {
+        return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
+    }
+    if !matches!(expected_workload_arch, "x86" | "x86_64") {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent workload architecture mismatch",
+        ));
+    }
+    Ok(())
+}
+
+// Write::write_all retries Interrupted indefinitely. A stalled guest-facing
+// harness writer must not pin a host worker. Bound consecutive retries, but
+// reset the budget after positive progress; any failure invalidates the frame.
+const WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS: usize = 32;
+
+fn write_all_guest_agent_bounded<W: Write>(writer: &mut W, mut remaining: &[u8]) -> io::Result<()> {
+    let mut consecutive_interrupts = 0;
+    while !remaining.is_empty() {
+        match writer.write(remaining) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => {
+                if count > remaining.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "guest-agent writer exceeded supplied length",
+                    ));
+                }
+                remaining = &remaining[count..];
+                consecutive_interrupts = 0;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                consecutive_interrupts += 1;
+                if consecutive_interrupts > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_WRITE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+// Bound consecutive EINTR retries on an untrusted guest-agent transport.
+// read_exact retries Interrupted indefinitely; a peer that never yields bytes
+// must not pin a host worker in a busy loop. Progress resets the retry budget.
+const WINDOWS_VM_AGENT_MAX_CONSECUTIVE_INTERRUPTS: usize = 32;
+
+fn read_exact_guest_agent_bounded<R: Read>(
+    reader: &mut R,
+    mut remaining: &mut [u8],
+) -> io::Result<()> {
+    let mut consecutive_interrupts = 0;
+    while !remaining.is_empty() {
+        match reader.read(remaining) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => {
+                if count > remaining.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "guest-agent reader exceeded requested length",
+                    ));
+                }
+                let (_, tail) = std::mem::take(&mut remaining).split_at_mut(count);
+                remaining = tail;
+                consecutive_interrupts = 0;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                consecutive_interrupts += 1;
+                if consecutive_interrupts > WINDOWS_VM_AGENT_MAX_CONSECUTIVE_INTERRUPTS {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Admit one explicitly length-delimited hello frame from a caller-owned reader.
+///
+/// The transport must establish `frame_len` independently; this function
+/// does not infer framing from EOF, start a socket, or grant guest execution.
+/// Reject an oversized declaration before allocating or reading, and never
+/// consume bytes from a following frame.
+pub fn read_guest_agent_hello_frame<R: Read>(
+    reader: &mut R,
+    frame_len: usize,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    if frame_len == 0 {
+        return Err(WindowsVmError::InvalidGuest(
+            "empty guest-agent hello frame",
+        ));
+    }
+    if frame_len > WINDOWS_VM_AGENT_HELLO_MAX_BYTES {
+        return Err(WindowsVmError::InvalidGuest(
+            "guest-agent hello exceeds JSON size limit",
+        ));
+    }
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let mut frame = vec![0u8; frame_len];
+    read_exact_guest_agent_bounded(reader, &mut frame).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            WindowsVmError::InvalidGuest("truncated guest-agent hello frame")
+        } else {
+            WindowsVmError::Io(error)
+        }
+    })?;
+    parse_guest_agent_hello_json(
+        &frame,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )
+}
+
+/// Write one harness-only length-prefixed hello packet: a four-byte
+/// big-endian payload length followed by bounded, validated JSON.
+///
+/// This framing is a deterministic host-side W8 Gate 6 fixture contract, not
+/// a negotiated production guest protocol. It does not start a VM or attest
+/// a Windows guest. A successful return includes Write::flush, so a buffered
+/// writer cannot report packet completion before its underlying flush fails.
+/// This is not a guest delivery acknowledgement. Any write or flush failure
+/// invalidates the whole packet; the caller must discard the stream on error.
+pub fn write_guest_agent_hello_packet<W: Write>(
+    writer: &mut W,
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<usize, WindowsVmError> {
+    let payload = encode_guest_agent_hello_json(
+        hello,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let length = u32::try_from(payload.len())
+        .map_err(|_| WindowsVmError::InvalidGuest("guest-agent hello exceeds JSON size limit"))?;
+    write_all_guest_agent_bounded(writer, &length.to_be_bytes())?;
+    write_all_guest_agent_bounded(writer, &payload)?;
+    flush_guest_agent_bounded(writer)?;
+    Ok(4 + payload.len())
+}
+
+/// Read exactly one harness-only length-prefixed hello packet without
+/// consuming bytes from a subsequent packet.
+///
+/// Validate caller-owned host authority before touching the stream. Reject
+/// zero and oversized length declarations before allocation or payload read;
+/// a truncated prefix or payload fails closed. This is not runtime guest proof.
+pub fn read_guest_agent_hello_packet<R: Read>(
+    reader: &mut R,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<GuestAgentHello, WindowsVmError> {
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
+    let mut prefix = [0u8; 4];
+    read_exact_guest_agent_bounded(reader, &mut prefix).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            WindowsVmError::InvalidGuest("truncated guest-agent hello length prefix")
+        } else {
+            WindowsVmError::Io(error)
+        }
+    })?;
+    let length = u32::from_be_bytes(prefix) as usize;
+    read_guest_agent_hello_frame(
+        reader,
+        length,
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )
+}
+
+pub fn validate_guest_agent_hello(
+    hello: &GuestAgentHello,
+    expected_guest_id: &str,
+    expected_guest_revision: u64,
+    expected_guest_sha256: &str,
+    expected_workload_arch: &str,
+) -> Result<(), WindowsVmError> {
+    validate_expected_guest_agent_authority(
+        expected_guest_id,
+        expected_guest_revision,
+        expected_guest_sha256,
+        expected_workload_arch,
+    )?;
     if hello.schema != WINDOWS_VM_AGENT_SCHEMA || hello.protocol_revision != 1 {
         return Err(WindowsVmError::InvalidGuest(
             "unsupported guest-agent protocol",
@@ -180,10 +510,7 @@ pub fn validate_guest_agent_hello(
             "guest-agent identity mismatch",
         ));
     }
-    if !canonical_sha256_hex(&hello.guest_sha256)
-        || !canonical_sha256_hex(expected_guest_sha256)
-        || hello.guest_sha256 != expected_guest_sha256
-    {
+    if !canonical_sha256_hex(&hello.guest_sha256) || hello.guest_sha256 != expected_guest_sha256 {
         return Err(WindowsVmError::InvalidGuest("guest-agent digest mismatch"));
     }
     if !matches!(hello.workload_arch.as_str(), "x86" | "x86_64")
@@ -194,6 +521,74 @@ pub fn validate_guest_agent_hello(
         ));
     }
     Ok(())
+}
+
+fn runtime_path_has_unsafe_text(value: &str) -> bool {
+    // QEMU option separators are parser authority. Bidirectional formatting
+    // controls can also disguise the displayed path in a proof/review log.
+    // Ordinary visible Unicode remains valid, subject to the AF_UNIX byte cap.
+    let parser_delimiter = value
+        .bytes()
+        .any(|byte| byte == b',' || byte.is_ascii_control());
+    let bidi_control = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{206f}'
+        )
+    });
+    // Default-ignorable joiners, variation selectors and zero-width marks
+    // can create distinct runtime proof paths with indistinguishable display.
+    // Reject them before proof-id construction or QEMU option construction.
+    let invisible_control = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{1160}' | '\u{17b4}'..='\u{17b5}'
+                | '\u{180b}'..='\u{180f}'
+                | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{3164}'
+                | '\u{13430}'..='\u{1343f}' // Egyptian hieroglyph format controls alter proof rendering.
+                | '\u{1bca0}'..='\u{1bca3}' // Shorthand format controls are invisible.
+                | '\u{1d173}'..='\u{1d17a}' // Musical format controls hide in proof paths.
+                | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{2800}' | '\u{ffa0}'
+                | '\u{fff9}'..='\u{fffb}' // Interlinear annotation controls alter rendered proof text.
+                | '\u{e0000}'..='\u{e007f}' // Default-ignorable Unicode language/tag controls.
+                | '\u{e0100}'..='\u{e01ef}'
+        )
+    });
+    // Unicode NEL, line separator and paragraph separator can split a
+    // displayed proof/log entry even though none is an ASCII control byte.
+    let unicode_line_break = value
+        .chars()
+        .any(|character| matches!(character, '\u{0085}' | '\u{2028}' | '\u{2029}'));
+    // C1 control code points (including CSI/OSC-style terminal controls)
+    // are not ASCII bytes but can alter proof/log rendering. Reject the
+    // entire C1 range rather than relying on individual display aliases.
+    let unicode_c1_control = value
+        .chars()
+        .any(|character| matches!(character, '\u{0080}'..='\u{009f}'));
+    // Unicode space separators have no distinctive glyph in many proof
+    // renderers. They can make different path bytes appear as the same
+    // whitespace-delimited session identity. Preserve ordinary ASCII spaces
+    // and visible Unicode, but deny these unbound spacing aliases.
+    let unicode_space_alias = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{00a0}' | '\u{1680}' | '\u{2000}'
+                ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
+        )
+    });
+    // Unicode noncharacters are valid Rust scalar values but are reserved
+    // from text interchange and have no stable visible proof identity. Deny
+    // U+FDD0..FDEF and the final two code points of every Unicode plane.
+    let unicode_noncharacter = value.chars().any(|character| {
+        matches!(character, '\u{fdd0}'..='\u{fdef}') || (character as u32 & 0xffff) >= 0xfffe
+    });
+    parser_delimiter
+        || unicode_noncharacter
+        || bidi_control
+        || invisible_control
+        || unicode_line_break
+        || unicode_c1_control
+        || unicode_space_alias
 }
 
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
@@ -230,13 +625,9 @@ pub fn vm_session_paths(
     // The proof plan must never authorize a session root that QEMU would
     // later parse as extra -drive/-chardev options or cannot represent.
     // Reject these before producing a proof identity, not only at VM launch.
-    if root.to_str().is_none_or(|value| {
-        value
-            .bytes()
-            .any(|byte| byte == b',' || byte.is_ascii_control())
-    }) {
+    if root.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
-            "session root contains QEMU option delimiters",
+            "session root contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     let root_text = root.as_os_str().to_string_lossy();
@@ -671,6 +1062,20 @@ pub fn validate_vm_profile(profile: &ApplicationProfile) -> Result<(), WindowsVm
             "workload architecture is not x86/x86_64",
         ));
     }
+    // The format and architecture are one binding, not two independent
+    // allowlists: a PE32+ x86 or PE32 x86_64 profile would authorize a
+    // workload whose declared image format cannot match its execution lane.
+    if !matches!(
+        (
+            &profile.artifact.format,
+            profile.artifact.workload_arch.as_deref()
+        ),
+        (ArtifactFormat::Pe32, Some("x86")) | (ArtifactFormat::Pe32Plus, Some("x86_64"))
+    ) {
+        return Err(WindowsVmError::InvalidProfile(
+            "PE format and workload architecture mismatch",
+        ));
+    }
     if matches!(
         profile.compatibility.state,
         MechanicalCompatibilityState::Unknown
@@ -887,15 +1292,12 @@ pub fn validate_guest_definition(
     if !image.is_absolute() {
         return Err(WindowsVmError::InvalidGuest("base image is not absolute"));
     }
-    // The guest definition is a later VM-preparation input. Do not admit
-    // QEMU option separators or control characters into its path authority.
-    if definition
-        .base_image
-        .bytes()
-        .any(|byte| byte == b',' || byte.is_ascii_control())
-    {
+    // The immutable guest-image authority must obey the same pathname
+    // visibility contract as runtime proof roots and QEMU plan paths.
+    // A digest match alone cannot make a bidi/invisible alias auditable.
+    if runtime_path_has_unsafe_text(&definition.base_image) {
         return Err(WindowsVmError::InvalidGuest(
-            "base image path contains QEMU option delimiters",
+            "base image path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     if fs::canonicalize(&image)? != image {
@@ -914,8 +1316,10 @@ pub fn validate_guest_definition(
                 "base image directory is not a real directory",
             ));
         }
-        let mode = parent.permissions().mode();
-        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+        // Reject foreign-owned read-only parents before digest I/O, not
+        // only in the post-read identity check. Their owner can chmod and
+        // replace the image entry while the digest is being computed.
+        if !trusted_runtime_ancestor(parent.uid(), parent.permissions().mode(), worker_uid) {
             return Err(WindowsVmError::InvalidGuest(
                 "base image directory is untrusted",
             ));
@@ -1148,16 +1552,10 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     // Refuse paths that could change the requested VM isolation contract.
     if [&request.overlay_image, &request.runtime_dir]
         .iter()
-        .any(|path| {
-            path.to_str().is_none_or(|value| {
-                value
-                    .bytes()
-                    .any(|byte| byte == b',' || byte.is_ascii_control())
-            })
-        })
+        .any(|path| path.to_str().is_none_or(runtime_path_has_unsafe_text))
     {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime path contains QEMU option delimiters",
+            "runtime path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
     // Query the effective identity that will own the session, not the
