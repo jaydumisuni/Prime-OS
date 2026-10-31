@@ -1,0 +1,66 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "A",
+  "project": "ptah",
+  "implementation_owner": "Prime-OS",
+  "frontier": "Prime OS-owned F04 package manifest: deny Git null source-commit object ID",
+  "observed_at_utc": "2026-10-31T21:00:40.861Z",
+  "canonical_authority": {
+    "registry": "jaydumisuni/cookpit main:registry.json",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "project_enabled": true,
+    "profile": "profiles/ptah.json",
+    "profile_blob": "7d0e81679b3b15f543b2038a5afa3d8656ae58d3",
+    "ptah_roadmap": "jaydumisuni/ptah-roadmap- main:IMPLEMENTATION_ROADMAP.md",
+    "roadmap_rule": "E06/E07 standalone DONE; F04-F07 Prime OS-owned",
+    "prime_roadmap": "docs/PRIME_OS_ROADMAP.md",
+    "prime_handoff": "docs/AI_HANDOFF.md"
+  },
+  "before_head": "d79f2b1e4015552ad8c680de08b5024c61d169bb",
+  "source_after_head": "e41e5985c7341f5e36e67cac8436d1467c632b1c",
+  "project_pr": "https://github.com/jaydumisuni/Prime-OS/pull/160",
+  "worker": "Shift A authenticated GitHub source-only cloud fallback; Oracle Live roster/terminal failed internally",
+  "action": "Reject 40-zero Git null OID as source_commit; add direct and JSON-loaded negative regression cases; document syntax-only, non-authorizing boundary",
+  "movement": {
+    "state": "MATERIAL_SOURCE_PUBLISHED",
+    "head_advanced": true,
+    "source_files_changed": 3,
+    "commits_ahead": 3,
+    "commits_behind": 0,
+    "files": [
+      "tools/ptah_f04_manifest_preflight.py",
+      "tests/test_ptah_f04_manifest_preflight.py",
+      "docs/contracts/PRIME_PTAH_F04_PACKAGE_PREFLIGHT_PROPOSAL.md"
+    ]
+  },
+  "proof": {
+    "source_blob": "dfcbe25835664019284441bc1f1b362ded94e459",
+    "test_blob": "34abf74015817fc815d45e00300fea98181381d6",
+    "contract_blob": "150323b172b20172e8c36faa4f222f75a2efeb37",
+    "exact_source_readback": "MATCH",
+    "github_compare": "ahead=3 behind=0",
+    "hosted_run": "https://github.com/jaydumisuni/Prime-OS/actions/runs/41241486926",
+    "hosted_job": "source-only-preflight SUCCESS",
+    "hosted_tests": "12/12 PASS including null-OID regression; log 2026-10-31T21:00:07Z",
+    "native_kratos": "UNVERIFIED",
+    "patrol": "UNVERIFIED",
+    "independent_review": "PENDING_ZERO_REVIEWS",
+    "physical": "NOT_ATTEMPTED"
+  },
+  "health": {
+    "nodie_roster": "UNVERIFIED_Oracle_cloud_roster_internal_error",
+    "supervisor_pool": "A LATE-but-completed; B LATE-but-completed; C HEALTHY; D HEALTHY; E LATE-but-completed; zero missed; all five enabled",
+    "kratos": "UNVERIFIED_Oracle_terminal_internal_error",
+    "local_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "dependency_linkage": {
+    "selected": "Ptah oldest visible source movement 2026-10-31T18:26Z; local dispatch fairness provisional",
+    "upstream": "Ptah E06/E07 standalone DONE and frozen NodeId UUIDv7; prior Prime F04 PR #158",
+    "downstream": "Prime F04-F07 OS-owned package/image/rollback/Host integration; direct release consumption HOLD"
+  },
+  "disposition": "SOURCE_PUBLISHED_HOSTED_TESTS_PASS_NATIVE_AND_REVIEW_PENDING",
+  "reconcile_on_kratos": "Recover PR #160 exact source head and receipt, inspect current leases and worker, run Patrol on actual Prime-owned F04 workspace, run python3 -m unittest discover -s tests -p test_ptah_f04_manifest_preflight.py -v, reconcile local Cookpit attention and dispatches without duplicate PASS, preserve guarded control admission",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
