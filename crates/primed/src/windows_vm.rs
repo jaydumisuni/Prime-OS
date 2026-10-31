@@ -876,9 +876,9 @@ fn create_runtime_proof_observation(
     zero_residual_state: bool,
     evidence_sha256: &str,
 ) -> Result<VmRuntimeProofObservation, WindowsVmError> {
-    if !canonical_sha256_hex(evidence_sha256) {
+    if !canonical_sha256_hex(evidence_sha256) || evidence_sha256.bytes().all(|byte| byte == b'0') {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime proof evidence digest is not canonical SHA-256",
+            "runtime proof evidence digest is not a bound SHA-256",
         ));
     }
     if !plan.required_cases.contains(&case) {
@@ -970,6 +970,9 @@ pub fn evaluate_runtime_proof(
             || observation.observation_id != expected_observation_id
             || observation.evidence_schema != WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA
             || !canonical_sha256_hex(&observation.evidence_sha256)
+            // Public observation IDs can be recomputed around placeholder
+            // digests. A zero-filled digest cannot identify real evidence.
+            || observation.evidence_sha256.bytes().all(|byte| byte == b'0')
             || observation.guest_id != plan.guest_id
             || observation.guest_revision != plan.guest_revision
             || observation.guest_sha256 != plan.guest_sha256
