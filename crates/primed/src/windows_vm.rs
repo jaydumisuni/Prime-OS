@@ -578,6 +578,19 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
         )
     });
+    // Decomposed combining-diacritic spellings can render like a different
+    // precomposed pathname while naming distinct Linux filesystem bytes.
+    // Deny these specific mark blocks at the proof/launch identity boundary;
+    // retain precomposed visible Unicode (for example, U+00E9).
+    // This is a bounded alias guard, not a complete Unicode normalization policy.
+    let combining_diacritic_alias = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{0300}'..='\u{036f}' | '\u{1ab0}'..='\u{1aff}'
+                | '\u{1dc0}'..='\u{1dff}' | '\u{20d0}'..='\u{20ff}'
+                | '\u{fe20}'..='\u{fe2f}'
+        )
+    });
     // Unicode noncharacters are valid Rust scalar values but are reserved
     // from text interchange and have no stable visible proof identity. Deny
     // U+FDD0..FDEF and the final two code points of every Unicode plane.
@@ -603,6 +616,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         || unicode_line_break
         || unicode_c1_control
         || unicode_space_alias
+        || combining_diacritic_alias
 }
 
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {

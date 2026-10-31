@@ -4132,6 +4132,32 @@ fn w8_proof_session_root_rejects_confusable_unicode_path_separators() {
 
 #[cfg(unix)]
 #[test]
+fn w8_proof_session_root_rejects_decomposed_combining_diacritic_aliases() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = private_tempdir();
+    for name in [
+        "cafe\u{0301}-runtime", // Decomposed e + acute versus precomposed é.
+        "root\u{1ab0}runtime",  // Combining Diacritical Marks Extended.
+        "root\u{1dc0}runtime",  // Combining Diacritical Marks Supplement.
+        "root\u{20d0}runtime",  // Combining Diacritical Marks for Symbols.
+        "root\u{fe20}runtime",  // Combining Half Marks.
+    ] {
+        let root = dir.path().join(name);
+        private_runtime_dir(&root);
+        assert!(
+            vm_session_paths(&root, "app-001", "session-a").is_err(),
+            "decomposed combining-mark alias admitted to proof root: {name:?}"
+        );
+    }
+
+    let visible = dir.path().join("caf\u{00e9}-runtime");
+    private_runtime_dir(&visible);
+    assert!(vm_session_paths(&visible, "app-001", "session-a").is_ok());
+}
+
+#[cfg(unix)]
+#[test]
 fn w8_runtime_directory_requires_private_traversal() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::PermissionsExt;
@@ -4225,6 +4251,31 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         );
     }
     // Visible Unicode is not an implicit rejection or an ASCII-only policy.
+    let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
+#[test]
+fn guest_definition_rejects_decomposed_combining_diacritic_image_aliases() {
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-combining-path-alias";
+    for name in [
+        "cafe\u{0301}-guest.qcow2",
+        "guest\u{1ab0}image.qcow2",
+        "guest\u{1dc0}image.qcow2",
+        "guest\u{20d0}image.qcow2",
+        "guest\u{fe20}image.qcow2",
+    ] {
+        let image = dir.path().join(name);
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            error.to_string().contains("delimiter"),
+            "decomposed combining-mark alias admitted to guest image: {name:?}; {error}"
+        );
+    }
+
     let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
     private_guest_image(&visible, bytes);
     assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
