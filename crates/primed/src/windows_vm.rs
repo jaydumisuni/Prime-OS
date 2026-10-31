@@ -584,7 +584,17 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let unicode_noncharacter = value.chars().any(|character| {
         matches!(character, '\u{fdd0}'..='\u{fdef}') || (character as u32 & 0xffff) >= 0xfffe
     });
+    // These visible Unicode glyphs resemble filesystem separators in review
+    // logs but are distinct pathname bytes. A proof reviewer must not mistake
+    // a single path component for a hierarchy (or vice versa).
+    let confusable_path_separator = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{2044}' | '\u{2215}' | '\u{ff0f}' | '\u{ff3c}'
+        )
+    });
     parser_delimiter
+        || confusable_path_separator
         || unicode_noncharacter
         || bidi_control
         || invisible_control
