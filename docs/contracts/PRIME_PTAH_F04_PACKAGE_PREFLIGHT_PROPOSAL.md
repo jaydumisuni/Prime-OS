@@ -30,7 +30,7 @@ The source commit and artifact hashes above are **illustrative placeholders**, n
 ## Source-only denial and output
 
 - At most 65,536 manifest bytes and 32 nonempty artifacts; no duplicate JSON keys, extra fields, nonfinite numbers or invalid UTF-8.
-- Canonical lowercase UUIDv7 Prime Host ID, separate canonical lowercase UUIDv7 Ptah Node ID (`ptah-identifiers::NodeId` wraps `EntityId`; not a display label), and 40-digit lowercase Git source commit.
+- Canonical lowercase UUIDv7 Prime Host ID, separate canonical lowercase UUIDv7 Ptah Node ID (`ptah-identifiers::NodeId` wraps `EntityId`; not a display label), and nonzero 40-digit lowercase Git source commit (the all-zero Git null object ID is denied; object existence/type remains unverified).
 - Relative ASCII package paths only; reject absolute paths, traversal, dot segments, backslashes, control characters and case-insensitive duplicate paths.
 - Each artifact declares a positive bounded integer size and lowercase SHA-256 other than SHA-256(empty) or all-zero placeholder.
 - Success emits `preflight_ok`, artifact count, and explicit `authority_granted=false`, `installation_performed=false`, `physical_proof_claimed=false`. Failure emits `preflight_denied` with no side effects.

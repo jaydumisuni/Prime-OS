@@ -62,6 +62,18 @@ class ManifestPreflightTests(unittest.TestCase):
                 with self.assertRaisesRegex(f04.ManifestError, "invalid_ptah_node_id"):
                     f04.validate_manifest(value)
 
+    def test_source_commit_rejects_null_oid_and_malformed_identifiers(self):
+        # All-zero is Git's null object ID, never an actual source commit.
+        for commit in ("0" * 40, "a" * 39, "a" * 41, "A" * 40,
+                       None, True):
+            with self.subTest(commit=repr(commit)):
+                value = candidate()
+                value["source_commit"] = commit
+                with self.assertRaisesRegex(f04.ManifestError, "invalid_source_commit"):
+                    f04.validate_manifest(value)
+                with self.assertRaisesRegex(f04.ManifestError, "invalid_source_commit"):
+                    f04.load_manifest(json.dumps(value).encode())
+
     def test_paths_cannot_escape_or_alias_package_root(self):
         for path in ("../bin/ptah-node", "/bin/ptah-node", "bin//node",
                      "bin/./node", "bin/../node", "bin\\node",
