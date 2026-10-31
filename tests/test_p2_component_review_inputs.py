@@ -2008,3 +2008,22 @@ def test_malformed_git_metadata_is_structured_review_failure(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("FAIL: ")
+
+
+def test_malformed_git_control_path_nul_is_structured_review_failure(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """A NUL in Git's control-path response must fail closed, not crash CLI."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def invalid_control_path(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "--git-path", "objects"):
+            return b"/tmp/untrusted\x00objects\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", invalid_control_path)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("FAIL: ")

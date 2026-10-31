@@ -139,6 +139,8 @@ def require_index_epoch(index_path: Path) -> tuple[int, int, int, int, int]:
 def git_control_path(root: Path, name: str) -> Path:
     """Resolve a Git metadata path before the final read-only Git probes."""
     value = git(root, "rev-parse", "--git-path", name).decode().strip()
+    if not value or "\x00" in value:
+        raise ReviewInputError("invalid Git control pathname")
     path = Path(value)
     return path if path.is_absolute() else root / path
 
