@@ -684,10 +684,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
         require_clean_index(root, head, relative)
         blob_size_text = git(root, "cat-file", "-s", f"{head}:{relative}")
-        try:
-            blob_size = int(blob_size_text.strip())
-        except ValueError:
-            raise ReviewInputError(f"invalid committed review input size: {relative}") from None
+        # Git emits one canonical decimal size followed by exactly one LF.
+        # int(...strip()) would silently admit forged signs, leading zeroes,
+        # extra records and whitespace as the same review blob authority.
+        if (len(blob_size_text) > len(str(MAX_REVIEW_INPUT_BYTES)) + 1
+                or re.fullmatch(rb"(?:0|[1-9][0-9]*)\n", blob_size_text) is None):
+            raise ReviewInputError(f"invalid committed review input size: {relative}")
+        blob_size = int(blob_size_text[:-1])
         if blob_size > MAX_REVIEW_INPUT_BYTES:
             raise ReviewInputError(f"committed review input exceeds size limit: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
