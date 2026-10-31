@@ -576,7 +576,14 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
         )
     });
+    // Unicode noncharacters are valid Rust scalar values but are reserved
+    // from text interchange and have no stable visible proof identity. Deny
+    // U+FDD0..FDEF and the final two code points of every Unicode plane.
+    let unicode_noncharacter = value.chars().any(|character| {
+        matches!(character, '\u{fdd0}'..='\u{fdef}') || (character as u32 & 0xffff) >= 0xfffe
+    });
     parser_delimiter
+        || unicode_noncharacter
         || bidi_control
         || invisible_control
         || unicode_line_break

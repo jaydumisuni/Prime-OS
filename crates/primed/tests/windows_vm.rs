@@ -3815,15 +3815,19 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
     let dir = private_tempdir();
     let bytes = b"prime-w8-unicode-image-path";
     for name in [
-        "guest\u{202e}image.qcow2",  // Bidirectional display override.
-        "guest\u{200b}image.qcow2",  // Zero-width path alias.
-        "guest\u{1160}image.qcow2",  // Invisible Hangul Jungseong filler.
-        "guest\u{ffa0}image.qcow2",  // Halfwidth Hangul filler.
-        "guest\u{2800}image.qcow2",  // Braille blank disguises path identity.
-        "guest\u{13430}image.qcow2", // Egyptian hieroglyph vertical joiner.
-        "guest\u{1343f}image.qcow2", // Egyptian hieroglyph enclosure terminator.
-        "guest\u{2028}image.qcow2",  // Unicode line separator.
-        "guest\u{e0001}image.qcow2", // Default-ignorable language tag.
+        "guest\u{202e}image.qcow2",   // Bidirectional display override.
+        "guest\u{200b}image.qcow2",   // Zero-width path alias.
+        "guest\u{1160}image.qcow2",   // Invisible Hangul Jungseong filler.
+        "guest\u{ffa0}image.qcow2",   // Halfwidth Hangul filler.
+        "guest\u{2800}image.qcow2",   // Braille blank disguises path identity.
+        "guest\u{13430}image.qcow2",  // Egyptian hieroglyph vertical joiner.
+        "guest\u{1343f}image.qcow2",  // Egyptian hieroglyph enclosure terminator.
+        "guest\u{fdd0}image.qcow2",   // Unicode noncharacter (BMP interior).
+        "guest\u{ffff}image.qcow2",   // Unicode noncharacter (BMP plane end).
+        "guest\u{1fffe}image.qcow2",  // Unicode noncharacter (supplementary plane end).
+        "guest\u{10ffff}image.qcow2", // Unicode noncharacter (last scalar).
+        "guest\u{2028}image.qcow2",   // Unicode line separator.
+        "guest\u{e0001}image.qcow2",  // Default-ignorable language tag.
     ] {
         let image = dir.path().join(name);
         private_guest_image(&image, bytes);
@@ -7113,6 +7117,10 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("musical-symbol-end-tie", "\u{1d17a}"),
         ("egyptian-hieroglyph-vertical-joiner", "\u{13430}"),
         ("egyptian-hieroglyph-end-enclosure", "\u{1343f}"),
+        ("bmp-noncharacter", "\u{fdd0}"),
+        ("bmp-plane-end-noncharacter", "\u{ffff}"),
+        ("supplementary-plane-end-noncharacter", "\u{1fffe}"),
+        ("last-scalar-noncharacter", "\u{10ffff}"),
         ("zero-width-space", "\u{200b}"),
         ("zero-width-joiner", "\u{200d}"),
         ("word-joiner", "\u{2060}"),
