@@ -3379,6 +3379,62 @@ fn runtime_proof_rejects_rehashed_zero_evidence_digest_placeholder() {
 }
 
 #[test]
+fn runtime_proof_rejects_rehashed_empty_guest_image_digest() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+    };
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-nonempty-guest-for-proof";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let mut plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    // A validated guest image cannot be empty, but the public plan ID can be
+    // recomputed around the SHA-256 of empty bytes. This must not grant a
+    // self-consistent, unadmitted guest identity runtime-proof authority.
+    plan.guest_sha256 = digest(b"");
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+        "guest_id": plan.guest_id,
+        "guest_revision": plan.guest_revision,
+        "guest_sha256": plan.guest_sha256,
+        "application_id": plan.application_id,
+        "session_id": plan.session_id,
+        "required_cases": plan.required_cases,
+        "runtime_dir": plan.paths.runtime_dir,
+        "overlay_image": plan.paths.overlay_image,
+        "agent_socket": plan.paths.agent_socket,
+    });
+    plan.proof_id = digest(&serde_json::to_vec(&body).unwrap());
+    let forged: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, case)| {
+            create_runtime_proof_observation_from_evidence(
+                &plan,
+                case,
+                true,
+                true,
+                format!("distinct-evidence-{index}").as_bytes(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &forged),
+        VmRuntimeProofState::Pending,
+        "a rehashed empty-image digest cannot stand in for admitted guest bytes"
+    );
+}
+
+#[test]
 fn runtime_proof_plan_rejects_relative_runtime_root() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
