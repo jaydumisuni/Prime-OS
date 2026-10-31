@@ -2270,3 +2270,20 @@ def test_final_object_root_disappearance_is_structured_review_failure(
     objects.rename(root / ".git" / "objects-moved")
     with pytest.raises(module.ReviewInputError, match="Git object store root unavailable"):
         module.require_git_object_final_epochs(objects, admitted)
+
+
+def test_rejects_invalid_utf8_git_control_path(tmp_path: Path, monkeypatch) -> None:
+    """Malformed Git path bytes must be a structured review denial, not a crash."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def corrupted_git(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "--git-path", "HEAD"):
+            return b"\xff\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", corrupted_git)
+    with pytest.raises(module.ReviewInputError, match="invalid Git control pathname"):
+        module.build_manifest(root, head)

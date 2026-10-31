@@ -151,7 +151,10 @@ def git_control_path(root: Path, name: str) -> Path:
     # into an apparently canonical metadata path.
     if not raw.endswith(b"\n"):
         raise ReviewInputError("invalid Git control pathname")
-    value = raw[:-1].decode("utf-8")
+    try:
+        value = raw[:-1].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ReviewInputError("invalid Git control pathname") from exc
     if not value or any(
         unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
         for character in value
