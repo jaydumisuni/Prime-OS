@@ -4112,7 +4112,11 @@ fn w8_proof_session_root_rejects_confusable_unicode_path_separators() {
         "root\u{ff0f}shadow",
         "root\u{ff3c}shadow",
         "root\u{2216}shadow", // Set minus resembles a backslash.
+        "root\u{2571}shadow", // Box-drawing diagonal resembles a slash.
+        "root\u{2572}shadow", // Box-drawing diagonal resembles a backslash.
         "root\u{29f5}shadow", // Reverse solidus operator.
+        "root\u{29f6}shadow", // Solidus with overbar.
+        "root\u{29f7}shadow", // Reverse solidus with horizontal stroke.
         "root\u{29f8}shadow", // Big solidus.
         "root\u{29f9}shadow", // Big reverse solidus.
         "root\u{fe68}shadow", // Small reverse solidus; NFKC folds to backslash.
@@ -4202,7 +4206,11 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         "guest\u{ff0f}image.qcow2",   // Fullwidth solidus.
         "guest\u{ff3c}image.qcow2",   // Fullwidth reverse solidus.
         "guest\u{2216}image.qcow2",   // Set minus resembles a backslash.
+        "guest\u{2571}image.qcow2",   // Box-drawing diagonal resembles a slash.
+        "guest\u{2572}image.qcow2",   // Box-drawing diagonal resembles a backslash.
         "guest\u{29f5}image.qcow2",   // Reverse solidus operator.
+        "guest\u{29f6}image.qcow2",   // Solidus with overbar.
+        "guest\u{29f7}image.qcow2",   // Reverse solidus with horizontal stroke.
         "guest\u{29f8}image.qcow2",   // Big solidus.
         "guest\u{29f9}image.qcow2",   // Big reverse solidus.
         "guest\u{fe68}image.qcow2",   // Small reverse solidus; NFKC folds to backslash.
