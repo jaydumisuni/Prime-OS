@@ -3820,6 +3820,8 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         "guest\u{1160}image.qcow2",  // Invisible Hangul Jungseong filler.
         "guest\u{ffa0}image.qcow2",  // Halfwidth Hangul filler.
         "guest\u{2800}image.qcow2",  // Braille blank disguises path identity.
+        "guest\u{13430}image.qcow2", // Egyptian hieroglyph vertical joiner.
+        "guest\u{1343f}image.qcow2", // Egyptian hieroglyph enclosure terminator.
         "guest\u{2028}image.qcow2",  // Unicode line separator.
         "guest\u{e0001}image.qcow2", // Default-ignorable language tag.
     ] {
@@ -7109,6 +7111,8 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("shorthand-format-up-step", "\u{1bca2}"),
         ("musical-symbol-begin-beam", "\u{1d173}"),
         ("musical-symbol-end-tie", "\u{1d17a}"),
+        ("egyptian-hieroglyph-vertical-joiner", "\u{13430}"),
+        ("egyptian-hieroglyph-end-enclosure", "\u{1343f}"),
         ("zero-width-space", "\u{200b}"),
         ("zero-width-joiner", "\u{200d}"),
         ("word-joiner", "\u{2060}"),
