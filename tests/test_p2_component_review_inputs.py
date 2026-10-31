@@ -2375,12 +2375,12 @@ def test_rejects_malformed_git_index_path_response(
     original_git = module.git
     command = ("rev-parse", "--git-path", "index")
     canonical = original_git(root, *command)
-    assert canonical.endswith(b"\\n") and canonical.count(b"\\n") == 1
+    assert canonical.endswith(b"\n") and canonical.count(b"\n") == 1
     hostile_records = {
-        "extra_lf": canonical + b"\\n",
+        "extra_lf": canonical + b"\n",
         "missing_lf": canonical[:-1],
-        "carriage_return": canonical[:-1] + b"\\r\\n",
-        "invalid_utf8": canonical[:-1] + b"\\xff\\n",
+        "carriage_return": canonical[:-1] + b"\r\n",
+        "invalid_utf8": canonical[:-1] + b"\xff\n",
     }
     for label, hostile in hostile_records.items():
         def forged_index_path(repo: Path, *args: str) -> bytes:
@@ -2390,5 +2390,29 @@ def test_rejects_malformed_git_index_path_response(
 
         monkeypatch.setattr(module, "git", forged_index_path)
         with pytest.raises(module.ReviewInputError, match="Git control pathname"):
+            module.build_manifest(root, head)
+    monkeypatch.setattr(module, "git", original_git)
+
+
+def test_rejects_nonempty_shared_index_probe_even_when_whitespace_only(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Only zero output means no split index; blank control records are not proof."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    command = ("rev-parse", "--shared-index-path")
+    assert original_git(root, *command) == b""
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    for forged in (b"\n", b"\r\n", b" \n", b"\t\n", b"\v\n"):
+        def forged_git(repo: Path, *args: str) -> bytes:
+            if args == command:
+                return forged
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_git)
+        with pytest.raises(module.ReviewInputError, match="split index"):
             module.build_manifest(root, head)
     monkeypatch.setattr(module, "git", original_git)
