@@ -59,7 +59,8 @@ def validate_manifest(value: object) -> dict:
     if type(node) is not str or UUID7.fullmatch(node) is None or node == host:
         raise ManifestError("invalid_ptah_node_id")
     commit = manifest["source_commit"]
-    if type(commit) is not str or COMMIT.fullmatch(commit) is None:
+    if (type(commit) is not str or COMMIT.fullmatch(commit) is None
+            or commit == "0" * 40):
         raise ManifestError("invalid_source_commit")
     artifacts = manifest["artifacts"]
     if type(artifacts) is not list or not 0 < len(artifacts) <= MAX_ARTIFACTS:
