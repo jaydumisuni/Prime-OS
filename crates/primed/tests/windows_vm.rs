@@ -2901,6 +2901,42 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
 }
 
 #[test]
+fn runtime_proof_rejects_non_utf8_forged_paths_without_panicking() {
+    use primed::windows_vm::{
+        evaluate_runtime_proof, prepare_runtime_proof_plan, VmRuntimeProofState,
+    };
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-runtime-proof-guest";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    // VmRuntimeProofPlan is public and may be deserialized or caller-mutated.
+    // No forged non-UTF8 path may reach the infallible JSON proof-ID helper.
+    let invalid = PathBuf::from(OsString::from_vec(b"/tmp/invalid-\xff".to_vec()));
+    for field in 0..3 {
+        let mut forged = plan.clone();
+        match field {
+            0 => forged.paths.runtime_dir = invalid.clone(),
+            1 => forged.paths.overlay_image = invalid.clone(),
+            _ => forged.paths.agent_socket = invalid.clone(),
+        }
+        assert_eq!(
+            evaluate_runtime_proof(&forged, &[]),
+            VmRuntimeProofState::Pending,
+            "forged path field {field} must fail closed without a panic"
+        );
+    }
+}
+
+#[test]
 fn runtime_proof_zero_digest_cannot_be_admitted_by_rehashing_public_observations() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,

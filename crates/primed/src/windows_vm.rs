@@ -908,15 +908,9 @@ pub fn evaluate_runtime_proof(
     plan: &VmRuntimeProofPlan,
     observations: &[VmRuntimeProofObservation],
 ) -> VmRuntimeProofState {
-    let expected_proof_id = runtime_proof_id(
-        &plan.guest_id,
-        plan.guest_revision,
-        &plan.guest_sha256,
-        &plan.application_id,
-        &plan.session_id,
-        &plan.required_cases,
-        &plan.paths,
-    );
+    // VmRuntimeProofPlan is caller-owned. Validate its path and bounded
+    // structure before serializing a proof ID: serde_json rejects non-UTF8
+    // PathBuf values, and the infallible identity helper would otherwise panic.
     // The plan digest is public and can be recomputed after path tampering.
     // Reconstruct the canonical application/session paths instead of trusting
     // self-consistent but unscoped overlay or agent socket paths.
@@ -943,9 +937,20 @@ pub fn evaluate_runtime_proof(
         // Gate 6 rejects the zero digest at the hello boundary; Gate 8 must
         // independently reject it even when all observations are rehashed.
         || plan.guest_sha256.bytes().all(|byte| byte == b'0')
-        || plan.proof_id != expected_proof_id
         || observations.len() != plan.required_cases.len()
     {
+        return VmRuntimeProofState::Pending;
+    }
+    let expected_proof_id = runtime_proof_id(
+        &plan.guest_id,
+        plan.guest_revision,
+        &plan.guest_sha256,
+        &plan.application_id,
+        &plan.session_id,
+        &plan.required_cases,
+        &plan.paths,
+    );
+    if plan.proof_id != expected_proof_id {
         return VmRuntimeProofState::Pending;
     }
 
