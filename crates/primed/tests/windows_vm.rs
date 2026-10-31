@@ -126,6 +126,32 @@ fn guest_definition_rejects_empty_digest_matching_image() {
     assert!(error.to_string().contains("empty"));
 }
 
+#[test]
+fn guest_definition_rejects_unbound_digests_before_image_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let missing_image = dir.path().join("missing-windows.qcow2");
+
+    // Both values are syntactically canonical SHA-256 strings, but neither
+    // can identify an admitted nonempty guest. Denial must precede filesystem
+    // access, so a missing image cannot turn this into an I/O error.
+    for sentinel in ["0".repeat(64), digest(b"")] {
+        let mut guest = definition(&missing_image, b"nonempty-windows-image");
+        guest.base_sha256 = sentinel;
+        let error = validate_guest_definition(&guest).unwrap_err();
+        assert!(matches!(error, WindowsVmError::InvalidGuest(_)), "{error}");
+        assert!(error.to_string().contains("digest"), "{error}");
+    }
+
+    // A normal canonical digest still proceeds to image custody checks.
+    let valid_digest = definition(&missing_image, b"nonempty-windows-image");
+    assert!(matches!(
+        validate_guest_definition(&valid_digest),
+        Err(WindowsVmError::Io(_))
+    ));
+}
+
 #[cfg(unix)]
 #[test]
 fn guest_definition_rejects_hardlinked_base_image_alias() {
