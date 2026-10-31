@@ -939,6 +939,10 @@ pub fn evaluate_runtime_proof(
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         || plan.guest_revision == 0
         || !canonical_sha256_hex(&plan.guest_sha256)
+        // A public proof ID can be recomputed for an unbound placeholder.
+        // Gate 6 rejects the zero digest at the hello boundary; Gate 8 must
+        // independently reject it even when all observations are rehashed.
+        || plan.guest_sha256.bytes().all(|byte| byte == b'0')
         || plan.proof_id != expected_proof_id
         || observations.len() != plan.required_cases.len()
     {
