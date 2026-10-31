@@ -1,0 +1,58 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "B",
+  "project": "prime-windows",
+  "frontier": "W8 path proof identity: deny five additional slash/backslash-confusable Unicode path components",
+  "canonical_cookpit_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+  "canonical_profile": "profiles/prime-windows.json",
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-b-w8-extra-separator-aliases-20261031-2012",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/155",
+  "before_head": "ed54a6348012fc6319f3f0674cc3a897622e995f",
+  "source_after_head": "fa2af5d6bd1ae805ea78f3c8f2fac32d8f96d20e",
+  "source_tree": "9bb32aed8401e7cfeb61b19f711fceaa8f5a94c6",
+  "observation_time_utc": "2026-10-31T18:15:23.364Z",
+  "worker": "Shift B authenticated GitHub cloud fallback; Oracle Live roster and KRATOS terminal returned internal errors",
+  "action": "Extended shared W8 path guard for U+2216, U+29F5, U+29F8, U+29F9, U+FE68; added 5 guest-image and 5 proof-root negative regressions",
+  "changed_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "before_after": {
+    "head_before": "ed54a6348012fc6319f3f0674cc3a897622e995f",
+    "source_head_after": "fa2af5d6bd1ae805ea78f3c8f2fac32d8f96d20e",
+    "compare": "1 ahead, 0 behind; 2 project-owned Rust files; 17 insertions, 3 deletions"
+  },
+  "material_movement": {
+    "status": "PUBLISHED_SOURCE_DELTA",
+    "time_utc": "2026-10-31T18:15:23.364Z",
+    "source_commit": "fa2af5d6bd1ae805ea78f3c8f2fac32d8f96d20e"
+  },
+  "engineering_health": {
+    "source_readback": "PASS: exact source/test blobs re-read at source head",
+    "source_blob_sha": "c540e1ae72fc6101d652b13f93f0c8927f5edeba",
+    "test_blob_sha": "e784cc674e82525a978cbe0b4da95f0ef9a7e16b",
+    "predecessor_static_predicate": "5 additions absent; NFKC U+FE68 maps to ASCII backslash",
+    "corrected_static_predicate": "5 additions present in shared guard and 10 negative regression fixtures; visible Unicode positive preserved",
+    "git_ancestry": "PASS: one commit ahead, zero behind exact predecessor",
+    "patrol": "UNVERIFIED: KRATOS terminal unavailable",
+    "native_rust_tests": "UNVERIFIED: not executed",
+    "rustfmt_clippy": "UNVERIFIED: not executed",
+    "hosted_ci": "UNVERIFIED: no PR workflow runs returned at source head",
+    "independent_review": "PENDING",
+    "guest_physical_gates": "NOT_PROVEN"
+  },
+  "dependency_linkage": {
+    "parent_pr": "https://github.com/jaydumisuni/Prime-OS/pull/153",
+    "prime_w8_guest_gates": "7-9 held",
+    "protected_control_rebind": "not admitted"
+  },
+  "disposition": "SOURCE_ONLY_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false,
+  "kratos_local_attention": "PENDING_RECONCILIATION",
+  "kratos_local_dispatch": "PENDING_RECONCILIATION"
+}
