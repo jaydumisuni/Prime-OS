@@ -590,8 +590,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let confusable_path_separator = value.chars().any(|character| {
         matches!(
             character,
-            '\u{2044}' | '\u{2215}' | '\u{2216}' | '\u{29f5}' | '\u{29f8}' | '\u{29f9}'
-                | '\u{fe68}' | '\u{ff0f}' | '\u{ff3c}'
+            '\u{2044}' | '\u{2215}' | '\u{2216}' | '\u{2571}' | '\u{2572}' | '\u{29f5}'
+                | '\u{29f6}' | '\u{29f7}' | '\u{29f8}' | '\u{29f9}' | '\u{fe68}'
+                | '\u{ff0f}' | '\u{ff3c}'
         )
     });
     parser_delimiter

@@ -1,0 +1,60 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "E",
+  "project": "prime-windows",
+  "frontier": "W8 source-only path identity: deny box-drawing diagonal and stroked solidus aliases",
+  "canonical_cookpit_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+  "canonical_profile": "profiles/prime-windows.json",
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-e-w8-diagonal-path-aliases-20261031-2252",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/159",
+  "before_head": "bb3746cdcaf802853c8f2ad9e9633a52c5957473",
+  "source_after_head": "ca60173e984ec79fb0beb59002fa6a806e89c522",
+  "source_tree": "183fd62dcb7c26a25d8eb2f4d4fc6350f17468ee",
+  "material_movement": {
+    "status": "PUBLISHED_SOURCE_DELTA",
+    "time_utc": "2026-10-31T20:55:34Z",
+    "source_commit": "ca60173e984ec79fb0beb59002fa6a806e89c522"
+  },
+  "worker": "Shift E GitHub cloud source-only fallback; Oracle Live roster and KRATOS terminal returned internal errors",
+  "action": "Extended shared W8 runtime path guard for U+2571 U+2572 U+29F6 U+29F7; added four proof-root and four guest-image negative fixtures",
+  "changed_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "before_after": {
+    "head_before": "bb3746cdcaf802853c8f2ad9e9633a52c5957473",
+    "source_head_after": "ca60173e984ec79fb0beb59002fa6a806e89c522",
+    "compare": "1 ahead, 0 behind; 2 Rust files; 11 insertions, 2 deletions"
+  },
+  "engineering_health": {
+    "source_readback": "PASS: exact source/test blobs re-read at source head",
+    "source_blob_sha": "a14d7b8ba310170e031df79ab4118a02bfac22fa",
+    "test_blob_sha": "b730daad87ab8f30ebb7da394dd56ec9eed7d79a",
+    "static_predecessor": "PASS: four targeted aliases absent from prior guard",
+    "static_corrected": "PASS: four aliases present in shared guard and eight negative fixtures; visible Unicode positive preserved",
+    "git_ancestry": "PASS: 1 ahead, 0 behind exact predecessor",
+    "patrol": "UNVERIFIED: KRATOS terminal unavailable",
+    "native_rust_tests": "UNVERIFIED: not executed",
+    "rustfmt_clippy": "UNVERIFIED: not executed",
+    "hosted_ci": "UNVERIFIED: not executed; P1 hosted workflow not Prime execution authority",
+    "independent_review": "PENDING",
+    "guest_physical_gates": "NOT_PROVEN"
+  },
+  "dependency_linkage": {
+    "parent_pr": "https://github.com/jaydumisuni/Prime-OS/pull/155",
+    "prime_windows_w8_gates": "7-9 held",
+    "w9": "not certified",
+    "protected_control_rebind": "not admitted; candidate worktree and live timer rebound require KRATOS proof"
+  },
+  "health": "SOURCE_CUSTODY_VERIFIED; NATIVE_PROOF_UNVERIFIED",
+  "movement": "PUBLISHED_SOURCE_DELTA",
+  "disposition": "SOURCE_ONLY_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false,
+  "kratos_local_attention": "PENDING_RECONCILIATION",
+  "kratos_local_dispatch": "PENDING_RECONCILIATION"
+}
