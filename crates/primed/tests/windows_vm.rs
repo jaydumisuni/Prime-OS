@@ -3311,6 +3311,69 @@ fn runtime_observation_identity_rejects_mutation_and_noncanonical_evidence_diges
 }
 
 #[test]
+fn runtime_proof_rejects_rehashed_zero_evidence_digest_placeholder() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA,
+    };
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-evidence-zero-digest-regression";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+    let mut observations: Vec<_> = plan
+        .required_cases
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, case)| {
+            create_runtime_proof_observation_from_evidence(
+                &plan,
+                case,
+                true,
+                true,
+                format!("distinct-evidence-{index}").as_bytes(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pass
+    );
+
+    // Observation IDs are public hashes, not independent evidence authority.
+    // A canonical but all-zero evidence digest must never be treated as a
+    // real payload merely because its observation ID was recomputed.
+    observations[0].evidence_sha256 = "0".repeat(64);
+    let observation = &observations[0];
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_OBSERVATION_SCHEMA,
+        "proof_id": observation.proof_id,
+        "case": observation.case,
+        "guest_id": observation.guest_id,
+        "guest_revision": observation.guest_revision,
+        "guest_sha256": observation.guest_sha256,
+        "application_id": observation.application_id,
+        "session_id": observation.session_id,
+        "passed": observation.passed,
+        "zero_residual_state": observation.zero_residual_state,
+        "evidence_schema": observation.evidence_schema,
+        "evidence_sha256": observation.evidence_sha256,
+    });
+    observations[0].observation_id = digest(&serde_json::to_vec(&body).unwrap());
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations),
+        VmRuntimeProofState::Pending,
+        "an all-zero evidence digest cannot be promoted by rehashing a public observation"
+    );
+}
+
+#[test]
 fn runtime_proof_plan_rejects_relative_runtime_root() {
     use primed::windows_vm::prepare_runtime_proof_plan;
 
