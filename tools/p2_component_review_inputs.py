@@ -15,8 +15,10 @@ import shutil
 import subprocess
 import stat
 import sys
+import unicodedata
 
 MAX_REVIEW_INPUT_BYTES = 8 * 1024 * 1024
+MAX_GIT_OBJECT_ENTRIES = 100_000
 GIT_READ_TIMEOUT_SECONDS = 30
 # Resolve Git only from the host system path, never caller-controlled PATH.
 SYSTEM_GIT = shutil.which("git", path=os.defpath)
@@ -62,6 +64,12 @@ def git(repo: Path, *args: str) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise ReviewInputError(
             f"Git verification timed out: {' '.join(args)}"
+        ) from exc
+    except OSError as exc:
+        # A pinned executable may disappear or lose execute permission between
+        # resolution and spawn. Never turn that host failure into review proof.
+        raise ReviewInputError(
+            f"Git verification could not start: {' '.join(args)}"
         ) from exc
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
@@ -134,6 +142,422 @@ def require_index_epoch(index_path: Path) -> tuple[int, int, int, int, int]:
     return stat_identity(state)
 
 
+
+def git_control_path(root: Path, name: str) -> Path:
+    """Resolve a Git metadata path before the final read-only Git probes."""
+    raw = git(root, "rev-parse", "--git-path", name)
+    # Git emits exactly one framing LF. str.strip() would silently erase
+    # injected C0/C1 controls or extra newlines and convert a forged response
+    # into an apparently canonical metadata path.
+    if not raw.endswith(b"\n"):
+        raise ReviewInputError("invalid Git control pathname")
+    value = raw[:-1].decode("utf-8")
+    if not value or any(
+        unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
+        for character in value
+    ):
+        raise ReviewInputError("invalid Git control pathname")
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def control_file_epoch(path: Path, limit: int) -> tuple[tuple[int, ...], bytes, bytes]:
+    """Read a private Git control file through its verified regular descriptor."""
+    if path.resolve() != path:
+        raise ReviewInputError("noncanonical HEAD control path")
+    require_private_directory(path.parent)
+    require_protected_ancestors(path.parent)
+    before = path.lstat()
+    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+            or before.st_uid not in (0, os.geteuid())
+            or before.st_mode & 0o022 or before.st_size > limit):
+        raise ReviewInputError("untrusted HEAD control file")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                 | getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if stat_identity(opened) != stat_identity(before):
+            raise ReviewInputError("HEAD control file changed before read")
+        data = stream.read(limit + 1)
+        if len(data) > limit or stat_identity(os.fstat(stream.fileno())) != stat_identity(before):
+            raise ReviewInputError("HEAD control file changed during read")
+    return stat_identity(before), hashlib.sha256(data).digest(), data
+
+
+def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
+    """Pin the linked-worktree .git pointer to the HEAD metadata directory."""
+    dotgit = root / ".git"
+    state = dotgit.lstat()
+    if stat.S_ISDIR(state.st_mode):
+        require_private_directory(dotgit)
+        return None
+    if not stat.S_ISREG(state.st_mode):
+        raise ReviewInputError("untrusted worktree gitdir control")
+    epoch, digest, data = control_file_epoch(dotgit, 4096)
+    # Git worktree pointers may be relative to the worktree. Do not trust a
+    # different gitdir merely because it resolves the same commit and inputs.
+    line = data.rstrip(b"\n")
+    if (not line.startswith(b"gitdir: ") or not line[8:]
+            or b"\n" in line or b"\r" in line or b"\x00" in line):
+        # Path operations raise an uncaught ValueError on embedded NUL. Reject
+        # malformed Git authority before traversing any gitfile path.
+        raise ReviewInputError("invalid worktree gitdir control")
+    target = Path(os.fsdecode(line[8:]))
+    if not target.is_absolute():
+        target = root / target
+    # Git canonicalizes --git-path HEAD, but the literal gitfile may still
+    # traverse a mutable symlink alias. A later alias redirect can rebind the
+    # repository without changing the pinned .git or HEAD control files.
+    # Preserve ordinary relative ../ segments while rejecting any symlink
+    # actually traversed before lexical normalization discards it.
+    cursor = Path(target.anchor)
+    traversed_dirs = []
+    for component in target.parts[1:]:
+        if component == "..":
+            cursor = cursor.parent
+        elif component != ".":
+            cursor /= component
+            # Pin each literal path component, including a directory later
+            # discarded by /.. . A post-probe directory-to-symlink swap can
+            # otherwise redirect Git while the .git file stays unchanged.
+            state = cursor.lstat()
+            if not stat.S_ISDIR(state.st_mode):
+                raise ReviewInputError("worktree gitdir pointer traverses alias")
+            traversed_dirs.append((
+                cursor, stat_identity(state), state.st_mode & 0o7777, state.st_uid,
+            ))
+    if (Path(os.path.normpath(target)) != head_path.parent
+            or target.resolve(strict=True) != head_path.parent.resolve(strict=True)):
+        raise ReviewInputError("worktree gitdir control differs from HEAD authority")
+    return (dotgit, 4096, epoch, digest, tuple(traversed_dirs))
+
+
+def capture_head_epoch(root: Path, expected_head: str) -> tuple:
+    """Pin HEAD, linked gitdir and branch refs without granting release authority."""
+    head_path = git_control_path(root, "HEAD")
+    symbolic = git(root, "rev-parse", "--symbolic-full-name", "HEAD").decode().strip()
+    head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
+    files = [(head_path, 4096, head_epoch, head_digest)]
+    absent_commondir = None
+    pointer = capture_gitdir_pointer_epoch(root, head_path)
+    if pointer is not None:
+        files.append(pointer)
+    # commondir can redirect Git's common refs and objects even when .git is
+    # an ordinary directory. Capture its presence or absence independently
+    # of whether this worktree uses a .git pointer.
+    commondir = head_path.parent / "commondir"
+    try:
+        commondir.lstat()
+    except FileNotFoundError:
+        if pointer is not None:
+            # A standalone --separate-git-dir repository has no commondir.
+            # Its Git common directory must remain the pinned HEAD directory.
+            common_name = git(
+                root, "rev-parse", "--path-format=absolute", "--git-common-dir"
+            ).decode().strip()
+            if Path(common_name).resolve() != head_path.parent.resolve():
+                raise ReviewInputError("separate gitdir differs from HEAD authority")
+        absent_commondir = commondir
+    else:
+        if pointer is None:
+            # A normal .git directory has no authorized linked-worktree
+            # redirection. Fail closed rather than admitting an unpinned
+            # alternate common refs/object store.
+            raise ReviewInputError("unbound ordinary Git commondir control")
+        common_epoch, common_digest, common_data = control_file_epoch(
+            commondir, 4096
+        )
+        common_line = common_data.rstrip(b"\n")
+        if (not common_line or b"\n" in common_line
+                or b"\r" in common_line or b"\x00" in common_line):
+            raise ReviewInputError("invalid linked worktree commondir control")
+        common_reference = Path(os.fsdecode(common_line))
+        expected_common = head_path.parent.parent.parent
+        # A linked worktree's ordinary relative commondir climbs to the
+        # shared Git directory with parent segments (normally ../..).
+        # Do not normalize a named segment followed by ..: that erases a
+        # traversed symlink from lexical inspection. Its target could be
+        # redirected after the final HEAD probe without changing commondir.
+        # Absolute references must name the exact pinned common directory.
+        if common_reference.is_absolute():
+            if common_reference != expected_common:
+                raise ReviewInputError("linked worktree commondir uses an alternate path")
+            common_target = common_reference
+        else:
+            if any(part not in (".", "..") for part in common_reference.parts):
+                raise ReviewInputError("linked worktree commondir contains an unpinned path segment")
+            common_target = head_path.parent / common_reference
+        if Path(os.path.normpath(common_target)) != expected_common:
+            raise ReviewInputError("linked worktree commondir differs from Git authority")
+        try:
+            resolved_common = common_target.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ReviewInputError("linked worktree commondir cannot be resolved") from exc
+        if resolved_common != expected_common.resolve(strict=True):
+            raise ReviewInputError("linked worktree commondir differs from Git authority")
+        require_private_directory(expected_common)
+        require_protected_ancestors(expected_common)
+        files.append((commondir, 4096, common_epoch, common_digest))
+    if symbolic == "HEAD":
+        # Git tolerates extra whitespace in some control files. Exact-head
+        # review evidence requires one canonical SHA and one framing LF.
+        if head_data != expected_head.encode() + b"\n":
+            raise ReviewInputError("detached HEAD control differs from expected commit")
+        return files, None, absent_commondir
+    if (not symbolic.startswith("refs/heads/")
+            or any(part in ("", ".", "..") for part in symbolic.split("/"))):
+        raise ReviewInputError("unsupported symbolic HEAD control")
+    if head_data != ("ref: " + symbolic).encode() + b"\n":
+        raise ReviewInputError("symbolic HEAD control differs from Git resolution")
+    ref_path = git_control_path(root, symbolic)
+    try:
+        ref_epoch, ref_digest, ref_data = control_file_epoch(ref_path, 4096)
+    except FileNotFoundError:
+        # Packed branches are valid, but the absence of a loose ref is also
+        # part of the epoch: a newly created loose ref must invalidate it.
+        packed = git_control_path(root, "packed-refs")
+        packed_epoch, packed_digest, packed_data = control_file_epoch(
+            packed, MAX_REVIEW_INPUT_BYTES)
+        entries = [tuple(line.split(b" ", 1)) for line in packed_data.splitlines()
+                   if b" " in line and not line.startswith(b"#")]
+        # Git can resolve the last of duplicate packed ref records. A matching
+        # final record must not conceal a conflicting or repeated earlier one:
+        # review evidence requires one unambiguous authoritative ref identity.
+        matches = [oid for oid, ref in entries if ref == symbolic.encode()]
+        if len(matches) != 1:
+            raise ReviewInputError("ambiguous packed HEAD ref entries")
+        if matches[0] != expected_head.encode():
+            raise ReviewInputError("packed HEAD ref differs from expected commit")
+        files.append((packed, MAX_REVIEW_INPUT_BYTES, packed_epoch, packed_digest))
+        return files, ref_path, absent_commondir
+    if ref_data != expected_head.encode() + b"\n":
+        raise ReviewInputError("loose HEAD ref differs from expected commit")
+    files.append((ref_path, 4096, ref_epoch, ref_digest))
+    return files, None, absent_commondir
+
+
+def verify_head_epoch(snapshot: tuple) -> None:
+    """No Git subprocess follows the final HEAD probe; verify pinned ref files."""
+    files, absent_ref, absent_commondir = snapshot
+    try:
+        traversed_dirs = []
+        for record in files:
+            path, limit, epoch, digest = record[:4]
+            current, current_digest, _ = control_file_epoch(path, limit)
+            if current != epoch or current_digest != digest:
+                raise ReviewInputError("HEAD ref changed after final Git probe")
+            if len(record) > 4:
+                traversed_dirs.extend(record[4])
+        # Both packed-ref absence and standalone gitdir commondir absence
+        # are inode claims: even a dangling symlink invalidates the epoch.
+        for missing in (absent_ref, absent_commondir):
+            if missing is None:
+                continue
+            try:
+                missing.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if missing == absent_ref:
+                    raise ReviewInputError("HEAD ref changed from packed to loose")
+                raise ReviewInputError("HEAD commondir appeared after final Git probe")
+        # Check path traversal last, after specific control-file absence gates.
+        for directory, identity, mode, owner in traversed_dirs:
+            state = directory.lstat()
+            if (not stat.S_ISDIR(state.st_mode)
+                    or stat_identity(state) != identity
+                    or state.st_mode & 0o7777 != mode
+                    or state.st_uid != owner):
+                raise ReviewInputError("worktree gitdir path alias changed")
+    except OSError as exc:
+        raise ReviewInputError("HEAD ref changed after final Git probe") from exc
+
+def require_no_pending_git_control_locks(paths: tuple[Path, ...]) -> None:
+    """Reject in-flight Git metadata writes, including dangling lock symlinks."""
+    for lock in paths:
+        try:
+            lock.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ReviewInputError("cannot inspect pending Git control update") from exc
+        raise ReviewInputError(f"pending Git control update: {lock}")
+
+
+def capture_config_epochs(paths: tuple[Path, ...]) -> tuple[list, list]:
+    """Pin present Git config files and absence of optional worktree config."""
+    present, absent = [], []
+    for path in paths:
+        try:
+            epoch, digest, _ = control_file_epoch(path, MAX_REVIEW_INPUT_BYTES)
+        except FileNotFoundError:
+            # Missing config is a meaningful state. Its parent must be
+            # trustworthy, and later creation invalidates the review epoch.
+            require_private_directory(path.parent)
+            require_protected_ancestors(path.parent)
+            absent.append(path)
+        else:
+            present.append((path, MAX_REVIEW_INPUT_BYTES, epoch, digest))
+    return present, absent
+
+
+def require_no_unbound_git_config_includes(root: Path) -> None:
+    """Reject Git config sources outside the pinned local/worktree config epoch.
+
+    An include.path or includeIf path can load mutable external configuration
+    without changing either captured repository config inode. Query Git's own
+    case-normalized parser with includes disabled, including inactive rules:
+    their future activation must not silently change review interpretation.
+    """
+    records = git(root, "config", "--no-includes", "--null", "--list")
+    for record in records.split(b"\x00"):
+        key = record.split(b"\n", 1)[0].lower()
+        if key.startswith((b"include.", b"includeif.")):
+            raise ReviewInputError("unbound Git configuration include")
+
+
+def require_no_object_alternates(path: Path) -> None:
+    """No mutable external Git object store may supply committed review bytes."""
+    require_private_directory(path.parent)
+    require_protected_ancestors(path.parent)
+    try:
+        # lstat also catches dangling symlinks, unlike Path.exists().
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ReviewInputError("cannot inspect Git object alternates") from exc
+    raise ReviewInputError("unbound Git object alternates authority")
+
+
+
+def _capture_git_object_epoch_unchecked(objects: Path) -> dict[str, tuple]:
+    """Pin private, non-aliased local Git objects across review probes.
+
+    Loose objects and pack/index sidecars share one object directory. A
+    hardlinked object has an independently mutable external pathname, even
+    when HEAD and every working review input remain unchanged. Refuse such
+    storage rather than presenting its bytes as independently held evidence.
+    """
+    # Caller resolved this path before the final Git probes. Inventory must
+    # remain filesystem-only so no later Git subprocess can race input checks.
+    if objects.resolve() != objects:
+        raise ReviewInputError("noncanonical Git object store")
+    require_private_directory(objects)
+    require_protected_ancestors(objects)
+    # Mode 0700 on the object root protects descendants even when Git creates
+    # group-writable fanout directories. If group traversal is allowed, a
+    # group-writable descendant is independently mutable and must be rejected.
+    root_state = objects.lstat()
+    group_can_traverse_objects = bool(root_state.st_mode & stat.S_IXGRP)
+    # Descendant identity alone cannot detect a temporary group-writable
+    # object root restored before the final scan. Pin the root's own ctime,
+    # permissions and inode across the entire review epoch.
+    entries: dict[str, tuple] = {
+        ".": (
+            stat.S_IFMT(root_state.st_mode), root_state.st_uid,
+            root_state.st_mode & 0o7777, root_state.st_nlink,
+            *stat_identity(root_state),
+        )
+    }
+    pending = [objects]
+    while pending:
+        directory = pending.pop()
+        directory_state = directory.lstat()
+        # A group-writable descendant is unsafe only when the group can
+        # traverse the object root. World-writable entries remain forbidden.
+        if (not stat.S_ISDIR(directory_state.st_mode)
+                or directory_state.st_uid not in (0, os.geteuid())
+                or directory_state.st_mode & stat.S_IWOTH
+                or (group_can_traverse_objects
+                    and directory_state.st_mode & stat.S_IWGRP)):
+            raise ReviewInputError("untrusted Git object store directory")
+        for item in directory.iterdir():
+            if len(entries) >= MAX_GIT_OBJECT_ENTRIES:
+                raise ReviewInputError("Git object store exceeds bounded review inventory")
+            state = item.lstat()
+            relative = item.relative_to(objects).as_posix()
+            if stat.S_ISDIR(state.st_mode):
+                pending.append(item)
+            elif stat.S_ISREG(state.st_mode):
+                if state.st_nlink != 1:
+                    raise ReviewInputError("Git object store hardlinked external storage")
+                if (state.st_uid not in (0, os.geteuid())
+                        or state.st_mode & stat.S_IWOTH
+                        or (group_can_traverse_objects
+                            and state.st_mode & stat.S_IWGRP)):
+                    raise ReviewInputError("untrusted Git object store file")
+            else:
+                raise ReviewInputError("nonregular Git object store entry")
+            entries[relative] = (
+                stat.S_IFMT(state.st_mode), state.st_uid,
+                state.st_mode & 0o7777, state.st_nlink,
+                *stat_identity(state),
+            )
+    if stat_identity(objects.lstat()) != stat_identity(root_state):
+        raise ReviewInputError("Git object store root changed during inventory")
+    return entries
+
+def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
+    """Fail closed if object storage disappears or becomes unreadable mid-scan."""
+    try:
+        return _capture_git_object_epoch_unchecked(objects)
+    except OSError as exc:
+        # A concurrent removal, rename, or permission change must invalidate
+        # the review epoch, not leak a raw filesystem exception to callers.
+        raise ReviewInputError("Git object store changed during inventory") from exc
+
+
+def require_git_object_root_epoch(objects: Path, admitted: tuple) -> None:
+    """Recheck root custody after the final input sweep without another inventory."""
+    require_private_directory(objects)
+    require_protected_ancestors(objects)
+    current = objects.lstat()
+    epoch = (
+        stat.S_IFMT(current.st_mode), current.st_uid,
+        current.st_mode & 0o7777, current.st_nlink,
+        *stat_identity(current),
+    )
+    if epoch != admitted:
+        raise ReviewInputError("Git object store root changed after final inventory")
+
+
+def require_git_object_final_epochs(
+    objects: Path, admitted: dict[str, tuple],
+) -> None:
+    """Recheck all inventoried object identities after the last input sweep.
+
+    A transient permission or inode change in a loose object or fanout
+    directory can be restored after the final full inventory without changing
+    the object-root inode. Parent directory epochs also bind new child names.
+    This check is filesystem-only; it must never invoke another Git process.
+    """
+    # The root is traversal authority. Reject a substituted root before
+    # resolving any descendant path through an untrusted symlink.
+    require_git_object_root_epoch(objects, admitted["."])
+    for relative, original in admitted.items():
+        if relative == ".":
+            continue
+        path = objects / relative
+        try:
+            state = path.lstat()
+        except OSError as exc:
+            raise ReviewInputError(
+                f"Git object store entry disappeared after final inventory: {relative}"
+            ) from exc
+        current = (
+            stat.S_IFMT(state.st_mode), state.st_uid,
+            state.st_mode & 0o7777, state.st_nlink,
+            *stat_identity(state),
+        )
+        if current != original:
+            raise ReviewInputError(
+                f"Git object store entry changed after final inventory: {relative}"
+            )
+    # Finish with the pinned root, which is the traversal authority.
+    require_git_object_root_epoch(objects, admitted["."])
+
+
 def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
     """Bind bounded input bytes to the checked inode, never a later path target."""
     # The checked regular pathname can be replaced by a FIFO before open.
@@ -160,6 +584,31 @@ def read_bounded_working_input(file: Path, before: os.stat_result) -> bytes:
         return working
 
 
+def require_verified_input_epochs(
+    root: Path, verified_inputs: list[tuple[str, tuple[int, ...]]],
+) -> None:
+    """Reject late input substitution without invoking Git after final probes."""
+    for relative, admitted_identity in verified_inputs:
+        directory = root
+        try:
+            for component in Path(relative).parts[:-1]:
+                directory /= component
+                require_private_directory(directory)
+            file = root / relative
+            current = file.lstat()
+            if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                    or current.st_uid not in (0, os.geteuid())
+                    or current.st_mode & 0o022 or file.resolve() != file
+                    or stat_identity(current) != admitted_identity):
+                raise ReviewInputError(f"review input changed after verification: {relative}")
+        except OSError as exc:
+            # A deleted input or replaced ancestor is a failed review epoch,
+            # not an unhandled filesystem exception escaping the admission API.
+            raise ReviewInputError(
+                f"review input unavailable after verification: {relative}"
+            ) from exc
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -172,6 +621,12 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
+    # Resolve Git's common object directory (also for linked worktrees).
+    # Refuse external alternates before reading any committed review blobs.
+    alternates_path = git_control_path(root, "objects/info/alternates")
+    objects_path = git_control_path(root, "objects")
+    require_no_object_alternates(alternates_path)
+    object_epoch = capture_git_object_epoch(objects_path)
     head = git(repo, "rev-parse", "HEAD").decode().strip()
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
@@ -234,11 +689,49 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # The final filesystem sweep cannot observe staged-only changes. Pin the
     # index inode/epoch before the last Git probes and verify it again after
     # the sweep; no later Git subprocess is permitted.
+    head_epoch = capture_head_epoch(root, head)
+    # A split index delegates tracked entries to sharedindex.<oid>, outside
+    # the index inode pinned below. A late replacement of that external file
+    # can change Git's staged interpretation without changing the pinned
+    # index or HEAD. Fail closed until sharedindex epochs are independently
+    # captured and verified; ordinary and linked full indexes remain valid.
+    if git(root, "rev-parse", "--shared-index-path").strip():
+        raise ReviewInputError("unbound Git split index sharedindex authority")
     index_name = git(root, "rev-parse", "--git-path", "index").decode().strip()
     index_path = Path(index_name)
     if not index_path.is_absolute():
         index_path = root / index_path
     index_epoch = require_index_epoch(index_path)
+    # Git writes metadata via adjacent *.lock files before atomically
+    # replacing the authoritative pathname. A stable current inode alone
+    # cannot prove that no pending update is already underway.
+    head_files, absent_ref, absent_commondir = head_epoch
+    # Git config updates can rebind object and worktree interpretation during
+    # the final read-only probes. Treat pending repository or worktree config
+    # writes as an unstable review epoch, just like HEAD/index updates.
+    config_paths = (
+        git_control_path(root, "config"),
+        git_control_path(root, "config.worktree"),
+    )
+    config_files, absent_config = capture_config_epochs(config_paths)
+    require_no_unbound_git_config_includes(root)
+    # Git config can change without leaving a .lock file (e.g. direct
+    # replacement). Bind its actual inode/bytes and optional-file absence.
+    head_files.extend(config_files)
+    control_paths = [
+        index_path,
+        git_control_path(root, "packed-refs"),
+        *config_paths,
+    ]
+    control_paths.extend(record[0] for record in head_files)
+    if absent_ref is not None:
+        control_paths.append(absent_ref)
+    if absent_commondir is not None:
+        control_paths.append(absent_commondir)
+    lock_paths = tuple(dict.fromkeys(
+        path.with_name(path.name + ".lock") for path in control_paths
+    ))
+    require_no_pending_git_control_locks(lock_paths)
     # Complete every final index probe before the final HEAD check. A Git
     # subprocess can overlap a concurrent mutation of an earlier input;
     # performing probes after final filesystem checks could admit stale
@@ -249,24 +742,73 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         raise ReviewInputError("review candidate HEAD changed during inspection")
     # No Git subprocesses follow this point. Recheck every admitted input's
     # filesystem identity after all final Git probes have completed.
-    for relative, admitted_identity in verified_inputs:
-        directory = root
-        for component in Path(relative).parts[:-1]:
-            directory /= component
-            require_private_directory(directory)
-        file = root / relative
-        current = file.lstat()
-        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
-                or current.st_uid not in (0, os.geteuid())
-                or current.st_mode & 0o022 or file.resolve() != file
-                or stat_identity(current) != admitted_identity):
-            raise ReviewInputError(f"review input changed after verification: {relative}")
+    require_verified_input_epochs(root, verified_inputs)
     # The final Git and filesystem reads are untrusted intervals. Recheck
     # the worktree root and its ancestors before returning review evidence.
     require_private_directory(root)
     require_protected_ancestors(root)
     if require_index_epoch(index_path) != index_epoch:
         raise ReviewInputError("review index changed after final Git probe")
+    verify_head_epoch(head_epoch)
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
+    require_no_pending_git_control_locks(lock_paths)
+    # No Git subprocess follows the final HEAD probe; the absence of an
+    # external object-store pointer is part of the final review epoch.
+    require_no_object_alternates(alternates_path)
+    if capture_git_object_epoch(objects_path) != object_epoch:
+        raise ReviewInputError("Git object store changed after final Git probe")
+    # Object inventory can take time. An input may change after the preceding
+    # filesystem sweep even when the object inventory itself remains stable.
+    # Recheck admitted input identities after inventory without invoking Git.
+    require_verified_input_epochs(root, verified_inputs)
+    require_private_directory(root)
+    require_protected_ancestors(root)
+    # The bounded object inventory is a filesystem-only operation. Reconfirm
+    # the control epoch afterward without executing another Git subprocess.
+    if require_index_epoch(index_path) != index_epoch:
+        raise ReviewInputError("review index changed after object-store verification")
+    verify_head_epoch(head_epoch)
+    # The object inventory is the last potentially lengthy inspection. A
+    # config.worktree creation, pending metadata lock, or new alternates
+    # pointer after its preceding sweep must not escape the final epoch.
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
+    require_no_pending_git_control_locks(lock_paths)
+    require_no_object_alternates(alternates_path)
+    # A transient writable object root can be restored after the final
+    # inventory and escape permission-only checks. Its ctime is part of the
+    # previously pinned epoch, even when its final mode looks private.
+    require_git_object_final_epochs(objects_path, object_epoch)
+    # The last object-entry walk is itself an untrusted interval. A config,
+    # pending lock, or alternates pointer created during that walk must not
+    # escape the preceding checks. Close the control epoch once more using
+    # filesystem-only reads; this does not claim race-free atomic admission.
+    require_verified_input_epochs(root, verified_inputs)
+    require_private_directory(root)
+    require_protected_ancestors(root)
+    if require_index_epoch(index_path) != index_epoch:
+        raise ReviewInputError("review index changed during final object epoch")
+    verify_head_epoch(head_epoch)
+    for missing in absent_config:
+        try:
+            missing.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise ReviewInputError("Git config appeared after final Git probe")
+    require_no_pending_git_control_locks(lock_paths)
+    require_no_object_alternates(alternates_path)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
@@ -283,7 +825,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         manifest = build_manifest(args.repo, args.expected_head)
-    except (ReviewInputError, OSError) as exc:
+    except (ReviewInputError, OSError, UnicodeError) as exc:
+        # Git metadata paths/refs are text, but malformed bytes must produce
+        # a structured fail-closed result, never an uncaught CLI traceback.
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(manifest, indent=2, sort_keys=True))

@@ -4,7 +4,7 @@ use prime_contracts::{
     APPLICATIONS_PROJECTION_SCHEMA, CAPABILITY_INTERFACE_VERSION,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -120,6 +120,13 @@ impl ComponentTransactionState {
                                     | 0xFFF9..=0xFFFB | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
                                     | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             )
+                            // Noncharacters must not enter durable transaction
+                            // failure/recovery evidence on any Unicode plane.
+                            || {
+                                let point = c as u32;
+                                (0xFDD0..=0xFDEF).contains(&point)
+                                    || (point & 0xFFFE) == 0xFFFE
+                            }
                     })
             }
             _ => true,
@@ -170,6 +177,8 @@ pub enum ComponentAdmissionError {
     InvalidTargetPackageDigest(String),
     #[error("component publisher signature was not admitted")]
     SignatureRejected,
+    #[error("component {0} requires Prime generation handoff, not component installation")]
+    BaseSystemGenerationHandoffRequired(String),
     #[error("component does not support host architecture {0}")]
     ArchitectureMismatch(String),
     #[error(
@@ -205,6 +214,20 @@ pub enum ComponentAdmissionError {
     },
     #[error("installed component {0} has duplicate manifest evidence")]
     DuplicateInstalledManifest(String),
+    #[error("component {0} appears more than once in the registration selection")]
+    DuplicateRegistrationTarget(String),
+    #[error("explicit registration scope differs from prerequisite closure at {0}")]
+    RegistrationScopeMismatch(String),
+    #[error("component {0} appears more than once in the unregistration selection")]
+    DuplicateUnregistrationTarget(String),
+    #[error("explicit unregistration scope differs from dependent closure at {0}")]
+    UnregistrationScopeMismatch(String),
+    #[error("registration {registration} is claimed by both {first_component_id} and {second_component_id}")]
+    RegistrationIdentityConflict {
+        registration: String,
+        first_component_id: String,
+        second_component_id: String,
+    },
     #[error("installed component dependency graph contains a cycle through {0}")]
     InstalledDependencyCycle(String),
     #[error("removing {component_id} would strand installed dependent {dependent_id}")]
@@ -233,6 +256,10 @@ pub enum ComponentAdmissionError {
     RollbackDigestUnchanged(String),
     #[error("component {0} requires explicit persistent-data migration before removal")]
     PersistentDataMigrationRequired(String),
+    #[error("component {0} has a duplicate migration-completion declaration")]
+    DuplicateMigrationAcknowledgement(String),
+    #[error("component {0} has a migration declaration outside the exact migration-required removal scope")]
+    UnexpectedMigrationAcknowledgement(String),
 }
 
 pub fn plan_component_transaction(
@@ -321,6 +348,16 @@ pub fn plan_component_transaction_checked(
         return Err(ComponentAdmissionError::CandidateManifestMismatch(
             package.component_id.clone(),
         ));
+    }
+    // A VerifiedComponentPackage is publicly constructible. Checked planning
+    // must independently preserve the immutable-base boundary even when a
+    // caller skips the offline verifier's GenerationHandoff outcome.
+    if !candidate_manifest.base_system_requirements.is_empty() {
+        return Err(
+            ComponentAdmissionError::BaseSystemGenerationHandoffRequired(
+                candidate_manifest.component_id.clone(),
+            ),
+        );
     }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     if matches!(&plan.kind, ComponentTransactionKind::Update { .. }) {
@@ -443,6 +480,28 @@ fn index_installed_manifests<'a>(
             ));
         }
     }
+    // Registration names are global Prime authority identities, not scoped
+    // to each package. Two independently valid manifests cannot both own
+    // the same service, Application Profile or exposed capability.
+    let mut registration_owners = BTreeMap::<&str, &str>::new();
+    for manifest in manifests.values() {
+        for registration in manifest
+            .application_profiles
+            .iter()
+            .chain(&manifest.services)
+            .chain(&manifest.capabilities)
+        {
+            if let Some(previous_owner) =
+                registration_owners.insert(registration.as_str(), manifest.component_id.as_str())
+            {
+                return Err(ComponentAdmissionError::RegistrationIdentityConflict {
+                    registration: registration.clone(),
+                    first_component_id: previous_owner.to_owned(),
+                    second_component_id: manifest.component_id.clone(),
+                });
+            }
+        }
+    }
     // Exact manifest identity is insufficient if the installed dependency
     // graph is already broken. Reject that inventory before issuing any
     // dependency-sensitive update, removal, or rollback plan.
@@ -492,6 +551,324 @@ fn index_installed_manifests<'a>(
         ));
     }
     Ok(manifests)
+}
+
+/// Return a deterministic dependency-first registration preview for a complete,
+/// separately authenticated installed manifest inventory.
+///
+/// This is source-only planning evidence. It neither registers services nor
+/// authorizes component activation, removal, installation, or promotion.
+/// Unrelated ready components are ordered by canonical component ID.
+pub fn plan_component_registration_order_checked(
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut outstanding = BTreeMap::<&str, usize>::new();
+    let mut dependents = BTreeMap::<&str, Vec<&str>>::new();
+    for (&id, manifest) in &manifests {
+        outstanding.insert(id, manifest.dependencies.len());
+        for dependency in &manifest.dependencies {
+            dependents
+                .entry(dependency.component_id.as_str())
+                .or_default()
+                .push(id);
+        }
+    }
+    let mut ready: BTreeSet<&str> = outstanding
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut order = Vec::with_capacity(manifests.len());
+    while let Some(id) = ready.pop_first() {
+        order.push(id.to_owned());
+        if let Some(users) = dependents.get(id) {
+            for user in users {
+                let count = outstanding
+                    .get_mut(user)
+                    .expect("complete inventory dependencies were validated");
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(user);
+                }
+            }
+        }
+    }
+    // The inventory validator already rejects cycles. Retain this guard
+    // independently so a future refactor cannot emit a partial preview.
+    if order.len() != manifests.len() {
+        let id = outstanding
+            .iter()
+            .find_map(|(&id, &count)| (count > 0).then_some(id))
+            .expect("incomplete registration order has an unresolved dependency");
+        return Err(ComponentAdmissionError::InstalledDependencyCycle(
+            id.to_owned(),
+        ));
+    }
+    Ok(order)
+}
+
+/// Preview dependent-first unregistration of a complete, separately authenticated
+/// installed component inventory.
+///
+/// This is the exact reverse of the deterministic dependency-first registration
+/// preview: consumers are considered before providers, even across multiple
+/// dependency levels. The shared inventory validator rejects missing manifests,
+/// identity conflicts and dependency cycles before returning any plan.
+///
+/// The result is source-only planning evidence. It performs no unregistration,
+/// shutdown, removal, rollback, activation or protected authority change.
+pub fn plan_component_unregistration_order_checked(
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let mut order = plan_component_registration_order_checked(installed, installed_manifests)?;
+    order.reverse();
+    Ok(order)
+}
+
+/// Preview registration of selected optional components together with every
+/// transitively required installed prerequisite, in deterministic dependency-first
+/// order. All installed components and pinned manifests must pass full inventory
+/// validation even when a selection is empty.
+///
+/// The preview is deliberately conservative: it includes prerequisites whether
+/// or not a separate runtime has already registered them. It does not infer
+/// current registration state, install packages, register services or capabilities,
+/// or grant activation/promotion authority.
+pub fn plan_component_registration_subset_checked(
+    selected_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let full_order = plan_component_registration_order_checked(installed, installed_manifests)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut selected = BTreeSet::new();
+    for &id in selected_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !manifests.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !selected.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateRegistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut required = BTreeSet::new();
+    let mut pending: Vec<&str> = selected.into_iter().collect();
+    while let Some(id) = pending.pop() {
+        if required.insert(id) {
+            let manifest = manifests
+                .get(id)
+                .expect("selection and dependency inventory were validated");
+            pending.extend(
+                manifest
+                    .dependencies
+                    .iter()
+                    .map(|dependency| dependency.component_id.as_str()),
+            );
+        }
+    }
+    Ok(full_order
+        .into_iter()
+        .filter(|id| required.contains(id.as_str()))
+        .collect())
+}
+
+/// Preview a registration only when the caller declares the complete
+/// prerequisite-closed scope. The subset planner may expand prerequisites;
+/// this stricter form requires every expanded component to be named explicitly
+/// and rejects unrelated entries. The declaration is not approval, signature
+/// verification, installation, activation, or runtime registration authority.
+pub fn plan_component_registration_explicit_scope_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let closure = plan_component_registration_subset_checked(
+        selected_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let mut scope = BTreeSet::new();
+    for &id in explicit_scope_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !inventory.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !scope.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateRegistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let required: BTreeSet<&str> = closure.iter().map(String::as_str).collect();
+    if let Some(id) = required.symmetric_difference(&scope).next() {
+        return Err(ComponentAdmissionError::RegistrationScopeMismatch(
+            (*id).to_owned(),
+        ));
+    }
+    Ok(closure)
+}
+
+/// Preview unregistration of selected installed components and every transitive
+/// installed dependent that would otherwise be stranded. The returned closure
+/// is explicit and dependent-first, not permission to silently remove consumers.
+///
+/// Callers must independently authenticate the complete installed manifest
+/// inventory and obtain approval for every member of the expanded selection.
+/// This is planning-only evidence: no services, packages, data, or authorities
+/// are changed. Unknown, duplicate, and noncanonical targets fail closed.
+pub fn plan_component_unregistration_dependent_closure_checked(
+    selected_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let full_order = plan_component_unregistration_order_checked(installed, installed_manifests)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut selected = BTreeSet::new();
+    for &id in selected_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !manifests.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !selected.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateUnregistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut dependents = BTreeMap::<&str, Vec<&str>>::new();
+    for manifest in manifests.values() {
+        for dependency in &manifest.dependencies {
+            dependents
+                .entry(dependency.component_id.as_str())
+                .or_default()
+                .push(manifest.component_id.as_str());
+        }
+    }
+    let mut required = BTreeSet::new();
+    let mut pending: Vec<&str> = selected.into_iter().collect();
+    while let Some(id) = pending.pop() {
+        if required.insert(id) {
+            if let Some(users) = dependents.get(id) {
+                pending.extend(users.iter().copied());
+            }
+        }
+    }
+    Ok(full_order
+        .into_iter()
+        .filter(|id| required.contains(id.as_str()))
+        .collect())
+}
+
+/// Preview a dependent-closed unregistration only when the caller supplies
+/// the complete explicit scope. An expanded dependent closure is never silently
+/// accepted as the requested scope; unrelated components cannot be smuggled in.
+///
+/// The scope is an untrusted declaration, NOT approval or authentication.
+/// Callers must separately authenticate installed manifests and obtain
+/// authorization for every returned component before any mutation.
+pub fn plan_component_unregistration_explicit_scope_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let closure = plan_component_unregistration_dependent_closure_checked(
+        selected_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let mut scope = BTreeSet::new();
+    for &id in explicit_scope_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !inventory.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !scope.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateUnregistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    let required: BTreeSet<&str> = closure.iter().map(String::as_str).collect();
+    if let Some(id) = required.symmetric_difference(&scope).next() {
+        return Err(ComponentAdmissionError::UnregistrationScopeMismatch(
+            (*id).to_owned(),
+        ));
+    }
+    Ok(closure)
+}
+
+/// Preview a selected subset of component unregistrations without stranding
+/// installed consumers that are not part of the selection.
+///
+/// The complete installed inventory and its pinned manifests are validated
+/// before planning. A selected provider may be unregistered only when every
+/// installed dependent is also selected; dependency-first registration is
+/// reversed to yield dependent-first unregistration. Unknown, noncanonical
+/// and duplicate selections fail closed. No state or authority is mutated.
+pub fn plan_component_unregistration_subset_checked(
+    selected_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<String>, ComponentAdmissionError> {
+    let full_order = plan_component_unregistration_order_checked(installed, installed_manifests)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let mut selected = BTreeSet::new();
+    for &id in selected_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !manifests.contains_key(id) {
+            return Err(ComponentAdmissionError::DependencyMissing(id.to_owned()));
+        }
+        if !selected.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateUnregistrationTarget(
+                id.to_owned(),
+            ));
+        }
+    }
+    for manifest in manifests.values() {
+        if selected.contains(manifest.component_id.as_str()) {
+            continue;
+        }
+        for dependency in &manifest.dependencies {
+            if selected.contains(dependency.component_id.as_str()) {
+                return Err(ComponentAdmissionError::DependentComponentInstalled {
+                    component_id: dependency.component_id.clone(),
+                    dependent_id: manifest.component_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(full_order
+        .into_iter()
+        .filter(|id| selected.contains(id.as_str()))
+        .collect())
 }
 
 /// Dependency-aware P2 removal preflight over a complete installed inventory.
@@ -548,6 +925,72 @@ pub fn plan_component_data_removal(
         ),
         PersistentDataPolicy::Ephemeral => Ok(ComponentDataDisposition::DiscardEphemeral),
     }
+}
+
+/// Preview the exact dependent-closed unregistration order together with the
+/// persistent-data disposition for every component in that scope.
+///
+/// A caller must declare the complete scope and separately attest which
+/// ExplicitMigration policies have completed. Declarations for unrelated,
+/// non-migrating or duplicate components are rejected; missing migration
+/// declarations fail closed. These declarations are NOT authenticated migration
+/// evidence. This is source-only planning, never deletion, registration,
+/// component lifecycle execution, or permission to alter user/project data.
+pub fn plan_component_unregistration_data_checked(
+    selected_component_ids: &[&str],
+    explicit_scope_component_ids: &[&str],
+    migrated_component_ids: &[&str],
+    installed: &[InstalledComponent],
+    installed_manifests: &[PrimeComponentManifest],
+) -> Result<Vec<(String, ComponentDataDisposition)>, ComponentAdmissionError> {
+    let order = plan_component_unregistration_explicit_scope_checked(
+        selected_component_ids,
+        explicit_scope_component_ids,
+        installed,
+        installed_manifests,
+    )?;
+    let inventory = index_installed(installed)?;
+    let manifests = index_installed_manifests(installed, installed_manifests)?;
+    let scope: BTreeSet<&str> = order.iter().map(String::as_str).collect();
+    let mut migrated = BTreeSet::new();
+    for &id in migrated_component_ids {
+        if !valid_component_identifier(id) {
+            return Err(ComponentAdmissionError::InvalidTargetComponentId(
+                id.to_owned(),
+            ));
+        }
+        if !migrated.insert(id) {
+            return Err(ComponentAdmissionError::DuplicateMigrationAcknowledgement(
+                id.to_owned(),
+            ));
+        }
+        if !scope.contains(id)
+            || !matches!(
+                &manifests
+                    .get(id)
+                    .expect("exact scope inventory validated")
+                    .persistent_data_policy,
+                PersistentDataPolicy::ExplicitMigration
+            )
+        {
+            return Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(
+                id.to_owned(),
+            ));
+        }
+    }
+    let mut dispositions = Vec::with_capacity(order.len());
+    for id in order {
+        let manifest = manifests
+            .get(id.as_str())
+            .expect("explicit dependent closure inventory validated");
+        let current = inventory
+            .get(id.as_str())
+            .expect("explicit dependent closure inventory validated");
+        let disposition =
+            plan_component_data_removal(manifest, current, migrated.contains(id.as_str()))?;
+        dispositions.push((id, disposition));
+    }
+    Ok(dispositions)
 }
 
 pub fn plan_component_rollback(
@@ -616,6 +1059,17 @@ pub fn plan_component_rollback_checked(
         return Err(ComponentAdmissionError::InstalledManifestMismatch(
             retained.component_id.clone(),
         ));
+    }
+    // Retained packages requiring image-owned changes belong to the Prime
+    // generation/update authority, never to an optional-component rollback.
+    // The public checked planner must enforce this independently of whether
+    // the caller ran the offline verifier (which returns GenerationHandoff).
+    if !retained_manifest.base_system_requirements.is_empty() {
+        return Err(
+            ComponentAdmissionError::BaseSystemGenerationHandoffRequired(
+                retained_manifest.component_id.clone(),
+            ),
+        );
     }
     let manifests = index_installed_manifests(installed, installed_manifests)?;
     let observed = manifests
@@ -905,6 +1359,9 @@ fn private_package_inode(metadata: &fs::Metadata) -> bool {
         && metadata.nlink() == 1
         && (metadata.uid() == 0 || metadata.uid() == unsafe { libc::geteuid() })
         && metadata.mode() & 0o022 == 0
+        // Component packages are inert data files. A privileged execution
+        // mode is not package authority, even when bytes and signature match.
+        && metadata.mode() & 0o6000 == 0
 }
 
 #[cfg(unix)]
@@ -1166,6 +1623,38 @@ mod tests {
         assert_eq!(verified.package_path, path);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn privileged_mode_bits_cannot_enter_offline_component_package_admission() {
+        use std::os::unix::fs::PermissionsExt;
+        // A .primepkg is an inert data artifact, not a privileged executable.
+        // Setuid/setgid bits must not survive even a valid digest/signature.
+        for special in [0o4000, 0o2000] {
+            let bytes = b"origins-package-v2";
+            let (_dir, path) = write_package(bytes);
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755 | special)).unwrap();
+            let mut signature_called = false;
+            let result = verify_offline_component_package(
+                &path,
+                &manifest(bytes),
+                &context(&[]),
+                |_| {
+                    signature_called = true;
+                    true
+                },
+                |_, _| true,
+            );
+            assert!(
+                matches!(result, Err(ComponentAdmissionError::UnsafePackagePath)),
+                "privileged mode {special:o} was admitted"
+            );
+            assert!(
+                !signature_called,
+                "unsafe package reached signature authority"
+            );
+        }
+    }
+
     #[test]
     fn tampered_package_or_untrusted_signature_fails_closed() {
         let bytes = b"origins-package-v2";
@@ -1341,6 +1830,111 @@ mod tests {
                 requirements: vec!["kernel.module.example".to_owned()],
             }
         );
+    }
+
+    #[test]
+    fn checked_component_plan_never_bypasses_base_generation_handoff() {
+        // An offline verifier returns GenerationHandoff for this manifest.
+        // A caller can nevertheless construct the public VerifiedComponentPackage
+        // directly: checked planning must not turn it into a component install.
+        let mut candidate = manifest(b"base-driver");
+        candidate.base_system_requirements = vec!["kernel.module.example".to_owned()];
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/unadmitted-base-driver.primepkg"),
+            package_digest: candidate.package_digest.clone(),
+            component_id: candidate.component_id.clone(),
+            revision: candidate.revision,
+            version: candidate.version.clone(),
+            publisher_id: candidate.publisher_id.clone(),
+        };
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &[], &[], &candidate),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == candidate.component_id
+        ));
+
+        let mut optional = candidate.clone();
+        optional.base_system_requirements.clear();
+        assert!(matches!(
+            plan_component_transaction_checked(&package, &[], &[], &optional),
+            Ok(ComponentTransactionPlan {
+                kind: ComponentTransactionKind::Install,
+                ..
+            })
+        ));
+
+        let current = InstalledComponent {
+            component_id: candidate.component_id.clone(),
+            revision: 1,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut original = candidate.clone();
+        original.base_system_requirements.clear();
+        original.revision = 1;
+        original.package_digest = current.package_digest.clone();
+        assert!(matches!(
+            plan_component_transaction_checked(
+                &package,
+                std::slice::from_ref(&current),
+                &[original],
+                &candidate,
+            ),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == candidate.component_id
+        ));
+    }
+
+    #[test]
+    fn checked_rollback_never_bypasses_base_generation_handoff() {
+        // A retained manifest may require image-owned changes even when its
+        // digest and publisher are independently authenticated. Rollback must
+        // not silently turn that generation handoff into a component plan.
+        let current = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 3,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let retained = InstalledComponent {
+            component_id: current.component_id.clone(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let mut current_manifest = manifest(b"current");
+        current_manifest.revision = current.revision;
+        current_manifest.version = "3.0.0".to_owned();
+        current_manifest.package_digest = current.package_digest.clone();
+        let mut retained_manifest = current_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.version = "2.0.0".to_owned();
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.base_system_requirements = vec!["kernel.module.example".to_owned()];
+
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                std::slice::from_ref(&current_manifest),
+            ),
+            Err(ComponentAdmissionError::BaseSystemGenerationHandoffRequired(id))
+                if id == retained.component_id
+        ));
+
+        retained_manifest.base_system_requirements.clear();
+        assert!(matches!(
+            plan_component_rollback_checked(
+                &current,
+                &retained,
+                &retained_manifest,
+                std::slice::from_ref(&current),
+                &[current_manifest],
+            ),
+            Ok(ComponentTransactionPlan {
+                kind: ComponentTransactionKind::Rollback { .. },
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2312,6 +2906,51 @@ mod tests {
     }
 
     #[test]
+    fn transaction_reasons_reject_unicode_noncharacters() {
+        use ComponentTransactionState as State;
+        let points = (0xFDD0..=0xFDEF)
+            .chain((0..=16).flat_map(|plane| [plane * 0x10000 + 0xFFFE, plane * 0x10000 + 0xFFFF]));
+        for point in points {
+            let mark = char::from_u32(point).unwrap();
+            let reason = format!("disk{mark}failure");
+            for next in [
+                State::Failed {
+                    reason: reason.clone(),
+                },
+                State::RecoveryRequired {
+                    reason: reason.clone(),
+                },
+            ] {
+                assert_eq!(
+                    State::Applying.advance(next),
+                    Err(ComponentTransactionTransitionError),
+                    "noncharacter admitted into transaction: U+{point:06X}"
+                );
+            }
+            assert_eq!(
+                (State::Failed {
+                    reason: reason.clone()
+                })
+                .advance(State::RecoveryRequired {
+                    reason: "restore".into()
+                }),
+                Err(ComponentTransactionTransitionError),
+                "noncharacter admitted from prior failure: U+{point:06X}"
+            );
+            assert_eq!(
+                (State::RecoveryRequired { reason }).advance(State::RolledBack),
+                Err(ComponentTransactionTransitionError),
+                "noncharacter allowed rollback: U+{point:06X}"
+            );
+        }
+        assert!(State::Applying
+            .advance(State::Failed {
+                reason: "ordinary disk failure".into(),
+            })
+            .is_ok());
+    }
+
+    #[test]
     fn removal_data_policy_is_explicit_and_fail_closed() {
         let bytes = b"origins-package-v2";
         let mut manifest = manifest(bytes);
@@ -3006,6 +3645,8 @@ mod tests {
         target_manifest.package_digest = DIGEST_A.to_owned();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3042,6 +3683,8 @@ mod tests {
         ));
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = DIGEST_A.to_owned();
         assert!(matches!(
@@ -3164,6 +3807,8 @@ mod tests {
         target_manifest.package_digest = target.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3225,6 +3870,129 @@ mod tests {
     }
 
     #[test]
+    fn checked_plans_reject_cross_component_registration_ownership_aliases() {
+        let first = InstalledComponent {
+            component_id: "origins.runtime".to_owned(),
+            revision: 2,
+            package_digest: DIGEST_A.to_owned(),
+        };
+        let second = InstalledComponent {
+            component_id: "consumer.runtime".to_owned(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut first_manifest = manifest(b"origins");
+        first_manifest.package_digest = first.package_digest.clone();
+        let mut second_manifest = manifest(b"consumer");
+        second_manifest.component_id = second.component_id.clone();
+        second_manifest.revision = second.revision;
+        second_manifest.package_digest = second.package_digest.clone();
+        second_manifest.services = vec!["consumerd".to_owned()];
+        second_manifest.capabilities = vec!["consumer.factory".to_owned()];
+        let installed = [first.clone(), second.clone()];
+        assert!(index_installed_manifests(
+            &installed,
+            &[first_manifest.clone(), second_manifest.clone()],
+        )
+        .is_ok());
+
+        for family in 0..3 {
+            let mut conflicting = second_manifest.clone();
+            match family {
+                0 => conflicting.services = first_manifest.services.clone(),
+                1 => conflicting.capabilities = first_manifest.capabilities.clone(),
+                _ => conflicting.application_profiles = first_manifest.services.clone(),
+            }
+            assert!(
+                index_installed_manifests(&installed, &[first_manifest.clone(), conflicting])
+                    .is_err(),
+                "distinct components must not claim the same registration (family {family})"
+            );
+        }
+
+        let package = VerifiedComponentPackage {
+            package_path: PathBuf::from("/tmp/new-component.primepkg"),
+            package_digest: DIGEST_B.to_owned(),
+            component_id: "new.runtime".to_owned(),
+            revision: 1,
+            version: "1.0.0".to_owned(),
+            publisher_id: "thetechguy.origins".to_owned(),
+        };
+        let mut candidate = first_manifest.clone();
+        candidate.component_id = package.component_id.clone();
+        candidate.revision = package.revision;
+        candidate.version = package.version.clone();
+        candidate.package_digest = package.package_digest.clone();
+        assert!(
+            plan_component_transaction_checked(
+                &package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &candidate
+            )
+            .is_err(),
+            "checked install must reject an already-owned service and capability"
+        );
+
+        candidate.services = vec!["newd".to_owned()];
+        candidate.capabilities = vec!["new.factory".to_owned()];
+        assert!(
+            plan_component_transaction_checked(
+                &package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &candidate,
+            )
+            .is_ok(),
+            "distinct registrations remain admissible"
+        );
+
+        let update_package = VerifiedComponentPackage {
+            component_id: first.component_id.clone(),
+            revision: 3,
+            version: "3.0.0".to_owned(),
+            ..package.clone()
+        };
+        let mut update_manifest = first_manifest.clone();
+        update_manifest.revision = update_package.revision;
+        update_manifest.version = update_package.version.clone();
+        update_manifest.package_digest = update_package.package_digest.clone();
+        update_manifest.services = second_manifest.services.clone();
+        assert!(
+            plan_component_transaction_checked(
+                &update_package,
+                &installed,
+                &[first_manifest.clone(), second_manifest.clone()],
+                &update_manifest,
+            )
+            .is_err(),
+            "checked update cannot claim a service owned by another installed component"
+        );
+
+        let retained = InstalledComponent {
+            component_id: first.component_id.clone(),
+            revision: 1,
+            package_digest: DIGEST_B.to_owned(),
+        };
+        let mut retained_manifest = first_manifest.clone();
+        retained_manifest.revision = retained.revision;
+        retained_manifest.package_digest = retained.package_digest.clone();
+        retained_manifest.services = second_manifest.services.clone();
+        retained_manifest.capabilities = vec!["origins.factory".to_owned()];
+        assert!(
+            plan_component_rollback_checked(
+                &first,
+                &retained,
+                &retained_manifest,
+                &installed,
+                &[first_manifest, second_manifest],
+            )
+            .is_err(),
+            "checked rollback must not transfer another component's service identity"
+        );
+    }
+
+    #[test]
     fn checked_update_rejects_cycle_from_authenticated_candidate() {
         let current = InstalledComponent {
             component_id: "origins.runtime".to_owned(),
@@ -3240,6 +4008,8 @@ mod tests {
         current_manifest.package_digest = current.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3334,6 +4104,8 @@ mod tests {
         }];
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3406,6 +4178,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3451,6 +4225,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3517,6 +4293,8 @@ mod tests {
         retained_manifest.package_digest = retained.package_digest.clone();
         let mut consumer_manifest = manifest(b"consumer");
         consumer_manifest.component_id = consumer.component_id.clone();
+        consumer_manifest.services = vec!["consumerd".to_owned()];
+        consumer_manifest.capabilities = vec!["consumer.factory".to_owned()];
         consumer_manifest.revision = consumer.revision;
         consumer_manifest.package_digest = consumer.package_digest.clone();
         consumer_manifest.dependencies = vec![ComponentDependency {
@@ -3571,5 +4349,1271 @@ mod tests {
             ),
             Err(ComponentAdmissionError::InstalledManifestMismatch(id)) if id == current.component_id
         ));
+    }
+
+    #[test]
+    fn checked_registration_order_is_dependency_first_and_stable() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let origins = make("origins.runtime", &[]);
+        let provider = make("provider.runtime", &["origins.runtime"]);
+        let consumer = make("consumer.runtime", &["provider.runtime"]);
+        let alpha = make("alpha.runtime", &[]);
+        let manifests = vec![consumer, alpha, provider, origins];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let expected = vec![
+            "alpha.runtime".to_owned(),
+            "origins.runtime".to_owned(),
+            "provider.runtime".to_owned(),
+            "consumer.runtime".to_owned(),
+        ];
+        assert_eq!(
+            plan_component_registration_order_checked(&installed, &manifests).unwrap(),
+            expected
+        );
+        assert_eq!(
+            plan_component_unregistration_order_checked(&installed, &manifests).unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "origins.runtime",
+                "alpha.runtime"
+            ],
+            "dependents must unregister before their dependencies"
+        );
+        let mut reversed_installed = installed.clone();
+        reversed_installed.reverse();
+        let mut reversed_manifests = manifests.clone();
+        reversed_manifests.reverse();
+        assert_eq!(
+            plan_component_registration_order_checked(&reversed_installed, &reversed_manifests,)
+                .unwrap(),
+            expected,
+            "source inventory order must not alter dependency registration order"
+        );
+        assert_eq!(
+            plan_component_unregistration_order_checked(&reversed_installed, &reversed_manifests)
+                .unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "origins.runtime",
+                "alpha.runtime"
+            ],
+            "source inventory order must not alter dependency unregistration order"
+        );
+    }
+
+    #[test]
+    fn checked_subset_unregistration_preserves_unselected_dependents() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.runtime", &["provider.runtime"]),
+            make("alpha.runtime", &[]),
+            make("provider.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+
+        assert_eq!(
+            plan_component_unregistration_subset_checked(
+                &["provider.runtime", "consumer.runtime"],
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            vec!["consumer.runtime", "provider.runtime"]
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_unregistration_subset_checked(
+                &["consumer.runtime", "provider.runtime"],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            vec!["consumer.runtime", "provider.runtime"]
+        );
+        assert!(matches!(
+            plan_component_unregistration_subset_checked(
+                &["provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependentComponentInstalled { component_id, dependent_id })
+                if component_id == "provider.runtime" && dependent_id == "consumer.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_subset_checked(
+                &["origins.runtime", "consumer.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependentComponentInstalled { component_id, dependent_id })
+                if component_id == "origins.runtime" && dependent_id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_subset_checked(
+                &["provider.runtime", "provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateUnregistrationTarget(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_subset_checked(
+                &["missing.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(id))
+                if id == "missing.runtime"
+        ));
+        assert_eq!(
+            plan_component_unregistration_subset_checked(&[], &installed, &manifests).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn checked_subset_registration_includes_transitive_prerequisites() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.runtime", &["provider.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("provider.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let expected = vec!["origins.runtime", "provider.runtime", "consumer.runtime"];
+        assert_eq!(
+            plan_component_registration_subset_checked(
+                &["consumer.runtime"],
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_registration_subset_checked(
+                &["provider.runtime", "consumer.runtime"],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(
+            plan_component_registration_subset_checked(&[], &installed, &manifests).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["provider.runtime", "provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateRegistrationTarget(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["missing.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(id))
+                if id == "missing.runtime"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &["Not Canonical"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Not Canonical"
+        ));
+        assert!(matches!(
+            plan_component_registration_subset_checked(
+                &[], &installed, &manifests[..3]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id))
+                if id == "origins.runtime"
+        ));
+    }
+
+    #[test]
+    fn explicit_registration_scope_requires_exact_prerequisite_closure() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("leaf.runtime", &["left.runtime", "right.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("right.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+            make("left.runtime", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let exact = [
+            "leaf.runtime",
+            "left.runtime",
+            "right.runtime",
+            "origins.runtime",
+        ];
+        let expected = vec![
+            "origins.runtime",
+            "left.runtime",
+            "right.runtime",
+            "leaf.runtime",
+        ];
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &exact,
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &[
+                    "origins.runtime",
+                    "right.runtime",
+                    "left.runtime",
+                    "leaf.runtime"
+                ],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        for scope in [
+            &exact[..3],
+            &[
+                "leaf.runtime",
+                "left.runtime",
+                "right.runtime",
+                "origins.runtime",
+                "unrelated.runtime",
+            ][..],
+        ] {
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    &["leaf.runtime"],
+                    scope,
+                    &installed,
+                    &manifests
+                ),
+                Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+            ));
+        }
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["leaf.runtime", "leaf.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateRegistrationTarget(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["leaf.runtime", "missing.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["leaf.runtime"],
+                &["Not Canonical"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(_))
+        ));
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(&[], &[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &[],
+                &["unrelated.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &[],
+                &[],
+                &installed,
+                &manifests[..4]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(_))
+        ));
+    }
+
+    #[test]
+    fn checked_dependent_closure_unregistration_expands_consumers_only() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.runtime", &["provider.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("provider.runtime", &["origins.runtime"]),
+            make("other.consumer", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["origins.runtime"],
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            vec![
+                "consumer.runtime",
+                "provider.runtime",
+                "other.consumer",
+                "origins.runtime"
+            ]
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["provider.runtime"],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            vec!["consumer.runtime", "provider.runtime"]
+        );
+        assert_eq!(
+            plan_component_unregistration_dependent_closure_checked(&[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["provider.runtime", "provider.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateUnregistrationTarget(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["missing.runtime"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(id))
+                if id == "missing.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &["Not Canonical"], &installed, &manifests
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Not Canonical"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_dependent_closure_checked(
+                &[], &installed, &manifests[..4]
+            ),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id))
+                if id == "origins.runtime"
+        ));
+    }
+
+    #[test]
+    fn explicit_unregistration_scope_requires_exact_dependent_closure() {
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("leaf.runtime", &["left.runtime", "right.runtime"]),
+            make("unrelated.runtime", &[]),
+            make("right.runtime", &["origins.runtime"]),
+            make("origins.runtime", &[]),
+            make("left.runtime", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let exact = [
+            "origins.runtime",
+            "left.runtime",
+            "right.runtime",
+            "leaf.runtime",
+        ];
+        let expected = vec![
+            "leaf.runtime",
+            "right.runtime",
+            "left.runtime",
+            "origins.runtime",
+        ];
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &exact,
+                &installed,
+                &manifests
+            )
+            .unwrap(),
+            expected
+        );
+        let mut shuffled = manifests.clone();
+        shuffled.reverse();
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &[
+                    "leaf.runtime",
+                    "right.runtime",
+                    "left.runtime",
+                    "origins.runtime"
+                ],
+                &installed,
+                &shuffled
+            )
+            .unwrap(),
+            expected
+        );
+        for scope in [
+            &exact[..3],
+            &[
+                "origins.runtime",
+                "left.runtime",
+                "right.runtime",
+                "leaf.runtime",
+                "unrelated.runtime",
+            ][..],
+        ] {
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    &["origins.runtime"],
+                    scope,
+                    &installed,
+                    &manifests
+                ),
+                Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+            ));
+        }
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &["origins.runtime", "origins.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DuplicateUnregistrationTarget(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["origins.runtime"],
+                &["origins.runtime", "missing.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::DependencyMissing(_))
+        ));
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(&[], &[], &installed, &manifests)
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &[],
+                &["unrelated.runtime"],
+                &installed,
+                &manifests
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_scopes_reject_unrelated_inventory_corruption_even_when_empty() {
+        // Explicit scopes are not a shortcut around complete installed-inventory
+        // validation. A damaged unrelated package must invalidate both plans,
+        // including an empty declaration that would otherwise produce no steps.
+        let mut anchor = manifest(b"scope-anchor");
+        anchor.component_id = "anchor.runtime".to_owned();
+        anchor.services = vec!["anchor.service".to_owned()];
+        anchor.capabilities = vec!["anchor.capability".to_owned()];
+        let mut unrelated = manifest(b"scope-unrelated");
+        unrelated.component_id = "unrelated.runtime".to_owned();
+        unrelated.services = vec!["unrelated.service".to_owned()];
+        unrelated.capabilities = vec!["unrelated.capability".to_owned()];
+        let manifests = vec![anchor, unrelated];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+
+        let mut rebounded = installed.clone();
+        rebounded[1].package_digest = manifest(b"other-package").package_digest;
+        for selected in [&[][..], &["anchor.runtime"][..]] {
+            let scope = selected;
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    selected, scope, &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    selected, scope, &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
+            // Data-aware dependent removal must validate the entire inventory
+            // before trusting even an empty, no-migration removal preview.
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    selected, scope, &[], &rebounded, &manifests
+                ),
+                Err(ComponentAdmissionError::InstalledManifestMismatch(id))
+                    if id == "unrelated.runtime"
+            ));
+        }
+
+        let mut conflicting = manifests.clone();
+        conflicting[1].services = conflicting[0].services.clone();
+        for selected in [&[][..], &["anchor.runtime"][..]] {
+            assert!(matches!(
+                plan_component_registration_explicit_scope_checked(
+                    selected,
+                    selected,
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+            assert!(matches!(
+                plan_component_unregistration_explicit_scope_checked(
+                    selected,
+                    selected,
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    selected,
+                    selected,
+                    &[],
+                    &installed,
+                    &conflicting
+                ),
+                Err(ComponentAdmissionError::RegistrationIdentityConflict { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn deep_component_scopes_are_dependency_closed_without_recursive_traversal() {
+        // Long installed dependency chains must not be truncated, reversed,
+        // or treated as authority to register/remove unrelated components.
+        // The preview remains source-only; no component state is mutated.
+        const DEPTH: usize = 160;
+        let mut manifests = Vec::new();
+        for index in 0..DEPTH {
+            let id = format!("chain.{index:03}");
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.clone();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            if index > 0 {
+                item.dependencies = vec![ComponentDependency {
+                    component_id: format!("chain.{:03}", index - 1),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                }];
+            }
+            manifests.push(item);
+        }
+        let mut unrelated = manifest(b"unrelated");
+        unrelated.component_id = "unrelated.runtime".to_owned();
+        unrelated.services = vec!["unrelated.service".to_owned()];
+        unrelated.capabilities = vec!["unrelated.capability".to_owned()];
+        manifests.push(unrelated);
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+
+        let expected_registration: Vec<_> = (0..DEPTH)
+            .map(|index| format!("chain.{index:03}"))
+            .collect();
+        let registration =
+            plan_component_registration_subset_checked(&["chain.159"], &installed, &manifests)
+                .unwrap();
+        assert_eq!(registration, expected_registration);
+        let registration_scope: Vec<_> = registration.iter().map(String::as_str).collect();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["chain.159"],
+                &registration_scope,
+                &installed,
+                &manifests,
+            )
+            .unwrap(),
+            expected_registration
+        );
+
+        let expected_unregistration: Vec<_> = (80..DEPTH)
+            .rev()
+            .map(|index| format!("chain.{index:03}"))
+            .collect();
+        let unregistration = plan_component_unregistration_dependent_closure_checked(
+            &["chain.080"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(unregistration, expected_unregistration);
+        let unregistration_scope: Vec<_> = unregistration.iter().map(String::as_str).collect();
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["chain.080"],
+                &unregistration_scope,
+                &installed,
+                &manifests,
+            )
+            .unwrap(),
+            expected_unregistration
+        );
+
+        // An incomplete declaration must not silently expand into an
+        // authorized scope, even when the missing member is far away.
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["chain.159"],
+                &registration_scope[..registration_scope.len() - 1],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["chain.080"],
+                &unregistration_scope[..unregistration_scope.len() - 1],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+        ));
+
+        manifests.reverse();
+        assert_eq!(
+            plan_component_registration_subset_checked(&["chain.159"], &installed, &manifests,)
+                .unwrap(),
+            expected_registration,
+            "manifest enumeration order must not change deep prerequisite closure"
+        );
+    }
+
+    #[test]
+    fn overlapping_multi_target_component_scopes_are_exact_and_order_invariant() {
+        // Two independently selected consumers share prerequisites; removing two
+        // providers also shares dependents. Each component must appear exactly
+        // once, regardless of selection, manifest, or scope enumeration order.
+        // These are previews only, not registration/removal authority.
+        let make = |id: &str, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make("consumer.shared", &["provider.alpha", "provider.beta"]),
+            make("unrelated.runtime", &[]),
+            make("provider.beta", &["origins.runtime"]),
+            make("consumer.alpha", &["provider.alpha"]),
+            make("origins.runtime", &[]),
+            make("provider.alpha", &["origins.runtime"]),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let register_scope = [
+            "consumer.shared",
+            "consumer.alpha",
+            "provider.alpha",
+            "provider.beta",
+            "origins.runtime",
+        ];
+        let unregister_scope = [
+            "consumer.shared",
+            "consumer.alpha",
+            "provider.alpha",
+            "provider.beta",
+        ];
+        let registration = plan_component_registration_explicit_scope_checked(
+            &["consumer.shared", "consumer.alpha"],
+            &register_scope,
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        let unregistration = plan_component_unregistration_explicit_scope_checked(
+            &["provider.beta", "provider.alpha"],
+            &unregister_scope,
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        let expected_registration: BTreeSet<_> = register_scope.into_iter().collect();
+        let expected_unregistration: BTreeSet<_> = unregister_scope.into_iter().collect();
+        assert_eq!(registration.len(), expected_registration.len());
+        assert_eq!(unregistration.len(), expected_unregistration.len());
+        assert_eq!(
+            registration
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            expected_registration
+        );
+        assert_eq!(
+            unregistration
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            expected_unregistration
+        );
+        let position =
+            |order: &[String], id: &str| order.iter().position(|item| item == id).unwrap();
+        for provider in ["provider.alpha", "provider.beta"] {
+            assert!(position(&registration, "origins.runtime") < position(&registration, provider));
+            assert!(position(&registration, provider) < position(&registration, "consumer.shared"));
+            assert!(
+                position(&unregistration, "consumer.shared") < position(&unregistration, provider)
+            );
+        }
+        assert!(
+            position(&registration, "provider.alpha") < position(&registration, "consumer.alpha")
+        );
+        assert!(
+            position(&unregistration, "consumer.alpha")
+                < position(&unregistration, "provider.alpha")
+        );
+
+        let mut reordered = manifests.clone();
+        reordered.reverse();
+        assert_eq!(
+            plan_component_registration_explicit_scope_checked(
+                &["consumer.alpha", "consumer.shared"],
+                &[
+                    "origins.runtime",
+                    "provider.beta",
+                    "consumer.alpha",
+                    "provider.alpha",
+                    "consumer.shared"
+                ],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            registration
+        );
+        assert_eq!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["provider.alpha", "provider.beta"],
+                &[
+                    "provider.alpha",
+                    "consumer.alpha",
+                    "provider.beta",
+                    "consumer.shared"
+                ],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            unregistration
+        );
+        assert!(matches!(
+            plan_component_registration_explicit_scope_checked(
+                &["consumer.shared", "consumer.alpha"],
+                &register_scope[..4],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::RegistrationScopeMismatch(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_explicit_scope_checked(
+                &["provider.alpha", "provider.beta"],
+                &["consumer.shared", "provider.alpha", "provider.beta"],
+                &installed,
+                &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn checked_registration_order_rejects_incomplete_or_cyclic_inventory() {
+        let mut origins = manifest(b"origins");
+        origins.dependencies = vec![ComponentDependency {
+            component_id: "consumer.runtime".to_owned(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let mut consumer = manifest(b"consumer");
+        consumer.component_id = "consumer.runtime".to_owned();
+        consumer.services = vec!["consumerd".to_owned()];
+        consumer.capabilities = vec!["consumer.factory".to_owned()];
+        consumer.dependencies = vec![ComponentDependency {
+            component_id: origins.component_id.clone(),
+            minimum_revision: 1,
+            exact_package_digest: None,
+        }];
+        let installed: Vec<_> = [&origins, &consumer]
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        assert!(matches!(
+            plan_component_registration_order_checked(&installed, &[origins.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        assert!(matches!(
+            plan_component_unregistration_order_checked(&installed, &[origins.clone()]),
+            Err(ComponentAdmissionError::MissingInstalledManifest(id)) if id == consumer.component_id
+        ));
+        assert!(matches!(
+            plan_component_registration_order_checked(
+                &installed,
+                &[origins.clone(), consumer.clone()]
+            ),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+        assert!(matches!(
+            plan_component_unregistration_order_checked(&installed, &[origins, consumer]),
+            Err(ComponentAdmissionError::InstalledDependencyCycle(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_unregistration_data_custody_requires_exact_migration_scope() {
+        // This is a source-only removal preview, never proof that migration
+        // happened or permission to mutate retained user/project data.
+        let make = |id: &str, policy: PersistentDataPolicy, dependencies: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.persistent_data_policy = policy;
+            item.dependencies = dependencies
+                .iter()
+                .map(|dependency| ComponentDependency {
+                    component_id: (*dependency).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make(
+                "consumer.runtime",
+                PersistentDataPolicy::Ephemeral,
+                &["provider.runtime"],
+            ),
+            make("origins.runtime", PersistentDataPolicy::RetainOnRemove, &[]),
+            make(
+                "provider.runtime",
+                PersistentDataPolicy::ExplicitMigration,
+                &["origins.runtime"],
+            ),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let selected = ["provider.runtime"];
+        let scope = ["provider.runtime", "consumer.runtime"];
+        let planned = plan_component_unregistration_data_checked(
+            &selected,
+            &scope,
+            &["provider.runtime"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(
+            planned,
+            vec![
+                (
+                    "consumer.runtime".to_owned(),
+                    ComponentDataDisposition::DiscardEphemeral
+                ),
+                (
+                    "provider.runtime".to_owned(),
+                    ComponentDataDisposition::Migrated
+                ),
+            ]
+        );
+        let all = plan_component_unregistration_data_checked(
+            &["origins.runtime"],
+            &["origins.runtime", "provider.runtime", "consumer.runtime"],
+            &["provider.runtime"],
+            &installed,
+            &manifests,
+        )
+        .unwrap();
+        assert_eq!(
+            all,
+            vec![
+                (
+                    "consumer.runtime".to_owned(),
+                    ComponentDataDisposition::DiscardEphemeral
+                ),
+                (
+                    "provider.runtime".to_owned(),
+                    ComponentDataDisposition::Migrated
+                ),
+                (
+                    "origins.runtime".to_owned(),
+                    ComponentDataDisposition::Retain
+                ),
+            ]
+        );
+        let mut reordered = manifests.clone();
+        reordered.reverse();
+        assert_eq!(
+            plan_component_unregistration_data_checked(
+                &selected,
+                &["consumer.runtime", "provider.runtime"],
+                &["provider.runtime"],
+                &installed,
+                &reordered,
+            )
+            .unwrap(),
+            planned
+        );
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &[], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::PersistentDataMigrationRequired(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["origins.runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "origins.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["consumer.runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "consumer.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["provider.runtime", "provider.runtime"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::DuplicateMigrationAcknowledgement(id))
+                if id == "provider.runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["Provider.Runtime"], &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::InvalidTargetComponentId(id))
+                if id == "Provider.Runtime"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &["provider.runtime"], &["provider.runtime"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(id))
+                if id == "consumer.runtime"
+        ));
+    }
+
+    #[test]
+    fn shared_dependent_removal_requires_each_explicit_migration() {
+        // Selecting one provider may close over a consumer shared with another
+        // provider. Both selected migration policies must be declared, while
+        // the unselected provider and its retained data remain out of scope.
+        // This is only a preview; it does not authenticate migration evidence.
+        let make = |id: &str, policy: PersistentDataPolicy, deps: &[&str]| {
+            let mut item = manifest(id.as_bytes());
+            item.component_id = id.to_owned();
+            item.services = vec![format!("{id}.service")];
+            item.capabilities = vec![format!("{id}.capability")];
+            item.persistent_data_policy = policy;
+            item.dependencies = deps
+                .iter()
+                .map(|dep| ComponentDependency {
+                    component_id: (*dep).to_owned(),
+                    minimum_revision: 1,
+                    exact_package_digest: None,
+                })
+                .collect();
+            item
+        };
+        let manifests = vec![
+            make(
+                "consumer.shared",
+                PersistentDataPolicy::ExplicitMigration,
+                &["provider.alpha", "provider.beta"],
+            ),
+            make("provider.beta", PersistentDataPolicy::RetainOnRemove, &[]),
+            make(
+                "consumer.alpha",
+                PersistentDataPolicy::Ephemeral,
+                &["provider.alpha"],
+            ),
+            make(
+                "provider.alpha",
+                PersistentDataPolicy::ExplicitMigration,
+                &[],
+            ),
+            make(
+                "unrelated.runtime",
+                PersistentDataPolicy::RetainOnRemove,
+                &[],
+            ),
+        ];
+        let installed: Vec<_> = manifests
+            .iter()
+            .map(|item| InstalledComponent {
+                component_id: item.component_id.clone(),
+                revision: item.revision,
+                package_digest: item.package_digest.clone(),
+            })
+            .collect();
+        let selected = ["provider.alpha"];
+        let scope = ["consumer.alpha", "provider.alpha", "consumer.shared"];
+        let migrated = ["consumer.shared", "provider.alpha"];
+        let planned = plan_component_unregistration_data_checked(
+            &selected, &scope, &migrated, &installed, &manifests,
+        )
+        .unwrap();
+        assert_eq!(planned.len(), 3);
+        let positions: BTreeMap<_, _> = planned
+            .iter()
+            .enumerate()
+            .map(|(i, (id, disposition))| (id.as_str(), (i, disposition)))
+            .collect();
+        assert!(positions["consumer.alpha"].0 < positions["provider.alpha"].0);
+        assert!(positions["consumer.shared"].0 < positions["provider.alpha"].0);
+        assert_eq!(
+            *positions["consumer.alpha"].1,
+            ComponentDataDisposition::DiscardEphemeral
+        );
+        assert_eq!(
+            *positions["consumer.shared"].1,
+            ComponentDataDisposition::Migrated
+        );
+        assert_eq!(
+            *positions["provider.alpha"].1,
+            ComponentDataDisposition::Migrated
+        );
+        assert!(!positions.contains_key("provider.beta"));
+        assert!(!positions.contains_key("unrelated.runtime"));
+
+        for (acknowledged, missing) in [
+            (&["provider.alpha"][..], "consumer.shared"),
+            (&["consumer.shared"][..], "provider.alpha"),
+        ] {
+            assert!(matches!(
+                plan_component_unregistration_data_checked(
+                    &selected, &scope, acknowledged, &installed, &manifests,
+                ),
+                Err(ComponentAdmissionError::PersistentDataMigrationRequired(id)) if id == missing
+            ));
+        }
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &["provider.alpha", "provider.beta", "consumer.shared"],
+                &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == "provider.beta"
+        ));
+        assert!(matches!(
+            plan_component_unregistration_data_checked(
+                &selected, &["provider.alpha", "consumer.shared", "consumer.alpha", "provider.beta"],
+                &migrated, &installed, &manifests,
+            ),
+            Err(ComponentAdmissionError::UnregistrationScopeMismatch(id))
+                if id == "provider.beta"
+        ));
+        let mut reversed = manifests.clone();
+        reversed.reverse();
+        assert_eq!(
+            plan_component_unregistration_data_checked(
+                &selected, &scope, &migrated, &installed, &reversed,
+            )
+            .unwrap(),
+            planned
+        );
     }
 }

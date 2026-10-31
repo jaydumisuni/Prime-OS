@@ -88,6 +88,111 @@ def test_ambient_dynamic_loader_controls_cannot_reach_review_git(
     )
 
 
+def test_ambient_git_config_and_object_store_cannot_rebind_review_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Caller-supplied Git configuration and object paths are not review authority."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+    external_config = tmp_path / "external-git-config"
+    external_config.write_text("[core]\n\tbare = true\n", encoding="utf-8")
+    external_objects = tmp_path / "external-objects"
+    external_objects.mkdir()
+
+    # Prove the hostile configuration is observable by an ordinary inherited
+    # Git subprocess. The review helper must not inherit that process state.
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "include.path")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(external_config))
+    inherited = subprocess.check_output(
+        ["git", "-C", str(root), "config", "--no-includes", "--list"]
+    )
+    assert b"include.path=" in inherited
+    assert module.build_manifest(root, head) == baseline
+
+    # A caller can also redirect Git's object database without touching the
+    # repository's tracked bytes. It must not affect exact-HEAD review input.
+    monkeypatch.delenv("GIT_CONFIG_COUNT")
+    monkeypatch.delenv("GIT_CONFIG_KEY_0")
+    monkeypatch.delenv("GIT_CONFIG_VALUE_0")
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(external_objects))
+    hostile = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", head],
+        capture_output=True, check=False,
+    )
+    assert hostile.returncode != 0, "ambient object redirect must be effective"
+    assert module.build_manifest(root, head) == baseline
+
+
+def test_ambient_alternate_object_database_cannot_supply_review_git_objects(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An inherited alternate object store must not become review authority."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+    foreign = tmp_path / "foreign-objects-repo"
+    foreign.mkdir()
+    git(foreign, "init", "-q")
+    foreign_oid = subprocess.check_output(
+        ["git", "-C", str(foreign), "hash-object", "-w", "--stdin"],
+        input=b"foreign-only P2 review object\n",
+    ).decode().strip()
+    probe = ["git", "-C", str(root), "cat-file", "-e", foreign_oid]
+    assert subprocess.run(probe, capture_output=True, check=False).returncode != 0
+
+    monkeypatch.setenv(
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", str(foreign / ".git" / "objects")
+    )
+    assert subprocess.run(probe, capture_output=True, check=False).returncode == 0
+    try:
+        module.git(root, "cat-file", "-e", foreign_oid)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("ambient alternate object database supplied review Git")
+    assert module.build_manifest(root, head) == baseline
+
+
+def test_rejects_noncanonical_head_control_trailing_whitespace(tmp_path: Path) -> None:
+    """Git may resolve an extra control newline, but review authority must not."""
+    root, head = sample_repo(tmp_path)
+    head_file = root / ".git" / "HEAD"
+    head_file.write_bytes(head_file.read_bytes() + b"\n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="HEAD control"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_noncanonical_detached_head_control(tmp_path: Path) -> None:
+    """Detached HEAD evidence must also use one SHA and one framing LF."""
+    root, head = sample_repo(tmp_path)
+    git(root, "checkout", "--detach", "-q", head)
+    head_file = root / ".git" / "HEAD"
+    head_file.write_bytes(head_file.read_bytes() + b"\r\n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="detached HEAD control"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_noncanonical_loose_ref_control_trailing_whitespace(
+    tmp_path: Path,
+) -> None:
+    """A loose branch ref must contain exactly one SHA and framing LF."""
+    root, head = sample_repo(tmp_path)
+    symbolic = git(root, "symbolic-ref", "HEAD")
+    ref_file = root / ".git" / symbolic
+    ref_file.write_bytes(ref_file.read_bytes() + b" \n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="loose HEAD ref"):
+        module.build_manifest(root, head)
+
+
 def test_rejects_wrong_head(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     try:
@@ -509,6 +614,26 @@ def test_rejects_symlink_swap_at_descriptor_open(tmp_path: Path, monkeypatch) ->
         raise AssertionError("review input path substitution admitted")
     assert opened, "review input was not opened through descriptor-bound custody"
 
+def test_git_process_spawn_failures_are_structured_review_errors(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A disappearing or non-executable pinned Git cannot escape review custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    for failure in (
+        FileNotFoundError("pinned Git removed"),
+        PermissionError("pinned Git not executable"),
+        OSError("Git process could not start"),
+    ):
+        def fail_spawn(*args, **kwargs):
+            raise failure
+
+        monkeypatch.setattr(module.subprocess, "run", fail_spawn)
+        with pytest.raises(module.ReviewInputError, match="Git verification could not start"):
+            module.build_manifest(root, head)
+
+
 def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> None:
     """An unresponsive Git metadata probe must not hang review custody."""
     root, head = sample_repo(tmp_path)
@@ -602,6 +727,42 @@ def test_rejects_earlier_input_changed_after_last_input_read(
                         change_earlier_after_later_read)
     with pytest.raises(module.ReviewInputError, match="changed|local changes"):
         module.build_manifest(root, head)
+
+
+def test_late_review_input_disappearance_has_structured_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A removed input or ancestor after the last Git probe is not raw I/O."""
+    import pytest
+
+    for remove_parent in (False, True):
+        fixture = tmp_path / ("parent" if remove_parent else "file")
+        fixture.mkdir()
+        root, head = sample_repo(fixture)
+        target = root / module.INPUTS[2]
+        original_git = module.git
+        head_reads = 0
+
+        def remove_after_last_head(repo: Path, *args: str) -> bytes:
+            nonlocal head_reads
+            result = original_git(repo, *args)
+            if args == ("rev-parse", "HEAD"):
+                head_reads += 1
+                if head_reads == 2:
+                    if remove_parent:
+                        target.parent.rename(target.parent.with_name("src-moved"))
+                    else:
+                        target.unlink()
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "git", remove_after_last_head)
+            with pytest.raises(
+                module.ReviewInputError,
+                match="review input unavailable after verification",
+            ):
+                module.build_manifest(root, head)
+        assert head_reads == 2
 
 
 def test_rejects_earlier_index_restage_after_last_input_read(
@@ -731,3 +892,1341 @@ def test_rejects_index_only_restage_after_final_git_probe(
     assert (root / relative).read_text() == f"p2 committed input: {relative}\n"
     assert git(root, "rev-parse", "HEAD") == head
     assert git(root, "rev-parse", f":{relative}") == blob
+
+
+
+def test_rejects_head_ref_advance_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late ref-only HEAD advance cannot retain an old exact-head manifest."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    env = os.environ.copy()
+    env.update({
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.invalid",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.invalid",
+    })
+    successor = subprocess.check_output(
+        ["git", "-C", str(root), "commit-tree", f"{head}^{{tree}}", "-p", head],
+        input=b"concurrent ref-only advance\n", env=env,
+    ).decode().strip()
+    original_git = module.git
+    original_private = module.require_private_directory
+    final_head_seen = False
+    injected = False
+    head_reads = 0
+
+    def observe_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal final_head_seen, head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                final_head_seen = True
+        return result
+
+    def advance_ref_after_final_git(directory: Path) -> None:
+        nonlocal injected
+        if final_head_seen and not injected:
+            git(root, "update-ref", "HEAD", successor)
+            injected = True
+        original_private(directory)
+
+    monkeypatch.setattr(module, "git", observe_final_head)
+    monkeypatch.setattr(module, "require_private_directory",
+                        advance_ref_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD.*changed|ref.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+    assert git(root, "rev-parse", "HEAD") == successor
+    assert not git(root, "diff", "--cached", "--name-only")
+
+
+
+def test_head_epoch_supports_packed_detached_and_linked_worktrees(
+    tmp_path: Path,
+) -> None:
+    """Ref custody must not reject ordinary Git storage and worktree forms."""
+    root, head = sample_repo(tmp_path)
+    git(root, "pack-refs", "--all")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    git(root, "checkout", "-q", "--detach", head)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    assert module.build_manifest(linked, head)["candidate_head"] == head
+
+
+def test_rejects_dangling_loose_ref_after_packed_head_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A dangling symlink is an existing loose ref inode, despite exists() false."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    git(root, "pack-refs", "--all")
+    snapshot = module.capture_head_epoch(root, head)
+    _, absent_ref, _ = snapshot
+    assert absent_ref is not None, "fixture must use a packed branch ref"
+    assert not absent_ref.exists()
+
+    # The packed branch was valid at capture time. A late untrusted loose-ref
+    # pathname must invalidate the snapshot even if its symlink target is absent.
+    absent_ref.symlink_to(tmp_path / "nonexistent-ref-target")
+    assert absent_ref.is_symlink()
+    assert not absent_ref.exists()
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.verify_head_epoch(snapshot)
+
+
+
+def test_rejects_linked_worktree_gitdir_pointer_swap_after_final_git(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late .git redirection cannot rebind an already verified worktree."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    first = tmp_path / "linked-first"
+    second = tmp_path / "linked-second"
+    git(root, "worktree", "add", "-q", "-b", "linked-first", str(first), head)
+    git(root, "worktree", "add", "-q", "-b", "linked-second", str(second), head)
+    pointer = first / ".git"
+    original = pointer.read_bytes()
+    alternate = (second / ".git").read_bytes()
+    assert original != alternate
+    assert module.build_manifest(first, head)["candidate_head"] == head
+
+    original_git = module.git
+    head_reads = 0
+    swapped = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, swapped
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.write_bytes(alternate)
+                swapped = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="gitdir|control|changed"):
+            module.build_manifest(first, head)
+        assert swapped and head_reads == 2
+    finally:
+        pointer.write_bytes(original)
+
+
+def test_rejects_duplicate_packed_head_ref_entries(tmp_path: Path) -> None:
+    # A duplicate earlier entry can be ignored by Git's last-entry-wins
+    # resolution, but is not a canonical source of review authority.
+    for name, duplicate in (("conflicting", "0" * 40), ("identical", None)):
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        root, head = sample_repo(case_dir)
+        git(root, "pack-refs", "--all", "--prune")
+        packed = root / ".git" / "packed-refs"
+        branch = git(root, "symbolic-ref", "HEAD")
+        lines = packed.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        packed.write_text(
+            lines[0] + "\n"
+            + (duplicate or head) + " " + branch + "\n"
+            + lines[1] + "\n",
+            encoding="utf-8",
+        )
+        assert git(root, "rev-parse", "HEAD") == head
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "ambiguous packed HEAD ref" in str(error)
+        else:
+            raise AssertionError("duplicate packed HEAD ref admitted")
+
+
+def test_rejects_pending_git_control_lockfiles(tmp_path: Path) -> None:
+    """A pending Git update must not be presented as a stable review epoch."""
+    import pytest
+
+    for kind in ("index", "HEAD", "branch", "packed-refs", "config", "config.worktree"):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        gitdir = root / ".git"
+        if kind == "branch":
+            ref = git(root, "symbolic-ref", "HEAD")
+            lock = gitdir / (ref + ".lock")
+        else:
+            lock = gitdir / (kind + ".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"pending update\n")
+        with pytest.raises(module.ReviewInputError, match="pending Git control update"):
+            module.build_manifest(root, head)
+
+
+def test_rejects_late_git_control_lock_after_final_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A lock arriving after final Git probes invalidates the review manifest."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    lock = root / ".git" / "index.lock"
+    original_git = module.git
+    original_private = module.require_private_directory
+    head_reads = 0
+    after_final_git = False
+    injected = False
+
+    def observe_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, after_final_git
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                after_final_git = True
+        return result
+
+    def introduce_pending_update(directory: Path) -> None:
+        nonlocal injected
+        if after_final_git and not injected:
+            lock.write_bytes(b"pending update\n")
+            injected = True
+        original_private(directory)
+
+    monkeypatch.setattr(module, "git", observe_head)
+    monkeypatch.setattr(module, "require_private_directory", introduce_pending_update)
+    with pytest.raises(module.ReviewInputError, match="pending Git control update"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+
+
+
+def test_rejects_late_linked_worktree_commondir_redirection(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A post-probe commondir redirect must invalidate exact-head custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    alternate = tmp_path / "alternate"
+    subprocess.check_call(
+        ["git", "clone", "-q", "--no-hardlinks", str(root), str(alternate)]
+    )
+    assert git(alternate, "rev-parse", "HEAD") == head
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(str(alternate / ".git") + "\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|HEAD.*changed"):
+            module.build_manifest(linked, head)
+        assert injected and head_reads == 2
+    finally:
+        commondir.write_bytes(original)
+
+
+def test_rejects_symlink_alias_for_linked_worktree_commondir(tmp_path: Path) -> None:
+    """A mutable alias can redirect common refs without changing commondir bytes.
+
+    Git resolves an alias to the same common directory initially. The alias
+    pathname itself is not in the captured epoch and could be redirected after
+    the final Git probe, so review input must require the literal canonical
+    common-directory path instead of only comparing resolved destinations.
+    """
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    alias = tmp_path / "mutable-common-alias"
+    alias.symlink_to(root / ".git", target_is_directory=True)
+    commondir.write_text(str(alias) + "\n", encoding="utf-8")
+    try:
+        assert git(linked, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="commondir"):
+            module.build_manifest(linked, head)
+    finally:
+        commondir.write_bytes(original)
+
+
+def test_rejects_symlink_hidden_by_commondir_parent_segments(tmp_path: Path) -> None:
+    """Lexical alias/../../.. must not erase a traversed symlink from custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    gitdir = Path((linked / ".git").read_text().split("gitdir: ", 1)[1].strip())
+    commondir = gitdir / "commondir"
+    original = commondir.read_bytes()
+    nested = root / ".git" / "custody-fixture" / "nested" / "leaf"
+    nested.mkdir(parents=True)
+    alias = gitdir / "mutable-alias"
+    alias.symlink_to(nested, target_is_directory=True)
+    # Lexical normpath reaches root/.git; real filesystem traversal follows
+    # mutable-alias first, and its target can later be redirected elsewhere.
+    commondir.write_text("mutable-alias/../../..\n", encoding="utf-8")
+    try:
+        assert git(linked, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="commondir|symlink"):
+            module.build_manifest(linked, head)
+    finally:
+        commondir.write_bytes(original)
+
+
+def test_separate_git_directory_is_valid_without_commondir(tmp_path: Path) -> None:
+    """A gitfile can point to a standalone separate gitdir, not a linked worktree."""
+    root, head = sample_repo(tmp_path)
+    external_gitdir = tmp_path / "external-gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(external_gitdir))
+    assert (root / ".git").is_file()
+    assert not (external_gitdir / "commondir").exists()
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+
+def test_rejects_late_commondir_creation_in_separate_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An absent commondir must remain absent after the final Git probe."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    external_gitdir = tmp_path / "external-gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(external_gitdir))
+    commondir = external_gitdir / "commondir"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def introduce_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(".\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|control|HEAD"):
+            module.build_manifest(root, head)
+        assert injected and head_reads == 2
+    finally:
+        commondir.unlink(missing_ok=True)
+
+
+def test_rejects_preexisting_commondir_in_ordinary_gitdir(tmp_path: Path) -> None:
+    """An ordinary .git directory must not admit an unbound common-dir pointer."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    commondir = root / ".git" / "commondir"
+    commondir.write_text(".\n")
+    with pytest.raises(module.ReviewInputError, match="commondir|common.*dir"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_late_commondir_creation_in_ordinary_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The absent ordinary .git/commondir is part of the final HEAD epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    alternate = tmp_path / "alternate-common"
+    subprocess.check_call(
+        ["git", "clone", "-q", "--no-hardlinks", str(root), str(alternate)]
+    )
+    subprocess.check_call(
+        ["git", "-C", str(alternate), "-c", "user.name=Test",
+         "-c", "user.email=test@example.invalid", "commit", "-q",
+         "--allow-empty", "-m", "alternate successor"]
+    )
+    assert git(alternate, "rev-parse", "HEAD") != head
+    commondir = root / ".git" / "commondir"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.write_text(str(alternate / ".git") + "\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_git)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|common.*dir|HEAD"):
+            module.build_manifest(root, head)
+        assert injected and head_reads == 2
+        assert git(root, "rev-parse", "HEAD") != head
+    finally:
+        commondir.unlink(missing_ok=True)
+
+
+def test_rejects_late_dangling_commondir_pointer_in_ordinary_gitdir(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Even an unresolved commondir symlink invalidates an absent-file epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    commondir = root / ".git" / "commondir"
+    original_git = module.git
+    head_reads = 0
+
+    def introduce_dangling_pointer(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                commondir.symlink_to(tmp_path / "missing-common-gitdir")
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_dangling_pointer)
+    try:
+        with pytest.raises(module.ReviewInputError, match="commondir|HEAD"):
+            module.build_manifest(root, head)
+        assert head_reads == 2
+        assert commondir.is_symlink() and not commondir.exists()
+    finally:
+        commondir.unlink(missing_ok=True)
+
+
+def test_rejects_late_dangling_object_alternates_pointer(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An unresolved object-store pointer must not escape final custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    pointer = root / ".git" / "objects" / "info" / "alternates"
+    original_git = module.git
+    head_reads = 0
+
+    def introduce_dangling_alternate(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.symlink_to(tmp_path / "missing-object-store")
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_dangling_alternate)
+    try:
+        with pytest.raises(module.ReviewInputError, match="object alternates"):
+            module.build_manifest(root, head)
+        assert head_reads == 2
+        assert pointer.is_symlink() and not pointer.exists()
+    finally:
+        pointer.unlink(missing_ok=True)
+
+
+def test_rejects_late_git_config_epoch_change(tmp_path: Path, monkeypatch) -> None:
+    """An identical-byte config inode replacement after Git probes is not stable."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    config = root / ".git" / "config"
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def replace_config_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = config.with_name("config.replacement")
+                replacement.write_bytes(config.read_bytes())
+                os.replace(replacement, config)
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_config_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="config|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+
+
+def test_rejects_late_git_worktree_config_creation(tmp_path: Path, monkeypatch) -> None:
+    """A previously absent config.worktree appearing after Git probes is unsafe."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    config = root / ".git" / "config.worktree"
+    assert not config.exists()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def create_config_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                config.write_bytes(b"# late worktree config\n")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", create_config_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="config|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+
+
+def test_rejects_unbound_repository_config_includes(tmp_path: Path) -> None:
+    """A repository include is external Git authority absent from the pinned epoch."""
+    import pytest
+
+    for name, key in (
+        ("direct", "include.path"),
+        ("active-conditional", "includeIf.onbranch:*.path"),
+        ("inactive-conditional", "includeIf.onbranch:nonexistent.path"),
+    ):
+        case = tmp_path / name
+        case.mkdir()
+        root, head = sample_repo(case)
+        external = case / "external-git-config"
+        external.write_text("[core]\n\tquotePath = false\n", encoding="utf-8")
+        git(root, "config", "--add", key, str(external))
+        with pytest.raises(module.ReviewInputError, match="unbound Git configuration include"):
+            module.build_manifest(root, head)
+
+
+
+def test_rejects_split_index_external_sharedindex_authority(tmp_path: Path) -> None:
+    """The Git index may delegate tracked identity to a separate mutable file."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    git(root, "update-index", "--split-index")
+    shared = git(root, "rev-parse", "--shared-index-path")
+    assert shared and "sharedindex." in shared
+    assert git(root, "rev-parse", "HEAD") == head
+    with pytest.raises(module.ReviewInputError, match="split index"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_linked_worktree_split_index_external_authority(tmp_path: Path) -> None:
+    """A linked worktree can also delegate its index to an unpinned sharedindex."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    git(linked, "update-index", "--split-index")
+    assert git(linked, "rev-parse", "--shared-index-path")
+    with pytest.raises(module.ReviewInputError, match="split index"):
+        module.build_manifest(linked, head)
+
+
+
+def test_rejects_unbound_object_alternates_in_regular_and_linked_git(
+    tmp_path: Path,
+) -> None:
+    """Git object alternates are mutable external input to exact-head review."""
+    import pytest
+
+    for layout in ("regular", "linked"):
+        case = tmp_path / layout
+        case.mkdir()
+        root, head = sample_repo(case)
+        review = root
+        if layout == "linked":
+            review = case / "linked-review"
+            git(root, "worktree", "add", "-q", "-b", "linked-review", str(review), head)
+        alternate_objects = case / "external-objects"
+        alternate_objects.mkdir()
+        pointer = Path(git(review, "rev-parse", "--git-path", "objects/info/alternates"))
+        if not pointer.is_absolute():
+            pointer = review / pointer
+        pointer.write_text(str(alternate_objects) + "\n", encoding="utf-8")
+        assert git(review, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="object alternates"):
+            module.build_manifest(review, head)
+
+
+def test_rejects_late_object_alternates_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An alternates pointer introduced after Git reads invalidates custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    pointer = root / ".git" / "objects" / "info" / "alternates"
+    external = tmp_path / "external-objects"
+    external.mkdir()
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def introduce_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                pointer.write_text(str(external) + "\n", encoding="utf-8")
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", introduce_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="object alternates"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+
+
+def test_rejects_same_byte_head_control_inode_swap_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Even identical HEAD bytes cannot conceal an atomic control-file replacement."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    control = root / ".git" / "HEAD"
+    original_git = module.git
+    head_reads = 0
+    replaced = False
+
+    def replace_head_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, replaced
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = control.with_name("HEAD.same-bytes")
+                replacement.write_bytes(control.read_bytes())
+                os.replace(replacement, control)
+                replaced = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_head_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.build_manifest(root, head)
+    assert replaced and head_reads == 2
+
+
+def test_rejects_same_byte_loose_branch_ref_inode_swap_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A same-byte replacement of the branch ref invalidates the pinned ref epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    ref = git(root, "symbolic-ref", "HEAD")
+    control = root / ".git" / ref
+    assert control.is_file(), "fixture must use a loose branch ref"
+    original_git = module.git
+    head_reads = 0
+    replaced = False
+
+    def replace_ref_after_final_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, replaced
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                replacement = control.with_name(control.name + ".same-bytes")
+                replacement.write_bytes(control.read_bytes())
+                os.replace(replacement, control)
+                replaced = True
+        return result
+
+    monkeypatch.setattr(module, "git", replace_ref_after_final_git)
+    with pytest.raises(module.ReviewInputError, match="HEAD ref changed"):
+        module.build_manifest(root, head)
+    assert replaced and head_reads == 2
+
+
+def test_ambient_gitdir_worktree_and_common_dir_cannot_rebind_review_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Foreign repository-routing variables must not substitute exact-HEAD inputs."""
+    root, head = sample_repo(tmp_path)
+    baseline = module.build_manifest(root, head)
+
+    other_parent = tmp_path / "foreign"
+    other_parent.mkdir()
+    other, _ = sample_repo(other_parent)
+    changed = other / module.INPUTS[0]
+    changed.write_text("foreign committed component review input\n", encoding="utf-8")
+    git(other, "add", "--", module.INPUTS[0])
+    git(other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: foreign review source")
+    foreign_head = git(other, "rev-parse", "HEAD")
+    assert foreign_head != head
+
+    # The same argv resolves a foreign repository when these caller-owned
+    # variables are inherited. The review helper must construct its own
+    # Git environment and retain the originally pinned worktree identity.
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(other / ".git"))
+    inherited = subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert inherited == foreign_head
+    assert module.build_manifest(root, head) == baseline
+
+
+def test_rejects_hardlinked_git_object_storage(tmp_path: Path) -> None:
+    """Committed review bytes must not rely on externally aliased Git objects."""
+    import pytest
+
+    for storage_kind in ("loose", "pack"):
+        for linked_worktree in (False, True):
+            case = tmp_path / f"{storage_kind}-{linked_worktree}"
+            case.mkdir()
+            root, head = sample_repo(case)
+            candidate = root
+            if linked_worktree:
+                candidate = case / "linked-review"
+                git(root, "worktree", "add", "-q", "-b",
+                    "linked-object-custody", str(candidate), head)
+            objects = root / ".git" / "objects"
+            if storage_kind == "pack":
+                git(root, "repack", "-ad")
+                source = next((objects / "pack").glob("*.pack"))
+            else:
+                blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+                source = objects / blob[:2] / blob[2:]
+            assert source.is_file()
+            assert module.build_manifest(candidate, head)["candidate_head"] == head
+            external = case / "outside-git-object"
+            os.link(source, external)
+            assert source.stat().st_nlink == 2
+            with pytest.raises(module.ReviewInputError, match="hardlink"):
+                module.build_manifest(candidate, head)
+
+
+def test_rejects_late_git_object_hardlink_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An external object alias created after Git reads invalidates the epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+    source = root / ".git" / "objects" / blob[:2] / blob[2:]
+    external = tmp_path / "late-external-object-alias"
+    original_git = module.git
+    head_reads = 0
+
+    def alias_after_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                os.link(source, external)
+        return result
+
+    monkeypatch.setattr(module, "git", alias_after_final_head)
+    with pytest.raises(module.ReviewInputError, match="hardlink"):
+        module.build_manifest(root, head)
+    assert head_reads == 2 and external.is_file()
+
+
+
+def test_rejects_group_writable_git_object_storage(tmp_path: Path) -> None:
+    """A traversable object root cannot protect group-writable descendants."""
+    import pytest
+
+    for storage_kind in ("loose_directory", "loose_file", "pack_directory", "pack_file"):
+        case = tmp_path / storage_kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        objects = root / ".git" / "objects"
+        if storage_kind.startswith("pack"):
+            git(root, "repack", "-ad")
+            target = (objects / "pack" if storage_kind == "pack_directory"
+                      else next((objects / "pack").glob("*.pack")))
+        else:
+            blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+            target = (objects / blob[:2] if storage_kind == "loose_directory"
+                      else objects / blob[:2] / blob[2:])
+        objects.chmod(0o755)  # group can traverse, but cannot write the root
+        assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"
+        assert objects.stat().st_mode & 0o010
+        target.chmod(target.stat().st_mode | 0o020)
+        with pytest.raises(module.ReviewInputError, match="object store"):
+            module.build_manifest(root, head)
+
+
+
+def test_private_git_object_root_protects_group_writable_descendants(
+    tmp_path: Path,
+) -> None:
+    """Mode 0700 on the root denies group traversal into writable fanout."""
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    objects.chmod(0o700)
+    blob = git(root, "rev-parse", f"{head}:{module.INPUTS[0]}")
+    fanout = objects / blob[:2]
+    fanout.chmod(fanout.stat().st_mode | 0o020)
+    loose = fanout / blob[2:]
+    loose.chmod(loose.stat().st_mode | 0o020)
+    assert module.build_manifest(root, head)["authority"] == "REVIEW_INPUT_ONLY"
+
+
+def test_object_inventory_uses_pinned_path_without_late_git(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """No Git subprocess may run after the final input filesystem sweep."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    head_reads = 0
+    object_lookups = 0
+    final_head_seen = False
+
+    def forbid_late_git(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, object_lookups, final_head_seen
+        if final_head_seen:
+            raise AssertionError(f"Git subprocess after final HEAD probe: {args}")
+        if args == ("rev-parse", "--git-path", "objects"):
+            object_lookups += 1
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                final_head_seen = True
+        return result
+
+    monkeypatch.setattr(module, "git", forbid_late_git)
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert head_reads == 2
+    assert object_lookups == 1
+
+
+def test_rejects_input_changed_during_final_object_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The last object-store scan must not hide a subsequent input mutation."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    original_inventory = module.capture_git_object_epoch
+    inventory_calls = 0
+
+    def mutate_during_final_inventory(objects: Path) -> dict:
+        nonlocal inventory_calls
+        result = original_inventory(objects)
+        inventory_calls += 1
+        if inventory_calls == 2:
+            earlier.write_bytes(b"late input mutation during object inventory\n")
+        return result
+
+    monkeypatch.setattr(module, "capture_git_object_epoch",
+                        mutate_during_final_inventory)
+    with pytest.raises(module.ReviewInputError, match="review input changed"):
+        module.build_manifest(root, head)
+    assert inventory_calls == 2
+
+
+def test_rejects_git_control_created_after_final_object_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The last object inventory must not hide a later config, lock or alternate."""
+    import pytest
+
+    for kind, expected in (
+        ("config", "Git config appeared after final Git probe"),
+        ("lock", "pending Git control update"),
+        ("alternates", "unbound Git object alternates authority"),
+    ):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        targets = {
+            "config": module.git_control_path(root, "config.worktree"),
+            "lock": module.git_control_path(root, "index").with_name("index.lock"),
+            "alternates": module.git_control_path(root, "objects/info/alternates"),
+        }
+        target = targets[kind]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original_inventory = module.capture_git_object_epoch
+        inventory_calls = 0
+
+        def mutate_after_inventory(objects: Path) -> dict:
+            nonlocal inventory_calls
+            result = original_inventory(objects)
+            inventory_calls += 1
+            if inventory_calls == 2:
+                target.write_text("[core]\n\tbare = false\n" if kind == "config"
+                                  else "pending untrusted Git control\n",
+                                  encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(module, "capture_git_object_epoch",
+                            mutate_after_inventory)
+        try:
+            with pytest.raises(module.ReviewInputError, match=expected):
+                module.build_manifest(root, head)
+            assert inventory_calls == 2 and target.is_file()
+        finally:
+            monkeypatch.setattr(module, "capture_git_object_epoch",
+                                original_inventory)
+
+
+def test_rejects_transient_git_object_root_permission_epoch(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A temporary writable object root invalidates review custody even if restored."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_inventory = module.capture_git_object_epoch
+    calls = 0
+
+    def change_and_restore_root_mode(path: Path) -> dict:
+        nonlocal calls
+        snapshot = original_inventory(path)
+        calls += 1
+        if calls == 1:
+            original_mode = path.stat().st_mode & 0o7777
+            path.chmod(original_mode | 0o020)
+            path.chmod(original_mode)
+        return snapshot
+
+    monkeypatch.setattr(module, "capture_git_object_epoch",
+                        change_and_restore_root_mode)
+    with pytest.raises(module.ReviewInputError, match="Git object store changed"):
+        module.build_manifest(root, head)
+    assert calls == 2 and objects.is_dir()
+
+
+def test_rejects_transient_object_root_mode_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A transient writable object root after inventory must invalidate custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = objects.stat().st_mode & 0o7777
+            objects.chmod(original_mode | 0o020)
+            objects.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store root changed"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and not (objects.stat().st_mode & 0o020)
+
+
+def test_rejects_transient_git_object_descendant_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An object-file permission epoch restored after inventory is not authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    object_file = root / ".git" / "objects" / head[:2] / head[2:]
+    assert object_file.is_file()
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = object_file.stat().st_mode & 0o7777
+            object_file.chmod(original_mode | 0o020)
+            object_file.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and object_file.is_file()
+
+
+def test_rejects_transient_git_object_subdirectory_after_final_inventory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A restored object fanout directory cannot escape final epoch custody."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    fanout = root / ".git" / "objects" / head[:2]
+    assert fanout.is_dir()
+    original_sweep = module.require_verified_input_epochs
+    sweeps = 0
+
+    def mutate_after_final_input_sweep(worktree: Path, verified_inputs: list) -> None:
+        nonlocal sweeps
+        original_sweep(worktree, verified_inputs)
+        sweeps += 1
+        if sweeps == 2:
+            original_mode = fanout.stat().st_mode & 0o7777
+            fanout.chmod(original_mode | 0o020)
+            fanout.chmod(original_mode)
+
+    monkeypatch.setattr(module, "require_verified_input_epochs",
+                        mutate_after_final_input_sweep)
+    with pytest.raises(module.ReviewInputError, match="Git object store"):
+        module.build_manifest(root, head)
+    assert sweeps == 2 and fanout.is_dir()
+
+
+
+def test_rejects_late_control_after_final_object_epoch(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The final object-entry walk must not mask a later Git control change."""
+    import pytest
+
+    for kind, expected in (
+        ("config", "Git config appeared after final Git probe"),
+        ("lock", "pending Git control update"),
+        ("alternates", "unbound Git object alternates authority"),
+    ):
+        case = tmp_path / kind
+        case.mkdir()
+        root, head = sample_repo(case)
+        targets = {
+            "config": module.git_control_path(root, "config.worktree"),
+            "lock": module.git_control_path(root, "index").with_name("index.lock"),
+            "alternates": module.git_control_path(root, "objects/info/alternates"),
+        }
+        target = targets[kind]
+        original = module.require_git_object_final_epochs
+        calls = 0
+
+        def mutate_after_final_object_walk(objects: Path, admitted: dict) -> None:
+            nonlocal calls
+            original(objects, admitted)
+            calls += 1
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("late untrusted Git control\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            module, "require_git_object_final_epochs",
+            mutate_after_final_object_walk,
+        )
+        try:
+            with pytest.raises(module.ReviewInputError, match=expected):
+                module.build_manifest(root, head)
+            assert calls == 1 and target.is_file()
+        finally:
+            monkeypatch.setattr(module, "require_git_object_final_epochs", original)
+
+
+
+def test_rejects_replaced_object_root_before_descendant_path_access(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Do not follow a substituted object-root symlink into external storage."""
+    import pytest
+
+    root, _ = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    admitted = module.capture_git_object_epoch(objects)
+    outside = tmp_path / "external-object-store"
+    shutil.copytree(objects, outside)
+    objects.rename(tmp_path / "original-object-store")
+    objects.symlink_to(outside, target_is_directory=True)
+
+    original_lstat = Path.lstat
+    traversed_descendants = []
+
+    def track_lstat(path: Path):
+        if path != objects and objects in path.parents:
+            traversed_descendants.append(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", track_lstat)
+    with pytest.raises(module.ReviewInputError):
+        module.require_git_object_final_epochs(objects, admitted)
+    assert not traversed_descendants, (
+        "untrusted object-store descendants were traversed before root custody"
+    )
+
+
+def test_rejects_symlinked_gitdir_pointer_alias(tmp_path: Path) -> None:
+    """A mutable gitfile alias cannot select a different HEAD after final probes."""
+    import pytest
+
+    root = tmp_path / "separate-worktree"
+    gitdir = tmp_path / "real-gitdir"
+    subprocess.run(
+        ["git", "init", "-q", "--separate-git-dir", str(gitdir), str(root)],
+        check=True,
+    )
+    for relative in module.INPUTS:
+        file = root / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(f"pinned review input: {relative}\n", encoding="utf-8")
+    git(root, "add", "--", *module.INPUTS)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: separate gitdir authority")
+    head = git(root, "rev-parse", "HEAD")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    alias = tmp_path / "mutable-gitdir-alias"
+    alias.symlink_to(gitdir, target_is_directory=True)
+    (root / ".git").write_text(f"gitdir: {alias}\n", encoding="utf-8")
+    # Git canonicalizes --git-path HEAD to the original directory. The .git
+    # pointer itself nevertheless traverses a mutable symlink.
+    assert git(root, "rev-parse", "--git-path", "HEAD") == str(gitdir / "HEAD")
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias"):
+        module.build_manifest(root, head)
+
+    # Relative gitfile pointers are valid when they traverse only canonical
+    # directories; a relative alias must not regain authority.
+    (root / ".git").write_text("gitdir: ../real-gitdir\n", encoding="utf-8")
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    (root / ".git").write_text("gitdir: ../mutable-gitdir-alias\n", encoding="utf-8")
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias"):
+        module.build_manifest(root, head)
+
+
+
+def test_rejects_gitdir_parent_alias_created_after_final_git_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A late alias on the gitfile path cannot redirect Git without changing .git."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+    original_gitdir = metadata / "gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(original_gitdir))
+    alias = metadata / "alias"
+    alias.mkdir()
+    (root / ".git").write_text(
+        f"gitdir: {metadata}/alias/../gitdir\n", encoding="utf-8"
+    )
+    assert git(root, "rev-parse", "HEAD") == head
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    foreign_parent = tmp_path / "foreign"
+    foreign_parent.mkdir()
+    foreign_root, _ = sample_repo(foreign_parent)
+    (foreign_root / module.INPUTS[0]).write_text("foreign committed P2 input\\n")
+    git(foreign_root, "add", "--", module.INPUTS[0])
+    git(foreign_root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: foreign source successor")
+    foreign_head = git(foreign_root, "rev-parse", "HEAD")
+    foreign_gitdir = foreign_parent / "gitdir"
+    git(foreign_root, "init", "-q", "--separate-git-dir", str(foreign_gitdir))
+    (foreign_parent / "child").mkdir()
+    assert foreign_head != head
+
+    original_git = module.git
+    head_reads = 0
+    injected = False
+
+    def redirect_after_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads, injected
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                alias.rmdir()
+                alias.symlink_to(foreign_parent / "child", target_is_directory=True)
+                injected = True
+        return result
+
+    monkeypatch.setattr(module, "git", redirect_after_final_head)
+    with pytest.raises(module.ReviewInputError, match="gitdir.*alias|HEAD.*changed"):
+        module.build_manifest(root, head)
+    assert injected and head_reads == 2
+    assert git(root, "rev-parse", "HEAD") == foreign_head
+
+
+def test_malformed_git_metadata_is_structured_review_failure(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """Invalid Git metadata encoding must not escape the review CLI."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def invalid_metadata(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "--show-toplevel"):
+            return b"\xff\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", invalid_metadata)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("FAIL: ")
+
+
+def test_malformed_git_control_path_nul_is_structured_review_failure(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """A NUL in Git's control-path response must fail closed, not crash CLI."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def invalid_control_path(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "--git-path", "objects"):
+            return b"/tmp/untrusted\x00objects\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", invalid_control_path)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("FAIL: ")
+
+
+def test_gitdir_pointer_embedded_nul_is_structured_review_failure(
+    tmp_path: Path,
+) -> None:
+    """Malformed gitfile paths must reject as review errors, not leak ValueError."""
+    import pytest
+
+    root = tmp_path / "pointer-repo"
+    root.mkdir()
+    (root / ".git").write_bytes(b"gitdir: /tmp/p2-metadata\x00alternate\n")
+    with pytest.raises(module.ReviewInputError, match="invalid worktree gitdir control"):
+        module.capture_gitdir_pointer_epoch(root, root / "HEAD")
+
+
+def test_git_control_path_rejects_unframed_or_invisible_metadata(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git control paths must not gain authority by stripping hostile output."""
+    import pytest
+
+    path = str(tmp_path / "objects").encode()
+    for suffix in (
+        b"",                    # missing Git framing newline
+        b"\r\n",               # CRLF is not Git's framing protocol
+        b"\x0b\n",              # vertical tab removed by str.strip()
+        b"\xc2\x85\n",         # Unicode C1 NEXT LINE removed by str.strip()
+        b"\n\n",               # multiple framing newlines
+        b"\x1b[0m\n",          # terminal escape embedded in pathname
+        b"\xe2\x80\xae\n",  # bidi override
+    ):
+        monkeypatch.setattr(
+            module, "git", lambda *_args, payload=path + suffix: payload,
+        )
+        with pytest.raises(
+            module.ReviewInputError, match="invalid Git control pathname",
+        ):
+            module.git_control_path(tmp_path, "objects")
+
+
+def test_git_control_path_preserves_literal_spaces(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A valid Git pathname may contain spaces without being normalized."""
+    expected = tmp_path / "review data" / "objects"
+    monkeypatch.setattr(
+        module, "git", lambda *_args: (str(expected) + "\n").encode(),
+    )
+    assert module.git_control_path(tmp_path, "objects") == expected
+
+
+def test_object_inventory_disappearance_is_structured_review_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A disappearing Git object directory cannot escape as a raw OS exception."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_iterdir = Path.iterdir
+    triggered = False
+
+    def disappearing_directory(path: Path):
+        nonlocal triggered
+        if path == objects and not triggered:
+            triggered = True
+            raise FileNotFoundError("object store removed during inventory")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", disappearing_directory)
+    with pytest.raises(module.ReviewInputError, match="object store.*inventory"):
+        module.build_manifest(root, head)
+    assert triggered
+
+
+def test_object_entry_disappearance_is_structured_review_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An object entry removed during enumeration invalidates the review epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    missing_entry = root / ".git" / "objects" / "info"
+    assert missing_entry.is_dir()
+    original_lstat = Path.lstat
+    original_iterdir = Path.iterdir
+    in_inventory = False
+    triggered = False
+
+    def start_inventory(path: Path):
+        nonlocal in_inventory
+        if path == root / ".git" / "objects":
+            in_inventory = True
+        return original_iterdir(path)
+
+    def disappearing_entry(path: Path, *args, **kwargs):
+        nonlocal triggered
+        if in_inventory and path == missing_entry and not triggered:
+            triggered = True
+            raise FileNotFoundError("object entry removed during inventory")
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "iterdir", start_inventory)
+    monkeypatch.setattr(Path, "lstat", disappearing_entry)
+    with pytest.raises(module.ReviewInputError, match="object store.*inventory"):
+        module.build_manifest(root, head)
+    assert triggered
