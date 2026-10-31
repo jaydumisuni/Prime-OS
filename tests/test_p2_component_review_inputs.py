@@ -2027,3 +2027,16 @@ def test_malformed_git_control_path_nul_is_structured_review_failure(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("FAIL: ")
+
+
+def test_gitdir_pointer_embedded_nul_is_structured_review_failure(
+    tmp_path: Path,
+) -> None:
+    """Malformed gitfile paths must reject as review errors, not leak ValueError."""
+    import pytest
+
+    root = tmp_path / "pointer-repo"
+    root.mkdir()
+    (root / ".git").write_bytes(b"gitdir: /tmp/p2-metadata\x00alternate\n")
+    with pytest.raises(module.ReviewInputError, match="invalid worktree gitdir control"):
+        module.capture_gitdir_pointer_epoch(root, root / "HEAD")

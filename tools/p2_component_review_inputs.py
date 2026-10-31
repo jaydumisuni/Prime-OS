@@ -182,7 +182,9 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
     # different gitdir merely because it resolves the same commit and inputs.
     line = data.rstrip(b"\n")
     if (not line.startswith(b"gitdir: ") or not line[8:]
-            or b"\n" in line or b"\r" in line):
+            or b"\n" in line or b"\r" in line or b"\x00" in line):
+        # Path operations raise an uncaught ValueError on embedded NUL. Reject
+        # malformed Git authority before traversing any gitfile path.
         raise ReviewInputError("invalid worktree gitdir control")
     target = Path(os.fsdecode(line[8:]))
     if not target.is_absolute():
