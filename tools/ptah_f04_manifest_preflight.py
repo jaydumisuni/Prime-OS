@@ -54,12 +54,10 @@ def validate_manifest(value: object) -> dict:
     node = manifest["ptah_node_id"]
     if type(host) is not str or UUID7.fullmatch(host) is None:
         raise ManifestError("invalid_prime_host_id")
-    if type(node) is not str or not 0 < len(node) <= 160 or node == host:
+    # Ptah's frozen NodeId wraps EntityId: a canonical lowercase UUIDv7.
+    # A human-readable label is not a Node identity and cannot bind F04.
+    if type(node) is not str or UUID7.fullmatch(node) is None or node == host:
         raise ManifestError("invalid_ptah_node_id")
-    try:
-        node.encode("utf-8", errors="strict")
-    except UnicodeError as error:
-        raise ManifestError("invalid_ptah_node_id") from error
     commit = manifest["source_commit"]
     if type(commit) is not str or COMMIT.fullmatch(commit) is None:
         raise ManifestError("invalid_source_commit")
