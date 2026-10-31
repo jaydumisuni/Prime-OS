@@ -2901,6 +2901,68 @@ fn runtime_proof_plan_is_exact_guest_bound_and_requires_all_w8_cases() {
 }
 
 #[test]
+fn runtime_proof_zero_digest_cannot_be_admitted_by_rehashing_public_observations() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
+        prepare_runtime_proof_plan, VmRuntimeProofState, WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+    };
+
+    // The proof ID and observation IDs are public hashes, not attestations.
+    // A fabricated plan must not turn an unbound zero-digest placeholder into PASS.
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"w8-runtime-zero-digest-sentinel";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let mut plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+
+    let observations_for = |plan: &primed::windows_vm::VmRuntimeProofPlan| {
+        plan.required_cases
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, case)| {
+                create_runtime_proof_observation_from_evidence(
+                    plan,
+                    case,
+                    true,
+                    true,
+                    format!("distinct-evidence-{index}").as_bytes(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &observations_for(&plan)),
+        VmRuntimeProofState::Pass
+    );
+
+    plan.guest_sha256 = "0".repeat(64);
+    let body = serde_json::json!({
+        "schema": WINDOWS_VM_RUNTIME_PROOF_SCHEMA,
+        "guest_id": plan.guest_id,
+        "guest_revision": plan.guest_revision,
+        "guest_sha256": plan.guest_sha256,
+        "application_id": plan.application_id,
+        "session_id": plan.session_id,
+        "required_cases": plan.required_cases,
+        "runtime_dir": plan.paths.runtime_dir,
+        "overlay_image": plan.paths.overlay_image,
+        "agent_socket": plan.paths.agent_socket,
+    });
+    plan.proof_id = digest(&serde_json::to_vec(&body).unwrap());
+    let forged_observations = observations_for(&plan);
+    assert_eq!(
+        evaluate_runtime_proof(&plan, &forged_observations),
+        VmRuntimeProofState::Pending,
+        "a self-consistent public hash cannot bind a zero guest-image digest"
+    );
+}
+
+#[test]
 fn runtime_proof_cannot_pass_on_wrong_binding_duplicate_case_or_residual_state() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, evaluate_runtime_proof,
