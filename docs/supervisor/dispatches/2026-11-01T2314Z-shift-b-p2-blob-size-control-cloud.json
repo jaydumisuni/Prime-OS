@@ -1,0 +1,56 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "B",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-10-31T23:14:17Z",
+  "material_movement_at_utc": "2026-10-31T23:13:59Z",
+  "frontier": "Prime P2 exact-head component/package review-input canonical Git blob-size control framing",
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input authority",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 161,
+    "head": "0ad892f0bb41ef4df3c5bf08083e4b9868d7593d",
+    "state": "Git blob-size output parsed through int(strip()), admitting malformed equivalent control records"
+  },
+  "worker_action": "Shift B GitHub authenticated cloud source-only fallback; no local KRATOS worker or Patrol claimed",
+  "after": {
+    "source_commit": "5512dcf043c27efb2a9c8201168a0d223cbfee2f",
+    "test_commit": "3b83b9e4c91940114c77cc372d277dbd2621a32b",
+    "branch": "supervisor/shift-b-p2-blob-size-control-20261101-0112",
+    "pr": 163,
+    "state": "Strict unsigned decimal LF framing, bounded control record, eight adversarial regression cases; Prime P2 unadmitted"
+  },
+  "proof": {
+    "disposable_git_cat_file_size": "decimal bytes plus single LF",
+    "isolated_predecessor": "8/8 malformed control records accepted by int(strip())",
+    "isolated_corrected": "8/8 malformed records rejected; canonical 1/1 admitted",
+    "github_source_blob": "44c15ad3eeb59651f0e977b50bba0db26a028162",
+    "github_test_blob": "0287a4ac02b7931a7e7fbb07f5a69e680fc18eb1",
+    "github_compare": "2 commits ahead, 0 behind",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "native_prime_pytest": "UNVERIFIED",
+    "hosted_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_PROJECT_SOURCE_COMMIT_PUBLISHED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_PENDING_LOCAL_RECONCILIATION",
+  "local_attention_reconciliation": "QUEUED_KRATOS_TRANSPORT_UNAVAILABLE; reconcile branch and receipt, run Patrol and focused native pytest, write local dispatch only after proof without duplicate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}
