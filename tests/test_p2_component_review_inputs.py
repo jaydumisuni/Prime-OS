@@ -1280,6 +1280,40 @@ def test_separate_git_directory_is_valid_without_commondir(tmp_path: Path) -> No
     assert module.build_manifest(root, head)["candidate_head"] == head
 
 
+def test_rejects_malformed_standalone_git_common_dir_response(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git control output must not be stripped or decoded outside review denial."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    external_gitdir = tmp_path / "external-gitdir"
+    git(root, "init", "-q", "--separate-git-dir", str(external_gitdir))
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    original_git = module.git
+    command = ("rev-parse", "--path-format=absolute", "--git-common-dir")
+    canonical = original_git(root, *command)
+    assert canonical.endswith(b"\n") and canonical.count(b"\n") == 1
+    invalid = {
+        "extra_lf": canonical + b"\n",
+        "missing_lf": canonical[:-1],
+        "invalid_utf8": canonical[:-1] + b"\xff\n",
+        "carriage_return": canonical[:-1] + b"\r\n",
+    }
+    for label, hostile in invalid.items():
+        def forged_common_dir(repo: Path, *args: str) -> bytes:
+            if args == command:
+                return hostile
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_common_dir)
+        with pytest.raises(
+            module.ReviewInputError, match="separate gitdir common-directory"
+        ):
+            module.build_manifest(root, head)
+    monkeypatch.setattr(module, "git", original_git)
+
+
 def test_rejects_late_commondir_creation_in_separate_gitdir(
     tmp_path: Path, monkeypatch,
 ) -> None:
