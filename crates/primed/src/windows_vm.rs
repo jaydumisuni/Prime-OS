@@ -1302,6 +1302,14 @@ pub fn validate_guest_definition(
     if !canonical_sha256_hex(&definition.base_sha256) {
         return Err(WindowsVmError::InvalidGuest("invalid canonical sha256"));
     }
+    // A canonical hex string can still be an unbound zero placeholder or the
+    // digest of an empty image. Reject both before pathname or image I/O;
+    // the guest-agent and runtime-proof boundaries already deny these values.
+    if !bound_nonempty_payload_sha256(&definition.base_sha256) {
+        return Err(WindowsVmError::InvalidGuest(
+            "unbound or empty guest image digest",
+        ));
+    }
     let image = PathBuf::from(&definition.base_image);
     let worker_uid = unsafe { libc::geteuid() };
     if !image.is_absolute() {
