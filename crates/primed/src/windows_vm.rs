@@ -1502,7 +1502,24 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !request.qemu_binary.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
     }
+    // The executable path is part of W8 launch authority and proof records.
+    // Check both the supplied alias and its resolved target: canonicalization
+    // alone can erase invisible/bidi text from an otherwise trusted symlink.
+    if request
+        .qemu_binary
+        .to_str()
+        .is_none_or(runtime_path_has_unsafe_text)
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable path contains unsafe text",
+        ));
+    }
     let qemu = fs::canonicalize(&request.qemu_binary)?;
+    if qemu.to_str().is_none_or(runtime_path_has_unsafe_text) {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable path contains unsafe text",
+        ));
+    }
     // A canonical pathname is not proof that the executable remains regular:
     // a FIFO substituted before open would block forever without a writer.
     // Reject symlink replacement and open nonblocking before inspecting the

@@ -1457,6 +1457,50 @@ fn qemu_plan_is_kvm_only_network_closed_and_agent_scoped() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_invisible_executable_paths_and_symlink_aliases() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = private_tempdir();
+    let clean = dir.path().join("qemu-clean-binary");
+    let disguised = dir.path().join("qemu-\u{202e}-binary");
+    for binary in [&clean, &disguised] {
+        fs::write(binary, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(binary, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+    let request = |qemu_binary| VmPlanRequest {
+        qemu_binary,
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    assert!(build_qemu_plan(&request(clean.clone())).is_ok());
+
+    // The executable is a launch authority and appears in proof/review logs.
+    // Reject an invisible/bidi executable pathname even when all inode and
+    // ownership checks succeed; no executable is launched by this test.
+    assert!(build_qemu_plan(&request(disguised.clone())).is_err());
+
+    // A symlink can hide the unsafe text in either the caller's alias or
+    // the canonical target. Both spellings must be checked.
+    let disguised_alias = dir.path().join("qemu-\u{200b}-alias");
+    symlink(&clean, &disguised_alias).unwrap();
+    assert!(build_qemu_plan(&request(disguised_alias)).is_err());
+
+    let clean_alias = dir.path().join("qemu-clean-alias");
+    symlink(&disguised, &clean_alias).unwrap();
+    assert!(build_qemu_plan(&request(clean_alias)).is_err());
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_pins_executable_before_alias_retarget() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 
