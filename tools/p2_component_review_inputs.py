@@ -562,16 +562,23 @@ def require_verified_input_epochs(
     """Reject late input substitution without invoking Git after final probes."""
     for relative, admitted_identity in verified_inputs:
         directory = root
-        for component in Path(relative).parts[:-1]:
-            directory /= component
-            require_private_directory(directory)
-        file = root / relative
-        current = file.lstat()
-        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
-                or current.st_uid not in (0, os.geteuid())
-                or current.st_mode & 0o022 or file.resolve() != file
-                or stat_identity(current) != admitted_identity):
-            raise ReviewInputError(f"review input changed after verification: {relative}")
+        try:
+            for component in Path(relative).parts[:-1]:
+                directory /= component
+                require_private_directory(directory)
+            file = root / relative
+            current = file.lstat()
+            if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                    or current.st_uid not in (0, os.geteuid())
+                    or current.st_mode & 0o022 or file.resolve() != file
+                    or stat_identity(current) != admitted_identity):
+                raise ReviewInputError(f"review input changed after verification: {relative}")
+        except OSError as exc:
+            # A deleted input or replaced ancestor is a failed review epoch,
+            # not an unhandled filesystem exception escaping the admission API.
+            raise ReviewInputError(
+                f"review input unavailable after verification: {relative}"
+            ) from exc
 
 
 def build_manifest(repo: Path, expected_head: str) -> dict:

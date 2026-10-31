@@ -669,6 +669,42 @@ def test_rejects_earlier_input_changed_after_last_input_read(
         module.build_manifest(root, head)
 
 
+def test_late_review_input_disappearance_has_structured_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A removed input or ancestor after the last Git probe is not raw I/O."""
+    import pytest
+
+    for remove_parent in (False, True):
+        fixture = tmp_path / ("parent" if remove_parent else "file")
+        fixture.mkdir()
+        root, head = sample_repo(fixture)
+        target = root / module.INPUTS[2]
+        original_git = module.git
+        head_reads = 0
+
+        def remove_after_last_head(repo: Path, *args: str) -> bytes:
+            nonlocal head_reads
+            result = original_git(repo, *args)
+            if args == ("rev-parse", "HEAD"):
+                head_reads += 1
+                if head_reads == 2:
+                    if remove_parent:
+                        target.parent.rename(target.parent.with_name("src-moved"))
+                    else:
+                        target.unlink()
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "git", remove_after_last_head)
+            with pytest.raises(
+                module.ReviewInputError,
+                match="review input unavailable after verification",
+            ):
+                module.build_manifest(root, head)
+        assert head_reads == 2
+
+
 def test_rejects_earlier_index_restage_after_last_input_read(
     tmp_path: Path, monkeypatch,
 ) -> None:
