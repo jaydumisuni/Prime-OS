@@ -2230,3 +2230,17 @@ def test_object_entry_disappearance_is_structured_review_failure(
     with pytest.raises(module.ReviewInputError, match="object store.*inventory"):
         module.build_manifest(root, head)
     assert triggered
+
+
+def test_final_object_root_disappearance_is_structured_review_failure(
+    tmp_path: Path,
+) -> None:
+    """A vanished object root at final custody recheck must fail as review denial."""
+    import pytest
+
+    root, _ = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    admitted = module.capture_git_object_epoch(objects)
+    objects.rename(root / ".git" / "objects-moved")
+    with pytest.raises(module.ReviewInputError, match="Git object store root unavailable"):
+        module.require_git_object_final_epochs(objects, admitted)

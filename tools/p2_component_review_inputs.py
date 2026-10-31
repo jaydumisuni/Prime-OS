@@ -510,9 +510,14 @@ def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
 
 def require_git_object_root_epoch(objects: Path, admitted: tuple) -> None:
     """Recheck root custody after the final input sweep without another inventory."""
-    require_private_directory(objects)
-    require_protected_ancestors(objects)
-    current = objects.lstat()
+    try:
+        require_private_directory(objects)
+        require_protected_ancestors(objects)
+        current = objects.lstat()
+    except OSError as exc:
+        raise ReviewInputError(
+            "Git object store root unavailable during final epoch"
+        ) from exc
     epoch = (
         stat.S_IFMT(current.st_mode), current.st_uid,
         current.st_mode & 0o7777, current.st_nlink,
