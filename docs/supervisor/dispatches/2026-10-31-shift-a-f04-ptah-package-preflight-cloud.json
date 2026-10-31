@@ -41,7 +41,7 @@
   },
   "health": {
     "nodie_roster": "UNVERIFIED_ORACLE_INTERNAL_ERROR",
-    "supervisor_pool": "A within grace; B healthy; C healthy; D late-but-completed; E healthy; zero missed",
+    "supervisor_pool": "A current slot within grace; B HEALTHY; C HEALTHY; D HEALTHY (21:41 CAT within 21:36+8-minute grace); E HEALTHY; zero missed",
     "kratos": "UNVERIFIED_ORACLE_ROSTER_FAILED",
     "local_attention": "QUEUED_KRATOS_RECONCILIATION"
   },
