@@ -916,6 +916,16 @@ pub fn plan_component_data_removal(
     }
 
     match manifest.persistent_data_policy {
+        // A migration-completion claim is meaningful only for a component
+        // whose policy actually requires migration. Reject unrelated claims
+        // at this public primitive, not only at the dependent-closure wrapper.
+        PersistentDataPolicy::RetainOnRemove | PersistentDataPolicy::Ephemeral
+            if explicit_migration_completed =>
+        {
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(
+                current.component_id.clone(),
+            ))
+        }
         PersistentDataPolicy::RetainOnRemove => Ok(ComponentDataDisposition::Retain),
         PersistentDataPolicy::ExplicitMigration if explicit_migration_completed => {
             Ok(ComponentDataDisposition::Migrated)
@@ -2974,6 +2984,11 @@ mod tests {
             plan_component_data_removal(&manifest, &current, false).unwrap(),
             ComponentDataDisposition::Retain
         );
+        assert!(matches!(
+            plan_component_data_removal(&manifest, &current, true),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == current.component_id
+        ));
 
         manifest.persistent_data_policy = PersistentDataPolicy::ExplicitMigration;
         assert!(matches!(
@@ -2990,6 +3005,11 @@ mod tests {
             plan_component_data_removal(&manifest, &current, false).unwrap(),
             ComponentDataDisposition::DiscardEphemeral
         );
+        assert!(matches!(
+            plan_component_data_removal(&manifest, &current, true),
+            Err(ComponentAdmissionError::UnexpectedMigrationAcknowledgement(id))
+                if id == current.component_id
+        ));
 
         let wrong = InstalledComponent {
             revision: current.revision + 1,
