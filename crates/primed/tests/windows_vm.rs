@@ -140,7 +140,7 @@ fn guest_definition_rejects_unbound_digests_before_image_io() {
         let mut guest = definition(&missing_image, b"nonempty-windows-image");
         guest.base_sha256 = sentinel;
         let error = validate_guest_definition(&guest).unwrap_err();
-        assert!(matches!(error, WindowsVmError::InvalidGuest(_)), "{error}");
+        assert!(matches!(&error, WindowsVmError::InvalidGuest(_)), "{error}");
         assert!(error.to_string().contains("digest"), "{error}");
     }
 
