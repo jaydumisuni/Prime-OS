@@ -4102,6 +4102,27 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
 
 #[cfg(unix)]
 #[test]
+fn w8_proof_session_root_rejects_confusable_unicode_path_separators() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = private_tempdir();
+    for name in [
+        "root\u{2044}shadow",
+        "root\u{2215}shadow",
+        "root\u{ff0f}shadow",
+        "root\u{ff3c}shadow",
+    ] {
+        let root = dir.path().join(name);
+        private_runtime_dir(&root);
+        assert!(
+            vm_session_paths(&root, "app-001", "session-a").is_err(),
+            "confusable path separator admitted to W8 proof root: {name:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn w8_runtime_directory_requires_private_traversal() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::PermissionsExt;
@@ -4171,6 +4192,10 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
         "guest\u{1fffe}image.qcow2",  // Unicode noncharacter (supplementary plane end).
         "guest\u{10ffff}image.qcow2", // Unicode noncharacter (last scalar).
         "guest\u{2028}image.qcow2",   // Unicode line separator.
+        "guest\u{2044}image.qcow2",   // Fraction slash, not a pathname separator.
+        "guest\u{2215}image.qcow2",   // Division slash, confusable with '/'.
+        "guest\u{ff0f}image.qcow2",   // Fullwidth solidus.
+        "guest\u{ff3c}image.qcow2",   // Fullwidth reverse solidus.
         "guest\u{e0001}image.qcow2",  // Default-ignorable language tag.
     ] {
         let image = dir.path().join(name);
