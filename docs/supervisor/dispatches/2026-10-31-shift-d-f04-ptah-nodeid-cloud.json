@@ -47,9 +47,10 @@
     "local_attention": "QUEUED_KRATOS_RECONCILIATION"
   },
   "dependency_linkage": {
-    "selected": "Ptah oldest visible last material PR activity 2026-10-31T18:26:26Z",
+    "selected": "Ptah F04 prioritized under higher-severity engineering failure exception: manifest accepted identities impossible for Ptah frozen NodeId",
     "upstream": "Ptah E06/E07 standalone DONE; Ptah NodeId canonical UUIDv7 frozen",
-    "downstream": "Prime OS F04-F07 OS-owned non-authorizing source-only integration"
+    "downstream": "Prime OS F04-F07 OS-owned non-authorizing source-only integration",
+    "fairness_exception": "Prime Windows W8 had older visible PR movement (2026-10-31T18:15:41Z) than Ptah E07 (2026-10-31T18:26:26Z), but F04 NodeId type mismatch is an upstream contract-integrity failure. KRATOS dispatch/lease fairness still unverified."
   },
   "disposition": "SOURCE_PUBLISHED_REVIEW_AND_NATIVE_PROOF_PENDING",
   "reconcile_on_kratos": "Recover exact Prime PR #158 and cloud receipt; Patrol/preflight actual Prime-owned worktree; run python3 -m unittest discover -s tests -p test_ptah_f04_manifest_preflight.py -v; verify exact PR head/reviews and local worker/leases; update Cookpit attention and dispatches without duplicate PASS receipt; preserve protected gates",
