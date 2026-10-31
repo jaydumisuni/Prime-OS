@@ -153,6 +153,46 @@ def test_ambient_alternate_object_database_cannot_supply_review_git_objects(
     assert module.build_manifest(root, head) == baseline
 
 
+def test_rejects_noncanonical_head_control_trailing_whitespace(tmp_path: Path) -> None:
+    """Git may resolve an extra control newline, but review authority must not."""
+    root, head = sample_repo(tmp_path)
+    head_file = root / ".git" / "HEAD"
+    head_file.write_bytes(head_file.read_bytes() + b"\n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="HEAD control"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_noncanonical_detached_head_control(tmp_path: Path) -> None:
+    """Detached HEAD evidence must also use one SHA and one framing LF."""
+    root, head = sample_repo(tmp_path)
+    git(root, "checkout", "--detach", "-q", head)
+    head_file = root / ".git" / "HEAD"
+    head_file.write_bytes(head_file.read_bytes() + b"\r\n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="detached HEAD control"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_noncanonical_loose_ref_control_trailing_whitespace(
+    tmp_path: Path,
+) -> None:
+    """A loose branch ref must contain exactly one SHA and framing LF."""
+    root, head = sample_repo(tmp_path)
+    symbolic = git(root, "symbolic-ref", "HEAD")
+    ref_file = root / ".git" / symbolic
+    ref_file.write_bytes(ref_file.read_bytes() + b" \n")
+    assert git(root, "rev-parse", "HEAD") == head
+
+    import pytest
+    with pytest.raises(module.ReviewInputError, match="loose HEAD ref"):
+        module.build_manifest(root, head)
+
+
 def test_rejects_wrong_head(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     try:

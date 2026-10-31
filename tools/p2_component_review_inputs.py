@@ -299,13 +299,15 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         require_protected_ancestors(expected_common)
         files.append((commondir, 4096, common_epoch, common_digest))
     if symbolic == "HEAD":
-        if head_data.strip() != expected_head.encode():
+        # Git tolerates extra whitespace in some control files. Exact-head
+        # review evidence requires one canonical SHA and one framing LF.
+        if head_data != expected_head.encode() + b"\n":
             raise ReviewInputError("detached HEAD control differs from expected commit")
         return files, None, absent_commondir
     if (not symbolic.startswith("refs/heads/")
             or any(part in ("", ".", "..") for part in symbolic.split("/"))):
         raise ReviewInputError("unsupported symbolic HEAD control")
-    if head_data.strip() != ("ref: " + symbolic).encode():
+    if head_data != ("ref: " + symbolic).encode() + b"\n":
         raise ReviewInputError("symbolic HEAD control differs from Git resolution")
     ref_path = git_control_path(root, symbolic)
     try:
@@ -328,7 +330,7 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
             raise ReviewInputError("packed HEAD ref differs from expected commit")
         files.append((packed, MAX_REVIEW_INPUT_BYTES, packed_epoch, packed_digest))
         return files, ref_path, absent_commondir
-    if ref_data.strip() != expected_head.encode():
+    if ref_data != expected_head.encode() + b"\n":
         raise ReviewInputError("loose HEAD ref differs from expected commit")
     files.append((ref_path, 4096, ref_epoch, ref_digest))
     return files, None, absent_commondir
