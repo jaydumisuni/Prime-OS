@@ -431,7 +431,7 @@ def require_no_object_alternates(path: Path) -> None:
 
 
 
-def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
+def _capture_git_object_epoch_unchecked(objects: Path) -> dict[str, tuple]:
     """Pin private, non-aliased local Git objects across review probes.
 
     Loose objects and pack/index sidecars share one object directory. A
@@ -497,6 +497,16 @@ def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
     if stat_identity(objects.lstat()) != stat_identity(root_state):
         raise ReviewInputError("Git object store root changed during inventory")
     return entries
+
+def capture_git_object_epoch(objects: Path) -> dict[str, tuple]:
+    """Fail closed if object storage disappears or becomes unreadable mid-scan."""
+    try:
+        return _capture_git_object_epoch_unchecked(objects)
+    except OSError as exc:
+        # A concurrent removal, rename, or permission change must invalidate
+        # the review epoch, not leak a raw filesystem exception to callers.
+        raise ReviewInputError("Git object store changed during inventory") from exc
+
 
 def require_git_object_root_epoch(objects: Path, admitted: tuple) -> None:
     """Recheck root custody after the final input sweep without another inventory."""

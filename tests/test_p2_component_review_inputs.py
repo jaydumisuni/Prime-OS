@@ -2172,3 +2172,61 @@ def test_git_control_path_preserves_literal_spaces(
         module, "git", lambda *_args: (str(expected) + "\n").encode(),
     )
     assert module.git_control_path(tmp_path, "objects") == expected
+
+
+def test_object_inventory_disappearance_is_structured_review_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A disappearing Git object directory cannot escape as a raw OS exception."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    objects = root / ".git" / "objects"
+    original_iterdir = Path.iterdir
+    triggered = False
+
+    def disappearing_directory(path: Path):
+        nonlocal triggered
+        if path == objects and not triggered:
+            triggered = True
+            raise FileNotFoundError("object store removed during inventory")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", disappearing_directory)
+    with pytest.raises(module.ReviewInputError, match="object store.*inventory"):
+        module.build_manifest(root, head)
+    assert triggered
+
+
+def test_object_entry_disappearance_is_structured_review_failure(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """An object entry removed during enumeration invalidates the review epoch."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    missing_entry = root / ".git" / "objects" / "info"
+    assert missing_entry.is_dir()
+    original_lstat = Path.lstat
+    original_iterdir = Path.iterdir
+    in_inventory = False
+    triggered = False
+
+    def start_inventory(path: Path):
+        nonlocal in_inventory
+        if path == root / ".git" / "objects":
+            in_inventory = True
+        return original_iterdir(path)
+
+    def disappearing_entry(path: Path, *args, **kwargs):
+        nonlocal triggered
+        if in_inventory and path == missing_entry and not triggered:
+            triggered = True
+            raise FileNotFoundError("object entry removed during inventory")
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "iterdir", start_inventory)
+    monkeypatch.setattr(Path, "lstat", disappearing_entry)
+    with pytest.raises(module.ReviewInputError, match="object store.*inventory"):
+        module.build_manifest(root, head)
+    assert triggered
