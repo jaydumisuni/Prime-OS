@@ -17,7 +17,7 @@ JSON object with exactly `schema`, `prime_host_id`, `ptah_node_id`, `source_comm
 {
   "schema": "prime.ptah-f04-package-preflight.v1",
   "prime_host_id": "018f5b43-8a5b-7b12-8a2c-aaaaaaaaaaaa",
-  "ptah_node_id": "ptah-node-a",
+  "ptah_node_id": "018f5b43-8a5b-7b12-8a2c-bbbbbbbbbbbb",
   "source_commit": "1111111111111111111111111111111111111111",
   "artifacts": [
     {"path": "bin/ptah-node", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size_bytes": 1024}
@@ -30,7 +30,7 @@ The source commit and artifact hashes above are **illustrative placeholders**, n
 ## Source-only denial and output
 
 - At most 65,536 manifest bytes and 32 nonempty artifacts; no duplicate JSON keys, extra fields, nonfinite numbers or invalid UTF-8.
-- Canonical lowercase UUIDv7 Prime Host ID, separate nonempty UTF-8-scalar Ptah Node ID, and 40-digit lowercase Git source commit.
+- Canonical lowercase UUIDv7 Prime Host ID, separate canonical lowercase UUIDv7 Ptah Node ID (`ptah-identifiers::NodeId` wraps `EntityId`; not a display label), and 40-digit lowercase Git source commit.
 - Relative ASCII package paths only; reject absolute paths, traversal, dot segments, backslashes, control characters and case-insensitive duplicate paths.
 - Each artifact declares a positive bounded integer size and lowercase SHA-256 other than SHA-256(empty) or all-zero placeholder.
 - Success emits `preflight_ok`, artifact count, and explicit `authority_granted=false`, `installation_performed=false`, `physical_proof_claimed=false`. Failure emits `preflight_denied` with no side effects.

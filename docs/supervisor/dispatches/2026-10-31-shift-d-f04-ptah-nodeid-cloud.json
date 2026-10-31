@@ -1,0 +1,60 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "D",
+  "project": "ptah",
+  "implementation_owner": "Prime-OS",
+  "frontier": "Ptah roadmap F04-F07 internal dependency: canonical Ptah NodeId preflight in Prime F04 manifest",
+  "observed_at_utc": "2026-10-31T20:34:04Z",
+  "canonical_authority": {
+    "cookpit_registry": "jaydumisuni/cookpit main:registry.json",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": "ptah",
+    "profile": "profiles/ptah.json",
+    "prime_roadmap": "docs/PRIME_OS_ROADMAP.md",
+    "prime_handoff": "docs/AI_HANDOFF.md",
+    "upstream_ptah_frozen_identifier": "jaydumisuni/Ptah-space main:crates/ptah-identifiers/src/lib.rs",
+    "upstream_identifier_rule": "NodeId(EntityId); EntityId::from_str requires canonical lowercase RFC4122 UUIDv7"
+  },
+  "before_head": "e786cbfefa9173cfbe81e8fb36d2f68d21600660",
+  "source_after_head": "a7532e65bec434c9c8f24ea4356194a89042e290",
+  "project_pr": "https://github.com/jaydumisuni/Prime-OS/pull/158",
+  "worker": "Shift D authenticated GitHub cloud fallback; Oracle Live roster and KRATOS terminal failed internally",
+  "action": "Correct Prime-owned F04 manifest preflight to reject free-form Ptah NodeId labels; update regression suite and non-authorizing contract example",
+  "movement": {
+    "state": "MATERIAL_SOURCE_PUBLISHED",
+    "files_changed": 3,
+    "head_advanced": true,
+    "compare_ahead": 3,
+    "compare_behind": 0,
+    "source_test_contract_commits": 3
+  },
+  "proof": {
+    "source_blob": "cae2431181997f66e683e35a289cf31f206f2e9c",
+    "test_blob": "5732243cf2962e9ce8a7dd480f033739bc32595b",
+    "contract_blob": "c2717f1b75b4b3f0bcf9de6b14e76d3237804747",
+    "cloud_readback": "MATCH",
+    "independent_uuid7_predicate_model": "1_positive_9_negative_PASS_NOT_NATIVE",
+    "native_python": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED",
+    "hosted_exact_head": "NO_RUN_RETURNED_AT_OBSERVATION",
+    "independent_review": "PENDING_ZERO_REVIEWS",
+    "physical": "NOT_ATTEMPTED"
+  },
+  "health": {
+    "nodie_roster": "UNVERIFIED_ORACLE_INTERNAL_ERROR",
+    "kratos": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "supervisor_pool": "A LATE-but-completed; B LATE-but-completed; C HEALTHY; D previous HEALTHY; E previous HEALTHY; zero missed; all five enabled",
+    "local_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "dependency_linkage": {
+    "selected": "Ptah F04 prioritized under higher-severity engineering failure exception: manifest accepted identities impossible for Ptah frozen NodeId",
+    "upstream": "Ptah E06/E07 standalone DONE; Ptah NodeId canonical UUIDv7 frozen",
+    "downstream": "Prime OS F04-F07 OS-owned non-authorizing source-only integration",
+    "fairness_exception": "Prime Windows W8 had older visible PR movement (2026-10-31T18:15:41Z) than Ptah E07 (2026-10-31T18:26:26Z), but F04 NodeId type mismatch is an upstream contract-integrity failure. KRATOS dispatch/lease fairness still unverified."
+  },
+  "disposition": "SOURCE_PUBLISHED_REVIEW_AND_NATIVE_PROOF_PENDING",
+  "reconcile_on_kratos": "Recover exact Prime PR #158 and cloud receipt; Patrol/preflight actual Prime-owned worktree; run python3 -m unittest discover -s tests -p test_ptah_f04_manifest_preflight.py -v; verify exact PR head/reviews and local worker/leases; update Cookpit attention and dispatches without duplicate PASS receipt; preserve protected gates",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}

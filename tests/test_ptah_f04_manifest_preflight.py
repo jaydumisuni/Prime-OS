@@ -13,7 +13,7 @@ def candidate():
     return {
         "schema": f04.SCHEMA,
         "prime_host_id": "018f5b43-8a5b-7b12-8a2c-aaaaaaaaaaaa",
-        "ptah_node_id": "ptah-node-a",
+        "ptah_node_id": "018f5b43-8a5b-7b12-8a2c-bbbbbbbbbbbb",
         "source_commit": "1" * 40,
         "artifacts": [{
             "path": "bin/ptah-node",
@@ -47,11 +47,20 @@ class ManifestPreflightTests(unittest.TestCase):
                 with self.assertRaisesRegex(f04.ManifestError, "invalid_prime_host_id"):
                     f04.validate_manifest(value)
 
-    def test_node_id_requires_unicode_scalars(self):
-        value = candidate()
-        value["ptah_node_id"] = "node-\ud800"
-        with self.assertRaisesRegex(f04.ManifestError, "invalid_ptah_node_id"):
-            f04.validate_manifest(value)
+    def test_node_id_requires_canonical_ptah_uuidv7(self):
+        # The frozen Ptah NodeId is EntityId(UUIDv7), not a display label.
+        for node in (
+            "", "ptah-node-a", "node-\ud800", " node ",
+            "018f5b43-8a5b-4b12-8a2c-bbbbbbbbbbbb",  # UUIDv4
+            "018f5b43-8a5b-7b12-2a2c-bbbbbbbbbbbb",  # wrong variant
+            "018F5B43-8A5B-7B12-8A2C-BBBBBBBBBBBB",  # noncanonical case
+            "018f5b43-8a5b-7b12-8a2c-bbbbbbbbbbbb\n",
+        ):
+            with self.subTest(node=repr(node)):
+                value = candidate()
+                value["ptah_node_id"] = node
+                with self.assertRaisesRegex(f04.ManifestError, "invalid_ptah_node_id"):
+                    f04.validate_manifest(value)
 
     def test_paths_cannot_escape_or_alias_package_root(self):
         for path in ("../bin/ptah-node", "/bin/ptah-node", "bin//node",
