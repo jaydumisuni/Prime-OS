@@ -876,7 +876,7 @@ fn create_runtime_proof_observation(
     zero_residual_state: bool,
     evidence_sha256: &str,
 ) -> Result<VmRuntimeProofObservation, WindowsVmError> {
-    if !bound_runtime_evidence_sha256(evidence_sha256) {
+    if !bound_nonempty_payload_sha256(evidence_sha256) {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence digest is not a bound SHA-256",
         ));
@@ -938,11 +938,9 @@ pub fn evaluate_runtime_proof(
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         || plan.guest_revision == 0
-        || !canonical_sha256_hex(&plan.guest_sha256)
-        // A public proof ID can be recomputed for an unbound placeholder.
-        // Gate 6 rejects the zero digest at the hello boundary; Gate 8 must
-        // independently reject it even when all observations are rehashed.
-        || plan.guest_sha256.bytes().all(|byte| byte == b'0')
+        // A public proof ID can be recomputed around a zero or empty-image
+        // digest. Neither can identify a guest admitted by the image validator.
+        || !bound_nonempty_payload_sha256(&plan.guest_sha256)
         || plan.proof_id != expected_proof_id
         || observations.len() != plan.required_cases.len()
     {
@@ -969,7 +967,7 @@ pub fn evaluate_runtime_proof(
         if observation.proof_id != plan.proof_id
             || observation.observation_id != expected_observation_id
             || observation.evidence_schema != WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA
-            || !bound_runtime_evidence_sha256(&observation.evidence_sha256)
+            || !bound_nonempty_payload_sha256(&observation.evidence_sha256)
             || observation.guest_id != plan.guest_id
             || observation.guest_revision != plan.guest_revision
             || observation.guest_sha256 != plan.guest_sha256
@@ -1032,14 +1030,15 @@ fn sha256_json(value: &serde_json::Value) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-// An empty payload is rejected by envelope admission. Its public SHA-256
-// cannot be accepted later through a rehashed, caller-supplied observation.
-fn bound_runtime_evidence_sha256(value: &str) -> bool {
-    const EMPTY_EVIDENCE_SHA256: &str =
+// Both empty guest images and empty evidence envelopes are rejected at
+// admission. Their public SHA-256 cannot gain authority through rehashed,
+// caller-supplied plans or observations.
+fn bound_nonempty_payload_sha256(value: &str) -> bool {
+    const EMPTY_PAYLOAD_SHA256: &str =
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     canonical_sha256_hex(value)
         && !value.bytes().all(|byte| byte == b'0')
-        && value != EMPTY_EVIDENCE_SHA256
+        && value != EMPTY_PAYLOAD_SHA256
 }
 
 fn canonical_sha256_hex(value: &str) -> bool {
