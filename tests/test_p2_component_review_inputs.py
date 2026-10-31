@@ -2096,3 +2096,39 @@ def test_gitdir_pointer_embedded_nul_is_structured_review_failure(
     (root / ".git").write_bytes(b"gitdir: /tmp/p2-metadata\x00alternate\n")
     with pytest.raises(module.ReviewInputError, match="invalid worktree gitdir control"):
         module.capture_gitdir_pointer_epoch(root, root / "HEAD")
+
+
+def test_git_control_path_rejects_unframed_or_invisible_metadata(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git control paths must not gain authority by stripping hostile output."""
+    import pytest
+
+    path = str(tmp_path / "objects").encode()
+    for suffix in (
+        b"",                    # missing Git framing newline
+        b"\r\n",               # CRLF is not Git's framing protocol
+        b"\x0b\n",              # vertical tab removed by str.strip()
+        b"\xc2\x85\n",         # Unicode C1 NEXT LINE removed by str.strip()
+        b"\n\n",               # multiple framing newlines
+        b"\x1b[0m\n",          # terminal escape embedded in pathname
+        b"\xe2\x80\xae\n",  # bidi override
+    ):
+        monkeypatch.setattr(
+            module, "git", lambda *_args, payload=path + suffix: payload,
+        )
+        with pytest.raises(
+            module.ReviewInputError, match="invalid Git control pathname",
+        ):
+            module.git_control_path(tmp_path, "objects")
+
+
+def test_git_control_path_preserves_literal_spaces(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A valid Git pathname may contain spaces without being normalized."""
+    expected = tmp_path / "review data" / "objects"
+    monkeypatch.setattr(
+        module, "git", lambda *_args: (str(expected) + "\n").encode(),
+    )
+    assert module.git_control_path(tmp_path, "objects") == expected
