@@ -2363,3 +2363,32 @@ def test_rejects_invalid_utf8_git_control_path(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(module, "git", corrupted_git)
     with pytest.raises(module.ReviewInputError, match="invalid Git control pathname"):
         module.build_manifest(root, head)
+
+def test_rejects_malformed_git_index_path_response(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Index pathname output must obey the same strict control-file framing."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    original_git = module.git
+    command = ("rev-parse", "--git-path", "index")
+    canonical = original_git(root, *command)
+    assert canonical.endswith(b"\\n") and canonical.count(b"\\n") == 1
+    hostile_records = {
+        "extra_lf": canonical + b"\\n",
+        "missing_lf": canonical[:-1],
+        "carriage_return": canonical[:-1] + b"\\r\\n",
+        "invalid_utf8": canonical[:-1] + b"\\xff\\n",
+    }
+    for label, hostile in hostile_records.items():
+        def forged_index_path(repo: Path, *args: str) -> bytes:
+            if args == command:
+                return hostile
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_index_path)
+        with pytest.raises(module.ReviewInputError, match="Git control pathname"):
+            module.build_manifest(root, head)
+    monkeypatch.setattr(module, "git", original_git)
