@@ -1,0 +1,73 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "D",
+  "observed_at_utc": "2026-11-01T08:34:11Z",
+  "project": "prime-windows",
+  "frontier": "W8 source-only guest-image and proof-root dot-confusable Unicode path identity preflight",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-d-w8-confusable-dot-path-20261101-1036",
+  "predecessor": {
+    "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/173",
+    "branch": "supervisor/shift-a-w8-private-use-image-path-20261101-0900",
+    "source_implementation_head": "ef7ab6e83a7ec51d127798607cc1c1dc132eee20",
+    "receipt_bearing_head": "PREDECESSOR_BRANCH_REF_VERIFIED_EXACT_SHA_NOT_EXPOSED_BY_CONNECTOR"
+  },
+  "after_implementation_head": "15864ddffedf9ce5d1509ded3d72170fc2d160dc",
+  "before_state": "The W8 pathname guard rejects confusable separators, controls, private-use and noncharacters, but accepts four real Linux filename scalars that display as ASCII-like dots; a reviewer may mistake a component or extension spelling.",
+  "after_state": "The shared W8 path guard now rejects U+2024/U+2025/U+FE52/U+FF0E before guest-image filesystem access and proof-root/session construction. Two native Rust regression tests were authored for real guest-image files and proof roots, with ordinary ASCII dot positives.",
+  "worker_action": "Cookpit Supervisor Shift D; authenticated GitHub source-only fallback; KRATOS Oracle terminal failed internally, no local worker/lease asserted",
+  "engineering_health": {
+    "source_blob_sha": "f25a1cf274f180541793a75e637ae5c014cb966a",
+    "test_blob_sha": "d22de68c4de14a0484569c98d1189d6afbef773b",
+    "source_test_readback": "MATCH",
+    "exact_predecessor_branch_compare": "2 ahead, 0 behind, two project-owned Rust files",
+    "isolated_posix_model": "4/4 real canonical dot-like filename aliases accepted by predecessor dot-unaware model; 4/4 rejected by new predicate; ASCII dot positive PASS; NOT native Rust",
+    "native_rust": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "worker_lease": "UNVERIFIED",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "guest_physical": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_NOT_OFFLINE"
+  },
+  "implementation_movement": {
+    "classification_before": "STALLED_IMPLEMENTATION",
+    "status_after": "PUBLISHED_SOURCE_AND_REGRESSION_DELTA",
+    "material_movement_at_utc": "2026-11-01T08:34:11Z",
+    "source_commit": "2412eda5af90753c9eceeae099bce2010dd64103",
+    "test_commit": "15864ddffedf9ce5d1509ded3d72170fc2d160dc",
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ]
+  },
+  "supervisor_pool": {
+    "A": "LATE_BUT_COMPLETED",
+    "B": "HEALTHY",
+    "C": "HEALTHY",
+    "D": "PREVIOUS_SLOT_HEALTHY",
+    "E": "HEALTHY",
+    "confirmed_missed_slots": 0,
+    "catchups": 0,
+    "schedules_changed": false
+  },
+  "dependency_linkage": {
+    "w8_guest_gates": "7-9 HOLD pending KRATOS authorized physical guest qualification",
+    "w9": "NOT_AUTHORIZED",
+    "local_attention": "QUEUED_KRATOS_RECONCILIATION",
+    "local_dispatch": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "disposition": "SOURCE_PUBLISHED_ISOLATED_MODEL_PASS_NATIVE_CI_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "credentials_changed": false,
+  "schedules_changed": false
+}
