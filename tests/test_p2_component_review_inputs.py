@@ -36,6 +36,42 @@ def sample_repo(tmp_path: Path) -> tuple[Path, str]:
     return root, git(root, "rev-parse", "HEAD")
 
 
+
+def test_rejects_noncanonical_git_worktree_root_records(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git's top-level path must be one exact pathname and one framing LF."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    spaced = root.with_name("p2 review root")
+    root.rename(spaced)
+    root = spaced
+    original_git = module.git
+    canonical = original_git(root, "rev-parse", "--show-toplevel")
+    assert canonical == os.fsencode(root) + b"\n"
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+    for malformed in (
+        canonical[:-1] + b"\r\n",
+        canonical + b"\n",
+        canonical[:-1] + b" \n",
+        canonical[:-1] + b"\x00\n",
+    ):
+        def forged_git(repo: Path, *args: str) -> bytes:
+            if args == ("rev-parse", "--show-toplevel"):
+                return malformed
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_git)
+        with pytest.raises(module.ReviewInputError, match="worktree root"):
+            module.build_manifest(root, head)
+
+    monkeypatch.setattr(module, "git", original_git)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+
+
+
 def test_rejects_noncanonical_git_tree_and_index_records(
     tmp_path: Path, monkeypatch,
 ) -> None:
