@@ -203,6 +203,34 @@ fn guest_definition_rejects_noncanonical_digest_encoding() {
     assert!(validate_guest_definition(&nonhex).is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_lexically_aliased_canonical_image_paths() {
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-lexical-image-identity";
+    private_guest_image(&image, bytes);
+
+    let canonical = definition(&image, bytes);
+    assert!(validate_guest_definition(&canonical).is_ok());
+    let root = dir.path().display().to_string();
+    // std::path::Path equality ignores these lexical differences, so
+    // canonicalize(&image) != image alone cannot reject the aliases.
+    for alias in [
+        format!("{root}/./windows.qcow2"),
+        format!("{root}//windows.qcow2"),
+        format!("/{root}/windows.qcow2"),
+    ] {
+        let mut candidate = canonical.clone();
+        candidate.base_image = alias.clone();
+        let error = validate_guest_definition(&candidate).unwrap_err();
+        assert!(
+            error.to_string().contains("not canonical"),
+            "aliased guest image path was admitted: {alias:?}; {error}"
+        );
+    }
+}
+
 #[test]
 fn guest_definition_rejects_noncanonical_guest_identity() {
     let dir = private_tempdir();

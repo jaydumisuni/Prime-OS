@@ -1353,6 +1353,21 @@ pub fn validate_guest_definition(
             "base image path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
+    // Path equality normalizes repeated separators and non-leading "."
+    // components. A canonicalize() == PathBuf comparison alone therefore
+    // accepts multiple textual spellings for the same immutable guest image.
+    // Keep the exact review/launch pathname unambiguous before filesystem I/O.
+    if definition.base_image.contains("//")
+        || definition.base_image.ends_with('/')
+        || definition.base_image.split('/').any(|segment| segment == ".")
+        || image
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path is not canonical",
+        ));
+    }
     if fs::canonicalize(&image)? != image {
         return Err(WindowsVmError::InvalidGuest(
             "base image path is not canonical",
