@@ -1051,6 +1051,41 @@ def test_rejects_non_utf8_symbolic_head_before_ref_admission(tmp_path: Path) -> 
         module.build_manifest(root, head)
 
 
+def test_rejects_format_control_symbolic_head_before_ref_path_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git-valid invisible refnames must not reach metadata-path inspection."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_control_path = module.git_control_path
+    probed_refs = []
+
+    def traced_control_path(repo: Path, name: str) -> Path:
+        if name.startswith("refs/heads/"):
+            probed_refs.append(name)
+        return original_control_path(repo, name)
+
+    monkeypatch.setattr(module, "git_control_path", traced_control_path)
+    for marker in ("\u202e", "\u200b", "\u2066"):
+        branch = "review-" + marker + "-approved"
+        git(root, "branch", branch, head)
+        git(root, "symbolic-ref", "HEAD", "refs/heads/" + branch)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(
+            module.ReviewInputError, match="noncanonical symbolic HEAD"
+        ):
+            module.build_manifest(root, head)
+        assert not probed_refs, "untrusted ref reached metadata-path inspection"
+
+    # Ordinary visible Unicode branch identities remain admissible.
+    visible = "review-r\u00e9vision"
+    git(root, "branch", visible, head)
+    git(root, "symbolic-ref", "HEAD", "refs/heads/" + visible)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    assert probed_refs == ["refs/heads/" + visible]
+
+
 def test_rejects_ambiguous_symbolic_head_command_framing(
     tmp_path: Path, monkeypatch,
 ) -> None:
