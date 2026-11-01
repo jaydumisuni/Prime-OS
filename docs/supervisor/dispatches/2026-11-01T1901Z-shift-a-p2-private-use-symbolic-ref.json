@@ -1,0 +1,32 @@
+{
+  "schema": "ttg.cookpit.supervisor.project-dispatch.v1",
+  "shift": "A",
+  "project": "origins-phase8b",
+  "upstream_repository": "jaydumisuni/Prime-OS",
+  "frontier": "PRIME_P2_PRIVATE_USE_SYMBOLIC_REVIEW_REF_IDENTITY",
+  "before_head": "31a81e0136a56c52c69b336fcf556d14616b24dd",
+  "before_state": "PR187 admitted Git-valid Unicode private-use symbolic refs as review identities",
+  "implementation_head": "95e7e6111b6da959d2fe7745b0dbe9f27b6f6d37",
+  "after_state": "Private-use symbolic ref identities denied before metadata-path lookup; Origins Phase 8B consumption remains HOLD",
+  "worker_action": "isolated Prime-owned test-first source correction; draft reviewed PR pending",
+  "proof": {
+    "patrol": "ALLOW Prime-OS",
+    "red": "Git-valid U+E000 private-use symbolic ref admitted before fix (DID NOT RAISE)",
+    "native": "112/112 PASS",
+    "python_compile": "PASS",
+    "git_diff_check": "PASS",
+    "hosted": "UNVERIFIED",
+    "independent_review": "PENDING"
+  },
+  "time_utc": "2026-11-01T19:01:34.529278+00:00",
+  "disposition": "SOURCE_IMPLEMENTED_NATIVE_PASS_REVIEW_PENDING",
+  "dependency_linkage": {
+    "blocked_project": "Origins Phase 8B",
+    "safe_upstream": "Prime P2 component/package review-input custody",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "branch": "supervisor/shift-a-p2-private-use-symbolic-20261101-2100"
+}

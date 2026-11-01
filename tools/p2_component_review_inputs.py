@@ -299,6 +299,11 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     # Git ref metadata-path lookup, while preserving assigned visible text.
     if any(unicodedata.category(char) == "Cn" for char in symbolic):
         raise ReviewInputError("unassigned symbolic HEAD Unicode identity")
+    # Private-use Unicode scalars have no portable glyph identity across
+    # machines/fonts. Git accepts them as distinct symbolic ref bytes, but
+    # they cannot name independently inspectable review authority.
+    if any(unicodedata.category(char) == "Co" for char in symbolic):
+        raise ReviewInputError("private-use symbolic HEAD Unicode identity")
     # Git accepts byte-distinct Unicode compatibility spellings (fullwidth,
     # circled, ligature and numeral forms) as distinct symbolic branches.
     # Require one NFKC-stable review identity before probing metadata paths;
