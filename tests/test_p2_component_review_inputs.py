@@ -1250,6 +1250,41 @@ def test_rejects_git_accepted_unicode_noncharacter_symbolic_refs(
         assert probed_refs[-1] == ref
 
 
+def test_rejects_git_accepted_private_use_symbolic_refs_before_path_probe(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Private-use glyphs have no portable review identity across fonts."""
+    import pytest
+    import unicodedata
+
+    root, head = sample_repo(tmp_path)
+    original_control_path = module.git_control_path
+    probed_refs = []
+
+    def traced_control_path(repo: Path, name: str) -> Path:
+        if name.startswith("refs/heads/"):
+            probed_refs.append(name)
+        return original_control_path(repo, name)
+
+    monkeypatch.setattr(module, "git_control_path", traced_control_path)
+    for point in (0xE000, 0xF8FF, 0xF0000, 0x10FFFD):
+        character = chr(point)
+        assert unicodedata.category(character) == "Co"
+        ref = f"refs/heads/review{character}branch"
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="private-use symbolic HEAD"):
+            module.build_manifest(root, head)
+        assert not probed_refs, "private-use ref reached metadata-path inspection"
+
+    for branch in ("review-café", "review-漢"):
+        ref = "refs/heads/" + branch
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert module.build_manifest(root, head)["candidate_head"] == head
+
+
 def test_rejects_git_accepted_unassigned_symbolic_ref_scalars(
     tmp_path: Path, monkeypatch,
 ) -> None:
