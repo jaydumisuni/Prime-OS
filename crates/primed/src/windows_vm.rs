@@ -1587,6 +1587,31 @@ fn validate_runtime_owner(owner_uid: u32, worker_uid: u32) -> Result<(), Windows
 }
 
 pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmError> {
+    // A Linux pathname syscall has a 4096-byte buffer including its NUL,
+    // while each individual component is bounded to 255 bytes. Enforce both
+    // budgets for every caller-supplied path before opening QEMU or reading
+    // overlay metadata. Otherwise a malformed overlay/runtime identity can
+    // be masked by an unrelated missing QEMU executable or OS error.
+    for path in [
+        &request.qemu_binary,
+        &request.overlay_image,
+        &request.runtime_dir,
+    ] {
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.len() >= 4096 {
+            return Err(WindowsVmError::InvalidPlan(
+                "VM plan path exceeds byte limit",
+            ));
+        }
+        if bytes
+            .split(|byte| *byte == b'/')
+            .any(|part| part.len() > 255)
+        {
+            return Err(WindowsVmError::InvalidPlan(
+                "VM plan path component exceeds byte limit",
+            ));
+        }
+    }
     if !request.qemu_binary.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
     }

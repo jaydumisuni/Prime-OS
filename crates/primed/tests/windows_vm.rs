@@ -1749,6 +1749,75 @@ fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
 }
 
 #[test]
+fn qemu_plan_rejects_oversized_path_bytes_before_filesystem_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let missing_qemu = dir.path().join("missing-qemu");
+    let overlay = dir.path().join("overlay.qcow2");
+    let runtime = dir.path().join("runtime");
+    // A 256-byte component may be only 128 Unicode scalar values.
+    let oversized_component = "é".repeat(128);
+    // Individually legal components can still exceed the 4095-byte Linux
+    // pathname budget when combined.
+    let oversized_full_path = dir.path().join(vec!["a".repeat(240); 18].join("/"));
+
+    for (label, qemu_binary, overlay_image, runtime_dir) in [
+        (
+            "qemu component",
+            dir.path().join(&oversized_component),
+            overlay.clone(),
+            runtime.clone(),
+        ),
+        (
+            "overlay component",
+            missing_qemu.clone(),
+            dir.path().join(&oversized_component),
+            runtime.clone(),
+        ),
+        (
+            "runtime component",
+            missing_qemu.clone(),
+            overlay.clone(),
+            dir.path().join(&oversized_component),
+        ),
+        (
+            "qemu full path",
+            oversized_full_path.clone(),
+            overlay.clone(),
+            runtime.clone(),
+        ),
+        (
+            "overlay full path",
+            missing_qemu.clone(),
+            oversized_full_path.clone(),
+            runtime.clone(),
+        ),
+        (
+            "runtime full path",
+            missing_qemu.clone(),
+            overlay.clone(),
+            oversized_full_path.clone(),
+        ),
+    ] {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary,
+            overlay_image,
+            runtime_dir,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::InvalidPlan(_))
+                && error.to_string().contains("byte limit"),
+            "{label}: oversized path must be rejected before any QEMU or overlay I/O: {error}"
+        );
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_lexical_runtime_aliases_before_overlay_io() {
     // The manifest path must be rejected on its spelling alone. A missing
     // overlay must not turn an ambiguous authority into an I/O error first.
