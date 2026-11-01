@@ -2999,6 +2999,69 @@ fn guest_agent_handshake_rejects_undeclared_protocol_fields() {
 }
 
 #[test]
+fn w8_runtime_roots_reject_linux_path_byte_limits_before_filesystem_io() {
+    use primed::windows_vm::{vm_session_paths, WindowsVmError};
+
+    let dir = private_tempdir();
+    let normal_root = dir.path().join("runtime");
+    private_runtime_dir(&normal_root);
+    assert!(vm_session_paths(&normal_root, "app", "session").is_ok());
+
+    let oversized_component = dir.path().join("r".repeat(256));
+    let oversized_utf8_component = dir.path().join("é".repeat(128));
+    let oversized_path = dir.path().join(
+        std::iter::repeat_n("r".repeat(200), 21)
+            .collect::<Vec<_>>()
+            .join("/"),
+    );
+    for root in [
+        &oversized_component,
+        &oversized_utf8_component,
+        &oversized_path,
+    ] {
+        let error = vm_session_paths(root, "app", "session").unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::InvalidPlan(_))
+                && error.to_string().contains("byte limit"),
+            "overlong runtime root must be rejected before filesystem I/O: {error}"
+        );
+    }
+}
+
+#[test]
+fn w8_qemu_plan_rejects_overlong_runtime_paths_before_overlay_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    assert!(build_qemu_plan(&request).is_ok());
+
+    for component in ["r".repeat(256), "é".repeat(128)] {
+        let overlong = dir.path().join(component);
+        let mut malformed = request.clone();
+        malformed.runtime_dir = overlong.clone();
+        malformed.overlay_image = overlong.join("overlay.qcow2");
+        let error = build_qemu_plan(&malformed).unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::InvalidPlan(_))
+                && error.to_string().contains("byte limit"),
+            "overlong runtime plan path must fail before overlay I/O: {error}"
+        );
+    }
+}
+
+#[test]
 fn vm_session_paths_are_application_scoped_and_reject_escape() {
     use primed::windows_vm::vm_session_paths;
 

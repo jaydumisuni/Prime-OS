@@ -644,6 +644,18 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         || combining_diacritic_alias
 }
 
+// Linux pathname syscalls admit at most 4095 bytes, and each component has
+// a 255-byte NAME_MAX budget on the W8 host filesystem. Validate raw bytes
+// before canonicalization or overlay I/O so an invalid caller-owned runtime
+// identity cannot be misreported as a missing session or image.
+fn runtime_path_exceeds_linux_byte_limits(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_bytes();
+    bytes.len() >= 4096
+        || bytes
+            .split(|byte| *byte == b'/')
+            .any(|part| part.len() > 255)
+}
+
 fn validate_agent_socket_path(path: &Path) -> Result<(), WindowsVmError> {
     // Linux sockaddr_un.sun_path is 108 bytes including the trailing NUL.
     if path.as_os_str().as_bytes().len() >= 108 {
@@ -673,6 +685,11 @@ pub fn vm_session_paths(
     if root.parent().is_none() {
         return Err(WindowsVmError::InvalidPlan(
             "session root is filesystem root",
+        ));
+    }
+    if runtime_path_exceeds_linux_byte_limits(root) {
+        return Err(WindowsVmError::InvalidPlan(
+            "session root exceeds Linux pathname byte limit",
         ));
     }
     // The proof plan must never authorize a session root that QEMU would
@@ -1675,6 +1692,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime paths are not absolute",
+        ));
+    }
+    if [&request.overlay_image, &request.runtime_dir]
+        .iter()
+        .any(|path| runtime_path_exceeds_linux_byte_limits(path))
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime path exceeds Linux pathname byte limit",
         ));
     }
     // QEMU parses commas inside -drive and -chardev values as new options.
