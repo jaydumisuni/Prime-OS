@@ -623,7 +623,17 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 | '\u{ff0f}' | '\u{ff3c}'
         )
     });
+    // Dot-like Unicode scalars can disguise an image extension or a path
+    // component as "." / ".." in review logs without being filesystem dots.
+    // Keep the byte-level proof/launch identity unambiguous before any I/O.
+    let confusable_path_dot = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{2024}' | '\u{2025}' | '\u{fe52}' | '\u{ff0e}'
+        )
+    });
     parser_delimiter
+        || confusable_path_dot
         || confusable_path_separator
         || unicode_noncharacter
         || private_use_character
