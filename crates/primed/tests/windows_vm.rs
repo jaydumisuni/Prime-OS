@@ -258,6 +258,52 @@ fn guest_definition_rejects_private_use_image_path_identities() {
     assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_dot_confusable_image_path_identities() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-confusable-dot-guest-path";
+
+    // Each is a real, distinct Linux filename even though its dot-like glyph
+    // can conceal a guest-image extension or "." / ".." in a review log.
+    for marker in ['\u{2024}', '\u{2025}', '\u{fe52}', '\u{ff0e}'] {
+        let image = dir.path().join(format!("guest{marker}image.qcow2"));
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidGuest(_)),
+            "dot-like image path admitted: {marker:?}; {error}"
+        );
+        assert!(error.to_string().contains("Unicode controls"), "{error}");
+    }
+
+    let visible = dir.path().join("guest.image.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn w8_proof_session_root_rejects_dot_confusable_path_components() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = private_tempdir();
+    for marker in ['\u{2024}', '\u{2025}', '\u{fe52}', '\u{ff0e}'] {
+        let root = dir.path().join(format!("proof{marker}root"));
+        private_runtime_dir(&root);
+        assert!(
+            vm_session_paths(&root, "app-001", "session-a").is_err(),
+            "dot-like proof root admitted: {marker:?}"
+        );
+    }
+
+    let visible = dir.path().join("proof.root");
+    private_runtime_dir(&visible);
+    assert!(vm_session_paths(&visible, "app-001", "session-a").is_ok());
+}
+
 #[test]
 fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
     use primed::windows_vm::WindowsVmError;
