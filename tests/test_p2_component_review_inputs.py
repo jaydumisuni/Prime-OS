@@ -2604,3 +2604,36 @@ def test_rejects_malformed_final_git_head_oid(
     with pytest.raises(module.ReviewInputError, match="invalid HEAD Git object identity"):
         module.build_manifest(root, head)
     assert head_reads == 2
+
+
+def test_git_control_path_rejects_lexical_alias_records(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Raw Git metadata path authority cannot be normalized by pathlib."""
+    import pytest
+
+    root, _ = sample_repo(tmp_path)
+    original_git = module.git
+    canonical = original_git(root, "rev-parse", "--git-path", "index")
+    assert canonical == b".git/index\n"
+    assert module.git_control_path(root, "index") == root / ".git" / "index"
+
+    for malformed in (
+        b".git//index\n",
+        b"./.git/index\n",
+        b".git/./index\n",
+        b".git/../.git/index\n",
+        b".git/index/\n",
+        os.fsencode(root / ".git") + b"//index\n",
+    ):
+        def forged_git(repo: Path, *args: str) -> bytes:
+            if args == ("rev-parse", "--git-path", "index"):
+                return malformed
+            return original_git(repo, *args)
+
+        monkeypatch.setattr(module, "git", forged_git)
+        with pytest.raises(module.ReviewInputError, match="noncanonical Git control pathname"):
+            module.git_control_path(root, "index")
+
+    monkeypatch.setattr(module, "git", original_git)
+    assert module.git_control_path(root, "index") == root / ".git" / "index"
