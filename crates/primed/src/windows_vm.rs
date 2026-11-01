@@ -540,12 +540,16 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     });
     // Default-ignorable joiners, variation selectors and zero-width marks
     // can create distinct runtime proof paths with indistinguishable display.
+    // Script-specific prepended format marks also alter text presentation
+    // without supplying a stable, visible pathname identity.
     // Reject them before proof-id construction or QEMU option construction.
     let invisible_control = value.chars().any(|character| {
         matches!(
             character,
             '\u{00ad}' | '\u{034f}' | '\u{115f}' | '\u{1160}' | '\u{17b4}'..='\u{17b5}'
                 | '\u{180b}'..='\u{180f}'
+                | '\u{0600}'..='\u{0605}' | '\u{06dd}' | '\u{070f}'
+                | '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{110bd}' | '\u{110cd}'
                 | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{3164}'
                 | '\u{13430}'..='\u{1343f}' // Egyptian hieroglyph format controls alter proof rendering.
                 | '\u{1bca0}'..='\u{1bca3}' // Shorthand format controls are invisible.
