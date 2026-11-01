@@ -288,23 +288,14 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
             # The separate-gitdir common-directory query is an authority
             # record, not human-readable text: never normalize extra LFs or
             # let non-UTF-8 bytes escape the structured review-denial API.
-            if not common_raw.endswith(b"\n") or common_raw.count(b"\n") != 1:
-                raise ReviewInputError("invalid separate gitdir common-directory framing")
-            try:
-                common_name = common_raw[:-1].decode("utf-8")
-            except UnicodeDecodeError as exc:
+            # A resolved-path comparison would accept lexical aliases (../,
+            # repeated separators, trailing slash) as the same authority.
+            # Git's absolute common-dir record must name the pinned HEAD
+            # directory byte-for-byte, with exactly one framing LF.
+            if common_raw != os.fsencode(head_path.parent) + b"\n":
                 raise ReviewInputError(
-                    "invalid separate gitdir common-directory UTF-8"
-                ) from exc
-            if not common_name or any(
-                unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
-                for character in common_name
-            ):
-                raise ReviewInputError(
-                    "invalid separate gitdir common-directory pathname"
+                    "separate gitdir common-directory differs from HEAD authority"
                 )
-            if Path(common_name).resolve() != head_path.parent.resolve():
-                raise ReviewInputError("separate gitdir differs from HEAD authority")
         absent_commondir = commondir
     else:
         if pointer is None:

@@ -1,0 +1,75 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "E",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T07:49:34Z",
+  "material_movement_at_utc": "2026-11-01T07:49:14Z",
+  "frontier": "Prime P2 standalone separate-gitdir common-directory exact control-record custody",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input custody",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 172,
+    "head": "94f1704a303990a7d654e4061f5db5f8eee175ee",
+    "state": "Separate-gitdir common-dir record accepted any path whose Path.resolve matched pinned HEAD directory"
+  },
+  "worker_action": "Shift E authenticated GitHub cloud fallback; isolated Prime project-owned source and regression changes; KRATOS Oracle terminal internal error",
+  "after": {
+    "source_commit": "f923bab7b181819334282859a59891960680c98f",
+    "test_commit": "d16822d50ed0dd2d3d1c8622950bc3f6bc982f14",
+    "branch": "supervisor/shift-e-p2-separate-gitdir-exact-record-20261101-0948",
+    "pr": 174,
+    "state": "Require byte-exact absolute common-dir record and one LF; four adversarial lexical-alias cases plus existing canonical separate-gitdir control"
+  },
+  "proof": {
+    "source_blob": "1051d541b02d02504931a5f8af1c568c4349f61b",
+    "test_blob": "e2d430b63548269db4a68fee4f34ce5d1b4e05c1",
+    "github_compare": "2 ahead, 0 behind exact predecessor before receipt",
+    "real_git_disposable": "Canonical separate-gitdir --git-common-dir output matched pinned HEAD parent; four resolvable lexical aliases distinct from exact record",
+    "regression_cases_added": 4,
+    "source_test_readback": "MATCH",
+    "project_native_pytest": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "hosted_ci": "NO_RUN_RETURNED",
+    "independent_review": "PENDING",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": {
+    "state": "SOURCE_READBACK_VERIFIED_NATIVE_QUALIFICATION_OPEN",
+    "proof_is_not_implementation_movement": true
+  },
+  "implementation_movement": {
+    "state": "MATERIAL_SOURCE_DELTA_PUBLISHED",
+    "before_head": "94f1704a303990a7d654e4061f5db5f8eee175ee",
+    "after_head": "d16822d50ed0dd2d3d1c8622950bc3f6bc982f14"
+  },
+  "nodie_recovery": {
+    "roster": "UNVERIFIED_ORACLE_LIVE_INTERNAL_ERROR",
+    "stolen_device_touched": false
+  },
+  "local_reconciliation": {
+    "required": "When KRATOS returns: fetch cloud candidate, Patrol/preflight Prime P2 workspace, focused pytest, reconcile local dispatch and attention without duplicate PASS",
+    "attention_path": "/home/kratos/.local/state/ttg-cookpit/supervisors"
+  },
+  "protected": {
+    "production_touched": false,
+    "stolen_device_touched": false,
+    "protected_merge": false,
+    "oracle_runtime_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "disposition": "SOURCE_IMPLEMENTATION_PUBLISHED_NATIVE_QUALIFICATION_PENDING",
+  "material_movement_time_basis": "Verified draft PR #174 creation time; source/test commits already published"
+}

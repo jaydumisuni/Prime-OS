@@ -1362,12 +1362,23 @@ def test_rejects_malformed_standalone_git_common_dir_response(
     command = ("rev-parse", "--path-format=absolute", "--git-common-dir")
     canonical = original_git(root, *command)
     assert canonical.endswith(b"\n") and canonical.count(b"\n") == 1
+    assert canonical == os.fsencode(external_gitdir) + b"\n"
+    parent = os.fsencode(external_gitdir.parent)
     invalid = {
         "extra_lf": canonical + b"\n",
         "missing_lf": canonical[:-1],
         "invalid_utf8": canonical[:-1] + b"\xff\n",
         "carriage_return": canonical[:-1] + b"\r\n",
+        "dot_component": parent + b"/./external-gitdir\n",
+        "parent_component": parent + b"/external-gitdir/../external-gitdir\n",
+        "double_separator": parent + b"//external-gitdir\n",
+        "trailing_separator": canonical[:-1] + b"/\n",
     }
+    # These aliases resolve to the same inode, which was previously enough
+    # for admission despite their distinct raw Git control records.
+    for label in ("dot_component", "parent_component",
+                  "double_separator", "trailing_separator"):
+        assert Path(os.fsdecode(invalid[label][:-1])).resolve() == external_gitdir
     for label, hostile in invalid.items():
         def forged_common_dir(repo: Path, *args: str) -> bytes:
             if args == command:
