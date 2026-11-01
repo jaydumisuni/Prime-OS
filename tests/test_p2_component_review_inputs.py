@@ -1086,6 +1086,40 @@ def test_rejects_format_control_symbolic_head_before_ref_path_probe(
     assert probed_refs == ["refs/heads/" + visible]
 
 
+def test_rejects_git_accepted_hidden_symbolic_ref_aliases(tmp_path: Path) -> None:
+    """A Git-valid invisible branch scalar must not become review authority."""
+    import pytest
+
+    hidden = (
+        "\u034f",  # Combining grapheme joiner
+        "\u180b",  # Mongolian free variation selector
+        "\ufe0f",  # Variation selector-16
+        "\u115f",  # Hangul choseong filler
+        "\u3164",  # Hangul filler
+        "\uffa0",  # Halfwidth Hangul filler
+        "\U000e0100",  # Supplementary variation selector
+    )
+    for index, character in enumerate(hidden):
+        case = tmp_path / f"hidden-{index}"
+        case.mkdir()
+        root, head = sample_repo(case)
+        ref = f"refs/heads/review{character}branch"
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="Git control pathname"):
+            module.build_manifest(root, head)
+
+    for index, character in enumerate(("\u00e9", "\u6f22")):
+        case = tmp_path / f"visible-{index}"
+        case.mkdir()
+        root, head = sample_repo(case)
+        ref = f"refs/heads/review{character}branch"
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert module.build_manifest(root, head)["candidate_head"] == head
+
+
 def test_rejects_ambiguous_symbolic_head_command_framing(
     tmp_path: Path, monkeypatch,
 ) -> None:

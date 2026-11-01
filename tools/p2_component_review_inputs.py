@@ -152,6 +152,20 @@ def require_index_epoch(index_path: Path) -> tuple[int, int, int, int, int]:
 
 
 
+def has_hidden_git_path_scalar(value: str) -> bool:
+    """Reject invisible Git authority aliases without banning visible Unicode."""
+    for character in value:
+        point = ord(character)
+        if (unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
+                or point in (0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5,
+                             0x3164, 0xFFA0)
+                or 0x180B <= point <= 0x180D
+                or 0xFE00 <= point <= 0xFE0F
+                or 0xE0100 <= point <= 0xE01EF):
+            return True
+    return False
+
+
 def git_control_path(root: Path, name: str) -> Path:
     """Resolve a Git metadata path before the final read-only Git probes."""
     raw = git(root, "rev-parse", "--git-path", name)
@@ -164,10 +178,7 @@ def git_control_path(root: Path, name: str) -> Path:
         value = raw[:-1].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ReviewInputError("invalid Git control pathname") from exc
-    if not value or any(
-        unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
-        for character in value
-    ):
+    if not value or has_hidden_git_path_scalar(value):
         raise ReviewInputError("invalid Git control pathname")
     # Path() normalizes repeated separators, dot segments and trailing slashes.
     # Those are alternate raw spellings of Git metadata authority, not
