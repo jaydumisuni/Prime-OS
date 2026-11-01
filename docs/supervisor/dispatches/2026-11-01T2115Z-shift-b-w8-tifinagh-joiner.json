@@ -1,0 +1,35 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "B",
+  "project": "prime-windows",
+  "frontier": "W8_DEFAULT_IGNORABLE_TIFINAGH_JOINER_PATH_AUTHORITY",
+  "time_utc": "2026-11-01T21:15:24.015828Z",
+  "before_head": "ca4677b58510adb1b8754a36a0d54fba95583e3b",
+  "before_state": "W8 runtime_path_has_unsafe_text admitted U+2D7F in caller-owned runtime path; missing QEMU returned raw ENOENT",
+  "worker_action": "Patrol ALLOW; project-owned isolated W8 Rust source/test delta, test-first RED, focused/full native proof, non-force push, draft PR",
+  "implementation_head": "d0b7eb229675c4d13c7119d75bb47b8cebd13bf7",
+  "after_state": "Default-ignorable Tifinagh joiner rejected for guest image, proof root, and runtime path; visible U+2D30 preserved; source branch published",
+  "proof": {
+    "patrol": "action=allow project Prime-OS",
+    "predecessor": "RED: missing-QEMU raw ENOENT for U+2D7F runtime path",
+    "native": "152/152 PASS",
+    "fmt": "PASS",
+    "clippy": "PASS strict -D warnings",
+    "diff": "PASS",
+    "remote_source_head": "MATCH",
+    "hosted": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "guest": "W8 Gates7-9 HOLD; W9 unauthorized"
+  },
+  "candidate_pr": "https://github.com/jaydumisuni/Prime-OS/pull/192",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-tifinagh-joiner-shift-b-20261101-2312",
+  "dependency_linkage": {
+    "predecessor": "Prime-OS PR190",
+    "control": "Cookpit PR102 guarded review pending; no live rebind",
+    "downstream": "W8 guest Gates7-9 HOLD, W9 unauthorized"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_152_PASS_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
