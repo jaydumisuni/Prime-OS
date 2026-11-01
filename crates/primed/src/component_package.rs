@@ -1423,8 +1423,27 @@ fn private_package_ancestors(
     Ok(Some(identities))
 }
 
+#[cfg(unix)]
+fn canonical_package_path_spelling(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    // Path::components and Path equality normalize "." and repeated separators.
+    // Inspect the original bytes so aliases fail closed even when the package
+    // does not exist yet; never rely on filesystem I/O to discover them.
+    let raw = path.as_os_str().as_bytes();
+    raw.first() == Some(&b'/')
+        && raw.len() > 1
+        && raw[1..]
+            .split(|byte| *byte == b'/')
+            .all(|part| !part.is_empty() && part != b"." && part != b"..")
+}
+
 fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
     if !path.is_absolute() {
+        return Err(ComponentAdmissionError::UnsafePackagePath);
+    }
+    #[cfg(unix)]
+    if !canonical_package_path_spelling(path) {
         return Err(ComponentAdmissionError::UnsafePackagePath);
     }
     let metadata = fs::symlink_metadata(path)?;
@@ -1471,6 +1490,10 @@ fn package_custody_matches(
 }
 
 fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
+    #[cfg(unix)]
+    if !canonical_package_path_spelling(path) {
+        return Err(ComponentAdmissionError::UnsafePackagePath);
+    }
     // Pin a regular, unaliased inode for hashing. A pathname checked by
     // validate_package_path can be swapped before File::open; O_NOFOLLOW
     // and O_NONBLOCK prevent a symlink escape or blocking FIFO substitution.
@@ -3519,6 +3542,43 @@ mod tests {
             result,
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_noncanonical_spelling_before_missing_file_io() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        for candidate in [
+            format!("{root}/./missing.primepkg"),
+            format!("{root}/nested/../missing.primepkg"),
+            format!("{root}//missing.primepkg"),
+            format!("{root}/missing.primepkg/"),
+        ] {
+            assert!(
+                matches!(
+                    validate_package_path(Path::new(&candidate)),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "lexical alias must fail closed before file I/O: {candidate}"
+            );
+            assert!(
+                matches!(
+                    sha256_file(Path::new(&candidate)),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "hasher must also reject lexical alias: {candidate}"
+            );
+        }
+
+        let canonical_missing = dir.path().join("missing.primepkg");
+        assert!(matches!(
+            validate_package_path(&canonical_missing),
+            Err(ComponentAdmissionError::Io(error))
+                if error.kind() == io::ErrorKind::NotFound
+        ));
+        let (_package_dir, valid_package) = write_package(b"prime-p2-lexical-control");
+        assert!(validate_package_path(&valid_package).is_ok());
     }
 
     #[cfg(unix)]

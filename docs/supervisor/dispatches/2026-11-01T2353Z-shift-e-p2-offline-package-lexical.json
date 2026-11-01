@@ -1,0 +1,38 @@
+{
+  "after_state": "Prime P2 offline package preflight and hasher reject four lexical aliases before I/O; source committed, review/promotion not authorized",
+  "before_head": "76fcecc2e1f351bf585f6b8e9b7b0fc79f4e679c",
+  "before_state": "PR193 exact source head accepted lexical path aliases until filesystem I/O; missing file with /./ returned IO NotFound",
+  "branch": "supervisor/shift-e-p2-package-lexical-20261102-0148",
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "protected": "Origins direct consumption FAIL_CLOSED; no Prime base or release authority granted",
+    "upstream": "Prime P2 optional component/package authority"
+  },
+  "disposition": "MATERIAL_LOCAL_SOURCE_COMMITTED_NATIVE_PASS_REMOTE_AND_REVIEW_PENDING",
+  "frontier": "P2_OFFLINE_PACKAGE_PATH_LEXICAL_CUSTODY_BEFORE_FILESYSTEM_IO",
+  "implementation_head": "3d144e826e07316b8b233a8ba0e5a0358ca995ee",
+  "implementation_owner": "Prime-OS",
+  "production_touched": false,
+  "project": "origins-phase8b",
+  "proof": {
+    "clippy": "PASS -D warnings",
+    "component_package": "87/87 PASS",
+    "focused": "1/1 PASS with four negative aliases and two positive controls",
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "patrol": "ALLOW inside registered Prime-OS",
+    "physical": "NOT_ATTEMPTED",
+    "predecessor": "RED: /./ missing package returned Io instead of UnsafePackagePath",
+    "prime_contracts_component": "31/31 PASS",
+    "primed_library": "144/144 PASS",
+    "rustfmt": "PASS"
+  },
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "E",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-01T23:53:34.318085+00:00",
+  "worker_action": "Patrol ALLOW; isolated Prime-owned Rust test-first source correction and native proof; receipt commit then nonforce push and draft PR pending",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-lexical-shift-e-20261102-0148"
+}
