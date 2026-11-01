@@ -1,0 +1,57 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "D",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T04:41:44Z",
+  "material_movement_at_utc": "2026-11-01T04:41:44Z",
+  "frontier": "Prime P2 raw Git worktree root control record framing",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "main_commit": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input custody",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 168,
+    "head": "1e89bab78cfe7ecb6d32aa3bf5d6a59de0746b7e",
+    "state": "Git rev-parse --show-toplevel decoded and stripped, normalizing malformed CRLF, extra LF and trailing whitespace"
+  },
+  "worker_action": "Shift D GitHub source-only fallback; KRATOS Oracle terminal returned internal error; Patrol unavailable",
+  "after": {
+    "source_commit": "a3241e9b9185c1deae9c52ef954cd3538f441b04",
+    "test_commit": "910aec8fc3c72a5205b019c4346feb9ca5608466",
+    "branch": "supervisor/shift-d-p2-root-record-framing-20261101-0636",
+    "pr": 170,
+    "state": "Exact raw Git root control record required, four malformed aliases denied, space-containing canonical worktree allowed"
+  },
+  "proof": {
+    "github_source_blob": "79bac22f36548148245edbffe4962641738f2e92",
+    "github_test_blob": "7a8bd0ead4ea3be5b9201a7d572291c67334c2f3",
+    "github_compare": "2 commits ahead, 0 behind predecessor before receipt",
+    "isolated_disposable_git": "Actual git --show-toplevel emitted exact canonical bytes for path with spaces; predecessor normalized CRLF, extra LF and trailing space; strict raw comparator rejects all; NUL is denied",
+    "regression_added": "One test: canonical positive with spaces, four malformed control records, canonical recheck",
+    "project_native_pytest": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "hosted_exact_head_ci": "NO_RUNS_RETURNED_AT_SOURCE_HEAD",
+    "independent_review": "PENDING_ZERO_REVIEWS",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_PROJECT_SOURCE_COMMITS_PUBLISHED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_AND_LOCAL_PATROL_PENDING",
+  "local_attention_reconciliation": "QUEUED_KRATOS_UNAVAILABLE; reconcile exact remote branch/receipt with Prime P2 project worktree; run Patrol and focused pytest; update attention and local dispatch without duplicate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}
