@@ -232,7 +232,7 @@ fn valid_bounded_text(value: &str) -> bool {
         && !value.chars().any(|c| matches!(c as u32, 0x0600..=0x0605 | 0x06DD | 0x08E2 | 0x110BD | 0x110CD))
         // Complete the known Unicode Cf exclusions for Syriac/Arabic markers,
         // interlinear annotations, and Egyptian hieroglyph format controls.
-        && !value.chars().any(|c| matches!(c as u32, 0x070F | 0x0890..=0x0891 | 0xFFF9..=0xFFFB | 0x13430..=0x1343F))
+        && !value.chars().any(|c| matches!(c as u32, 0x070F | 0x0890..=0x0891 | 0x2D7F | 0xFFF9..=0xFFFB | 0x13430..=0x1343F))
         // Unicode specials can be rendered as invisible or ambiguous evidence text.
         && !value.chars().any(|c| matches!(c as u32, 0xFFF0..=0xFFF8))
         // Unicode noncharacters cannot supply interoperable component evidence.
@@ -390,6 +390,7 @@ mod tests {
             '\u{08E2}',
             '\u{110BD}',
             '\u{110CD}',
+            '\u{2D7F}',
         ] {
             let mut item = manifest();
             item.version = format!("1.0{mark}.0");
