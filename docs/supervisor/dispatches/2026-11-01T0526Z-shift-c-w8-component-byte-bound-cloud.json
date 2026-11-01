@@ -1,0 +1,68 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "C",
+  "project": "prime-windows",
+  "frontier": "W8 source-only conservative UTF-8 guest-image pathname component admission",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-c-w8-component-byte-bound-20261101-0724",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/171",
+  "before_head": "f1e1dd1b64aa00638f11e86bdbeea2900beb463d",
+  "implementation_after_head": "44c4243f1003c200baf1187967e892c0275066f2",
+  "worker_action": "Shift C authenticated GitHub cloud source-only fallback; no KRATOS worker/lease asserted",
+  "material_movement": {
+    "status": "PUBLISHED_SOURCE_DELTA",
+    "source_commit": "c9703169ce773d0c31b30d7db03344029de6276c",
+    "test_commit": "8276a693512dc30addba19c7fcc7788f7c3149d3",
+    "format_commit": "44c4243f1003c200baf1187967e892c0275066f2",
+    "time_utc": "2026-11-01T05:26:21Z",
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "delta": "13 Rust source additions and 38 regression additions; 255-byte per-component preflight with ASCII/UTF-8 boundary cases"
+  },
+  "engineering_health": {
+    "canonical_registry": "VERIFIED GitHub main exact blob",
+    "git_ancestry": "PASS 3 ahead 0 behind at implementation head",
+    "source_test_readback": "MATCH at implementation head",
+    "isolated_byte_model": "4/4 PASS, not native Rust proof",
+    "patrol": "UNVERIFIED KRATOS terminal transport internal error",
+    "native_cargo": "UNVERIFIED",
+    "rustfmt_clippy": "UNVERIFIED",
+    "hosted_exact_head_ci": "NO_RUNS_RETURNED at implementation head",
+    "independent_review": "PENDING",
+    "guest_physical": "NOT_PROVEN",
+    "oracle_roster": "UNVERIFIED cloud roster internal error"
+  },
+  "supervisor_pool": {
+    "A": "HEALTHY",
+    "B": "HEALTHY",
+    "C": "CURRENT_SLOT_WITHIN_GRACE_UNJUDGED",
+    "D": "HEALTHY",
+    "E": "HEALTHY",
+    "confirmed_missed_slots": 0,
+    "catchups": 0,
+    "schedules_changed": false
+  },
+  "dependency_linkage": {
+    "parent_pr": "https://github.com/jaydumisuni/Prime-OS/pull/169",
+    "w8_guest_gates": "7-9 HOLD: no authorized digest-bound Windows guest qualification",
+    "w9": "NOT_AUTHORIZED",
+    "kratos_local_attention": "PENDING_RECONCILIATION",
+    "kratos_local_dispatch": "PENDING_RECONCILIATION"
+  },
+  "health": "SOURCE_CUSTODY_VERIFIED; NATIVE_PROOF_UNVERIFIED",
+  "movement": "PUBLISHED_SOURCE_DELTA",
+  "disposition": "SOURCE_ONLY_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false
+}
