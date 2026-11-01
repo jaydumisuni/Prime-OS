@@ -1,0 +1,71 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "A",
+  "observed_at_utc": "2026-11-01T07:02:06Z",
+  "project": "prime-windows",
+  "frontier": "W8 source-only guest-image private-use Unicode path identity preflight",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-a-w8-private-use-image-path-20261101-0900",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/173",
+  "before_head": "7602f15c2245dfa4628be8796f8e285bbf906fd4",
+  "after_implementation_head": "ef7ab6e83a7ec51d127798607cc1c1dc132eee20",
+  "before_state": "W8 guest-image path review guard rejected invisible controls and noncharacters but admitted Unicode private-use scalars with font-dependent, potentially indistinguishable display identities.",
+  "after_state": "The path review guard rejects Unicode private-use scalars across BMP and supplementary planes before guest-image I/O; a real-file regression covers three negative planes and one precomposed visible Unicode positive control.",
+  "worker_action": "Cookpit Supervisor Shift A / authenticated GitHub cloud source-only fallback; KRATOS Oracle terminal unavailable, no local worker lease asserted",
+  "engineering_health": {
+    "canonical_registry": "VERIFIED_REMOTE_MAIN",
+    "source_sha": "a525eed366bafab5bf0c5c6732f4f602fa4f5016",
+    "test_sha": "73396c62945d230855e46893844178ed70de96c0",
+    "source_test_readback": "MATCH",
+    "git_compare": "3 ahead 0 behind exact PR #171 predecessor",
+    "isolated_posix_filename_model": "3/3 private-use filenames valid on isolated POSIX filesystem and rejected by range model; 1/1 visible precomposed Unicode allowed; NOT native Rust proof",
+    "native_rust": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED_ORACLE_CLOUD_ROSTER_INTERNAL_ERROR",
+    "hosted_exact_head_ci": "NO_RUNS_RETURNED_NOT_PASS",
+    "independent_review": "PENDING",
+    "guest_physical": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_NOT_OFFLINE"
+  },
+  "implementation_movement": {
+    "classification_before": "STALLED_IMPLEMENTATION",
+    "status_after": "PUBLISHED_SOURCE_AND_REGRESSION_DELTA",
+    "material_movement_at_utc": "2026-11-01T07:01:42Z",
+    "source_commit": "2c54ab1d9503b33d1c827c337237dbd0f84b09ce",
+    "test_commit": "e8ded9a688cabb0e7688ae3eff16879d1724554b",
+    "format_commit": "ef7ab6e83a7ec51d127798607cc1c1dc132eee20",
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ]
+  },
+  "supervisor_pool": {
+    "A": "PREVIOUS_SLOT_HEALTHY_CURRENT_SLOT_UNJUDGED",
+    "B": "HEALTHY",
+    "C": "HEALTHY",
+    "D": "HEALTHY",
+    "E": "HEALTHY",
+    "confirmed_missed_slots": 0,
+    "catchups": 0,
+    "schedules_changed": false
+  },
+  "dependency_linkage": {
+    "predecessor_pr": "https://github.com/jaydumisuni/Prime-OS/pull/171",
+    "w8_guest_gates": "7-9 HOLD pending KRATOS physical qualification",
+    "w9": "NOT_AUTHORIZED",
+    "local_attention": "QUEUED_KRATOS_RECONCILIATION",
+    "local_dispatch": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "disposition": "SOURCE_PUBLISHED_ISOLATED_MODEL_PASS_NATIVE_CI_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "credentials_changed": false,
+  "schedules_changed": false
+}
