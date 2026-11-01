@@ -1,0 +1,49 @@
+{
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "A",
+  "project": "prime-windows",
+  "project_owner": "jaydumisuni/Prime-OS",
+  "frontier": "W8_QEMU_RUNTIME_PATH_PREFLIGHT_CONVERGENCE",
+  "time_utc": "2026-11-01T18:06:08.925858+00:00",
+  "before_head": "da8c4c435adc47602e967ce1db0f7dfc88d3e85b",
+  "after_implementation_head": "4cee4ffc23ee5bc348bd5ae4130a5a12d644e05f",
+  "before_state": "Draft PR186 checks overlay/runtime pathname bytes only after QEMU canonicalize/open; sibling PR183 preflights all three before I/O but is not in PR186 ancestry",
+  "after_state": "All three caller-supplied paths are checked for Linux byte limits before QEMU filesystem I/O; redundant late check removed",
+  "candidate_branch": "supervisor/shift-a-w8-path-preflight-convergence-20261101-2000",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-path-preflight-convergence-shift-a-20261101-2000",
+  "worker_action": "Shift A isolated Prime-owned source correction with test-first adversarial regression and focused/full native proof",
+  "material_delta": {
+    "source_head_advanced": true,
+    "files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "added_lines": 86,
+    "removed_lines": 8,
+    "adversarial_cases": 6
+  },
+  "engineering_health": {
+    "patrol": "exit 0, explicit ALLOW not emitted",
+    "predecessor": "RED: oversized QEMU component yielded raw ENAMETOOLONG before admission",
+    "focused": "1/1 PASS with six path cases",
+    "native": "151/151 PASS cargo test -p primed --test windows_vm --locked",
+    "clippy": "PASS strict -D warnings",
+    "format": "PASS",
+    "diff": "PASS",
+    "hosted_ci": "UNVERIFIED",
+    "independent_exact_head_review": "PENDING",
+    "guest_gates_7_9": "HOLD"
+  },
+  "dependency_linkage": {
+    "sibling_preflight": "Prime-OS PR183 independent QEMU pathname preflight",
+    "stacked_predecessor": "Prime-OS PR186 exact head da8c4c435adc47602e967ce1db0f7dfc88d3e85b",
+    "control": "Cookpit PR102 guarded rebind pending; no live rebound",
+    "downstream": "W8 Windows guest Gates 7-9 HOLD; W9 unauthorized"
+  },
+  "disposition": "MATERIAL_SOURCE_IMPLEMENTED_NATIVE_151_PASS_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedule_modified": false,
+  "physical_guest_proof": false
+}
