@@ -1,0 +1,37 @@
+{
+  "after_state": "Git-valid reserved Unicode noncharacters rejected before ref metadata path probe; review-input-only candidate; no release authority",
+  "before_head": "2a67f0691e3e4e56f74e0db508d3e13f3e2154df",
+  "before_state": "PR182 exact head accepted Git-valid Unicode noncharacters as symbolic review refs; independent review pending",
+  "candidate_branch": "supervisor/shift-e-p2-noncharacter-20261101-1748",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-noncharacter-shift-e-20261101-1748",
+  "dependency_linkage": {
+    "blocked_milestone": "pinned-release direct consumption",
+    "blocked_project": "Origins Phase 8B",
+    "boundary": "FAIL_CLOSED",
+    "safe_upstream": "Prime P2 component/package review-input custody"
+  },
+  "engineering_health": {
+    "focused": "1/1 PASS",
+    "git_diff_check": "PASS",
+    "hosted_exact_head": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_review_input": "110/110 PASS",
+    "patrol": "exit 0; no explicit ALLOW text",
+    "physical_release": "NOT_PROVEN",
+    "predecessor": "RED: real Git accepted six noncharacter refnames; original manifest admitted all six; new test failed DID NOT RAISE",
+    "python_compile": "PASS"
+  },
+  "frontier": "PRIME_P2_GIT_VALID_UNICODE_NONCHARACTER_SYMBOLIC_REF_IDENTITY",
+  "health_fact": "FOCUSED_NATIVE_PASS_REVIEW_PENDING",
+  "implementation_head": "a2fc92d0335e5291033c297814caecb86091f7cc",
+  "movement_fact": "MATERIAL_SOURCE_IMPLEMENTATION_COMMITTED",
+  "owner_repository": "jaydumisuni/Prime-OS",
+  "production_touched": false,
+  "project": "origins-phase8b",
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "E",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-01T15:55:27Z",
+  "worker_action": "Shift E isolated Prime P2 source correction and real-Git regression, Patrol preflight, focused/native pytest, source commit and nonforce publication"
+}
