@@ -266,6 +266,11 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         symbolic = symbolic_raw[:-1].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ReviewInputError("invalid symbolic HEAD UTF-8 identity") from exc
+    # Git permits format controls in branch names (including bidi overrides).
+    # Such visually deceptive refnames are not admissible review authority.
+    if any(unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp")
+           for char in symbolic):
+        raise ReviewInputError("noncanonical symbolic HEAD control identity")
     head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
     files = [(head_path, 4096, head_epoch, head_digest)]
     absent_commondir = None
