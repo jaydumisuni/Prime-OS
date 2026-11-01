@@ -36,6 +36,34 @@ def sample_repo(tmp_path: Path) -> tuple[Path, str]:
     return root, git(root, "rev-parse", "HEAD")
 
 
+def test_rejects_extra_git_tree_and_index_record_framing(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git's staged/committed identity records must not be whitespace-normalized."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    original_git = module.git
+    expected = original_git(root, "rev-parse", f"{head}:{relative}").decode().strip()
+    assert module.require_clean_index(root, head, relative) == expected
+
+    for command in ("ls-tree", "ls-files"):
+        for suffix in (b"\n", b"\r\n"):
+            def forged_git(repo: Path, *args: str) -> bytes:
+                result = original_git(repo, *args)
+                if args and args[0] == command:
+                    return result + suffix
+                return result
+
+            monkeypatch.setattr(module, "git", forged_git)
+            with pytest.raises(module.ReviewInputError, match="local changes"):
+                module.require_clean_index(root, head, relative)
+
+    monkeypatch.setattr(module, "git", original_git)
+    assert module.require_clean_index(root, head, relative) == expected
+
+
 def test_exact_head_manifest_is_deterministic_and_not_a_certificate(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     first = module.build_manifest(root, head)
