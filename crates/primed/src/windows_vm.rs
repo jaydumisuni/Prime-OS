@@ -1348,6 +1348,19 @@ pub fn validate_guest_definition(
             "base image path exceeds byte limit",
         ));
     }
+    // Linux filesystems used for guest-image custody commonly cap each
+    // pathname component at 255 bytes. A total PATH_MAX check alone permits
+    // an overlong single component to reach filesystem resolution. Enforce
+    // this conservative per-component budget on UTF-8 bytes before I/O.
+    if definition
+        .base_image
+        .split('/')
+        .any(|component| component.len() > 255)
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path component exceeds byte limit",
+        ));
+    }
     let image = PathBuf::from(&definition.base_image);
     let worker_uid = unsafe { libc::geteuid() };
     if !image.is_absolute() {
