@@ -1,0 +1,55 @@
+{
+  "before_head": "f1e1dd1b64aa00638f11e86bdbeea2900beb463d",
+  "branch": "supervisor/shift-e-w8-path-component-bound-20261101-1248",
+  "canonical_registry": {
+    "enabled": true,
+    "head": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "profile": "profiles/prime-windows.json",
+    "ref": "origin/main",
+    "repository": "jaydumisuni/cookpit"
+  },
+  "dependency_linkage": {
+    "cookpit_guarded_control_rebind": "PR102 remains draft/protected; no live timer rebound",
+    "upstream_pr": "https://github.com/jaydumisuni/Prime-OS/pull/169",
+    "w8_guest_gates_7_9": "HOLD: no authorized digest-bound Windows guest",
+    "w9": "NOT_AUTHORIZED"
+  },
+  "disposition": "SOURCE_ONLY_DRAFT_REVIEW_PENDING_GUEST_HOLD",
+  "engineering_health": {
+    "clippy_strict": "PASS",
+    "focused_native": "146/146 PASS (cargo test -p primed --test windows_vm)",
+    "git_diff_check": "PASS",
+    "hosted_ci": "PENDING",
+    "independent_review": "PENDING",
+    "local_commit": "a1d4ae1d0aee79cfe0f769f54fdb8b3d68a06537",
+    "patrol": "ALLOW",
+    "physical_windows_guest": "NOT_PROVEN",
+    "remote_branch": "SOURCE_COMMIT_PUBLISHED; receipt-bearing head pending push",
+    "rustfmt": "PASS",
+    "single_regression": "1/1 PASS"
+  },
+  "force_push": false,
+  "frontier": "W8 host-only guest-image pathname component byte-budget preflight",
+  "implementation_after_head": "a1d4ae1d0aee79cfe0f769f54fdb8b3d68a06537",
+  "movement": {
+    "at_utc": "2026-11-01T10:50:00Z",
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "delta": "Reject overlong 255-byte NAME_MAX components below global PATH_MAX before image filesystem I/O; 2 negative and 2 positive Unicode/ASCII boundary subcases; inherited rustfmt corrections",
+    "status": "MATERIAL_SOURCE_PUBLISHED"
+  },
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/179",
+  "production_touched": false,
+  "project": "prime-windows",
+  "project_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-path-component-bound-shift-e-20261101",
+  "protected_merge": false,
+  "repository": "jaydumisuni/Prime-OS",
+  "schedules_changed": false,
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "E",
+  "stolen_device_touched": false,
+  "time_utc": "2026-11-01T10:50:00Z",
+  "worker_action": "Patrol-approved isolated project-owned worktree; source and adversarial regression change; native proof; non-force project branch push; draft PR"
+}
