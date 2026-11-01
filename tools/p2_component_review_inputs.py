@@ -286,6 +286,11 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
     if any(unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp")
            for char in symbolic):
         raise ReviewInputError("noncanonical symbolic HEAD control identity")
+    # Git accepts byte-distinct canonically equivalent branch names. A
+    # decomposed or compatibility-canonical spelling must not masquerade as
+    # the same visible review branch. Keep ordinary NFC Unicode admissible.
+    if unicodedata.normalize("NFC", symbolic) != symbolic:
+        raise ReviewInputError("noncanonical symbolic HEAD Unicode identity")
     head_epoch, head_digest, head_data = control_file_epoch(head_path, 4096)
     files = [(head_path, 4096, head_epoch, head_digest)]
     absent_commondir = None
