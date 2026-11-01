@@ -4158,6 +4158,37 @@ fn w8_proof_session_root_rejects_decomposed_combining_diacritic_aliases() {
 
 #[cfg(unix)]
 #[test]
+fn w8_proof_session_root_rejects_script_prepended_format_marks() {
+    use primed::windows_vm::vm_session_paths;
+
+    let dir = private_tempdir();
+    for name in [
+        "root\u{0600}runtime", // Arabic number sign.
+        "root\u{0605}runtime", // Arabic number mark above.
+        "root\u{06dd}runtime", // Arabic end of ayah.
+        "root\u{070f}runtime", // Syriac abbreviation mark.
+        "root\u{0890}runtime", // Arabic pound mark above.
+        "root\u{0891}runtime", // Arabic piastre mark above.
+        "root\u{08e2}runtime", // Arabic disputed end of ayah.
+        "root\u{110bd}runtime", // Kaithi number sign.
+        "root\u{110cd}runtime", // Kaithi number sign above.
+    ] {
+        let root = dir.path().join(name);
+        private_runtime_dir(&root);
+        assert!(
+            vm_session_paths(&root, "app-001", "session-a").is_err(),
+            "script format mark admitted to W8 proof root: {name:?}"
+        );
+    }
+
+    // Visible script letters are not rejected by this bounded control rule.
+    let visible = dir.path().join("root\u{0645}runtime");
+    private_runtime_dir(&visible);
+    assert!(vm_session_paths(&visible, "app-001", "session-a").is_ok());
+}
+
+#[cfg(unix)]
+#[test]
 fn w8_runtime_directory_requires_private_traversal() {
     use primed::windows_vm::vm_session_paths;
     use std::os::unix::fs::PermissionsExt;
@@ -4277,6 +4308,35 @@ fn guest_definition_rejects_decomposed_combining_diacritic_image_aliases() {
     }
 
     let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
+#[test]
+fn guest_definition_rejects_script_prepended_format_marks_in_image_path() {
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-prepended-format-mark";
+    for name in [
+        "guest\u{0600}image.qcow2",
+        "guest\u{0605}image.qcow2",
+        "guest\u{06dd}image.qcow2",
+        "guest\u{070f}image.qcow2",
+        "guest\u{0890}image.qcow2",
+        "guest\u{0891}image.qcow2",
+        "guest\u{08e2}image.qcow2",
+        "guest\u{110bd}image.qcow2",
+        "guest\u{110cd}image.qcow2",
+    ] {
+        let image = dir.path().join(name);
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            error.to_string().contains("delimiter"),
+            "script format mark admitted to W8 guest image: {name:?}; {error}"
+        );
+    }
+
+    let visible = dir.path().join("guest\u{0645}image.qcow2");
     private_guest_image(&visible, bytes);
     assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
 }
