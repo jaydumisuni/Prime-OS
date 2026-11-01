@@ -1,0 +1,56 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "A",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T02:59:51Z",
+  "material_movement_at_utc": "2026-11-01T02:59:00Z",
+  "frontier": "Prime P2 canonical Git ls-tree/ls-files index record framing",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input custody",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 166,
+    "head": "9955c68baf8951bcb4cb9b82f3fa341e68a4d68f",
+    "state": "Git tree/index control records parsed with decode/splitlines/split, admitting CRLF and surplus field spaces"
+  },
+  "worker_action": "Shift A authenticated GitHub source-only fallback; KRATOS terminal and Patrol unavailable",
+  "after": {
+    "source_commit": "6c7c856a28f196429b38c24278f15a7abe02ae47",
+    "test_commit": "1aec95665627a0a9aa504d1f23dcb663c1bc99bc",
+    "test_correction_commit": "36b90433d21d1f1781681d8b4bb1bde182c7b114",
+    "branch": "supervisor/shift-a-p2-tree-index-record-framing-20261101-0500",
+    "pr": 168,
+    "state": "Exact Git tree/index record framing and identity equality; Origins and Prime P2 not admitted"
+  },
+  "proof": {
+    "github_source_blob": "6b9e24c3937532f113fdb52f002fd57a8374d6ce",
+    "github_test_blob": "bcbdb16ec74ef4ce752f791228f784a2f099cf04",
+    "github_compare": "3 commits ahead, zero behind before receipt",
+    "isolated_disposable_git": "Canonical baseline PASS; 4/4 predecessor CRLF/extra-spacing malformed records accepted; 4/4 corrected rejections PASS",
+    "project_native_pytest": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "hosted_exact_head_ci": "NO_RUNS_RETURNED",
+    "independent_review": "PENDING_ZERO_REVIEWS",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_PROJECT_SOURCE_COMMITS_PUBLISHED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_AND_LOCAL_PATROL_PENDING",
+  "local_attention_reconciliation": "QUEUED_KRATOS_UNAVAILABLE; reconcile remote branch/receipt with project worktree; run Patrol and focused pytest; write local dispatch without duplicate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}

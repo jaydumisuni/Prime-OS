@@ -84,22 +84,23 @@ def git(repo: Path, *args: str) -> bytes:
 
 
 def require_clean_index(repo: Path, head: str, relative: str) -> str:
-    """Check staged identity against HEAD without invoking clean filters."""
-    try:
-        tree = git(repo, "ls-tree", head, "--", relative).decode().splitlines()
-        index = git(repo, "ls-files", "--stage", "--", relative).decode().splitlines()
-        if len(tree) != 1 or len(index) != 1:
-            raise ValueError("missing or unmerged index entry")
-        tree_fields, tree_path = tree[0].split("\t", 1)
-        index_fields, index_path = index[0].split("\t", 1)
-        tree_mode, kind, tree_blob = tree_fields.split()
-        index_mode, index_blob, stage = index_fields.split()
-        if (kind != "blob" or tree_path != relative or index_path != relative
-                or stage != "0" or tree_mode != index_mode or tree_blob != index_blob):
-            raise ValueError("index differs from committed tree")
-        return tree_blob
-    except (ValueError, UnicodeDecodeError):
-        raise ReviewInputError(f"review input has local changes: {relative}") from None
+    """Bind exact Git tree/index records, including their single framing LF."""
+    tree = git(repo, "ls-tree", head, "--", relative)
+    index = git(repo, "ls-files", "--stage", "--", relative)
+    # splitlines()/split() discard blank records, CRLF and extra whitespace.
+    # Those bytes are Git control evidence, not formatting to normalize.
+    path = re.escape(os.fsencode(relative))
+    tree_record = re.fullmatch(
+        rb"(100644|100755) blob ([0-9a-f]{40})\t" + path + rb"\n", tree
+    )
+    index_record = re.fullmatch(
+        rb"(100644|100755) ([0-9a-f]{40}) 0\t" + path + rb"\n", index
+    )
+    if (tree_record is None or index_record is None
+            or tree_record.group(1) != index_record.group(1)
+            or tree_record.group(2) != index_record.group(2)):
+        raise ReviewInputError(f"review input has local changes: {relative}")
+    return tree_record.group(2).decode("ascii")
 
 
 def require_private_directory(directory: Path) -> None:

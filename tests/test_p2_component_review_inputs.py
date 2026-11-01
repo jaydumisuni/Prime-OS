@@ -36,6 +36,38 @@ def sample_repo(tmp_path: Path) -> tuple[Path, str]:
     return root, git(root, "rev-parse", "HEAD")
 
 
+def test_rejects_noncanonical_git_tree_and_index_records(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A valid OID must not launder CRLF or surplus field spacing."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    original_git = module.git
+    expected = original_git(root, "rev-parse", f"{head}:{relative}").decode().strip()
+    assert module.require_clean_index(root, head, relative) == expected
+
+    for command in ("ls-tree", "ls-files"):
+        for mutation in ("crlf", "extra-field-space"):
+            def forged_git(repo: Path, *args: str) -> bytes:
+                result = original_git(repo, *args)
+                if not args or args[0] != command:
+                    return result
+                if mutation == "crlf":
+                    return result[:-1] + b"\r\n"
+                if command == "ls-tree":
+                    return result.replace(b" blob ", b"  blob ", 1)
+                return result.replace(b" 0\t", b"  0\t", 1)
+
+            monkeypatch.setattr(module, "git", forged_git)
+            with pytest.raises(module.ReviewInputError, match="local changes"):
+                module.require_clean_index(root, head, relative)
+
+    monkeypatch.setattr(module, "git", original_git)
+    assert module.require_clean_index(root, head, relative) == expected
+
+
 def test_exact_head_manifest_is_deterministic_and_not_a_certificate(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     first = module.build_manifest(root, head)
