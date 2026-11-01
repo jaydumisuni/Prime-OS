@@ -1,0 +1,68 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "C",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T09:35:51Z",
+  "frontier": "Prime P2 symbolic HEAD Unicode format-control admission before Git metadata-path inspection",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "commit": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input custody",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 174,
+    "head": "2c2fc675f6ef6147d940737e6e487ea23d9a5292",
+    "state": "Git-valid symbolic HEAD format controls reached Git metadata-path inspection before existing pathname denial"
+  },
+  "worker_action": "Shift C cloud source commit plus KRATOS isolated worktree preflight and native focused qualification",
+  "after": {
+    "source_commit": "92e4470de367af8e55b703c83378629cfbe57cf7",
+    "test_commit": "84461c115d91e2818be64de844258820ce605cca",
+    "branch": "supervisor/shift-c-p2-symbolic-head-format-20261101-1124",
+    "pr": 176,
+    "state": "Early symbolic HEAD format-control denial; three Git-valid negative cases plus visible Unicode positive control"
+  },
+  "proof": {
+    "patrol": "ALLOW Prime-OS",
+    "git_diff_check": "PASS",
+    "python_compile": "PASS",
+    "focused_test": "1 PASS",
+    "full_review_input_pytest": "105 PASS",
+    "local_remote_source_head": "MATCH 84461c1",
+    "independent_review": "PENDING",
+    "hosted_ci": "UNVERIFIED",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": {
+    "state": "NATIVE_105_PY_PASS_REMOTE_SOURCE_MATCH_REVIEW_PENDING",
+    "proof_is_not_implementation_movement": true
+  },
+  "implementation_movement": {
+    "state": "MATERIAL_SOURCE_AND_REGRESSION_DELTA_PUBLISHED",
+    "before_head": "2c2fc675f6ef6147d940737e6e487ea23d9a5292",
+    "after_source_head": "84461c115d91e2818be64de844258820ce605cca"
+  },
+  "nodie_recovery": {
+    "roster": "AUTHENTICATED_ABSENT",
+    "stolen_device_touched": false,
+    "geographic_location_confirmed": false
+  },
+  "protected": {
+    "production_touched": false,
+    "protected_merge": false,
+    "oracle_runtime_touched": false,
+    "supervisor_schedules_changed": false,
+    "stolen_device_touched": false
+  },
+  "disposition": "SOURCE_IMPLEMENTATION_PUBLISHED_NATIVE_PROOF_PASS_INDEPENDENT_REVIEW_PENDING"
+}
