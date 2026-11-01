@@ -669,9 +669,12 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         raise ReviewInputError("review workspace must be a canonical absolute worktree root")
     require_private_directory(repo)
     require_protected_ancestors(repo)
-    root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
-    if root != repo.resolve():
-        raise ReviewInputError("review workspace must be the exact Git worktree root")
+    # Git worktree identity is a raw control record. strip() would launder
+    # CRLF, surplus newlines or trailing spaces into a canonical pathname.
+    root_record = git(repo, "rev-parse", "--show-toplevel")
+    if root_record != os.fsencode(repo) + b"\n":
+        raise ReviewInputError("noncanonical Git worktree root control record")
+    root = repo
     # Resolve Git's common object directory (also for linked worktrees).
     # Refuse external alternates before reading any committed review blobs.
     alternates_path = git_control_path(root, "objects/info/alternates")
