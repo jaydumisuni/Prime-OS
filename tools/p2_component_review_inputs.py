@@ -220,6 +220,16 @@ def control_file_epoch(path: Path, limit: int) -> tuple[tuple[int, ...], bytes, 
     return stat_identity(before), hashlib.sha256(data).digest(), data
 
 
+def noncanonical_git_pointer_spelling(value: str) -> bool:
+    """Detect lossy path spellings while preserving traversed named/.. custody.
+
+    A named/.. segment is checked and pinned by the gitdir traversal logic.
+    Reject only aliases Path() erases without exposing that named directory.
+    """
+    return (value.startswith("./") or value.endswith("/")
+            or value.endswith("/.") or "//" in value or "/./" in value)
+
+
 def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
     """Pin the linked-worktree .git pointer to the HEAD metadata directory."""
     dotgit = root / ".git"
@@ -242,7 +252,13 @@ def capture_gitdir_pointer_epoch(root: Path, head_path: Path) -> tuple | None:
         # Path operations raise an uncaught ValueError on embedded NUL. Reject
         # malformed Git authority before traversing any gitfile path.
         raise ReviewInputError("invalid worktree gitdir control")
-    target = Path(os.fsdecode(line[8:]))
+    # Git accepts redundant separators and dot segments in gitfile paths.
+    # Path() silently normalizes those bytes; a review authority pointer must
+    # have one lexical spelling before its traversal and inode are pinned.
+    raw_target = os.fsdecode(line[8:])
+    if noncanonical_git_pointer_spelling(raw_target):
+        raise ReviewInputError("noncanonical worktree gitdir pointer pathname")
+    target = Path(raw_target)
     if not target.is_absolute():
         target = root / target
     # Git canonicalizes --git-path HEAD, but the literal gitfile may still
@@ -357,7 +373,12 @@ def capture_head_epoch(root: Path, expected_head: str) -> tuple:
         common_line = common_data[:-1]
         if (not common_line or b"\r" in common_line or b"\x00" in common_line):
             raise ReviewInputError("invalid linked worktree commondir control")
-        common_reference = Path(os.fsdecode(common_line))
+        # Preserve Git's legitimate ../.. linked-worktree reference, but
+        # refuse alternate spellings erased by Path() normalization.
+        raw_common = os.fsdecode(common_line)
+        if noncanonical_git_pointer_spelling(raw_common):
+            raise ReviewInputError("noncanonical linked worktree commondir pathname")
+        common_reference = Path(raw_common)
         expected_common = head_path.parent.parent.parent
         # A linked worktree's ordinary relative commondir climbs to the
         # shared Git directory with parent segments (normally ../..).
