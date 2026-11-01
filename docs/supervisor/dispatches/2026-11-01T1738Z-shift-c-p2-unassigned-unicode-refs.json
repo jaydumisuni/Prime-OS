@@ -1,0 +1,36 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "C",
+  "project": "origins-phase8b",
+  "owner_repository": "jaydumisuni/Prime-OS",
+  "frontier": "PRIME_P2_UNASSIGNED_UNICODE_SYMBOLIC_REF_IDENTITY",
+  "before_head": "35e2530701f057f7430583db7b2e4d556e42341b",
+  "before_state": "PR185 exact head admitted Git-valid Unicode category Cn symbolic ref identities; independent review pending",
+  "implementation_head": "3687d561a93c0c91402e3324c3383521bc2d38ae",
+  "after_state": "Unassigned Unicode ref identities denied before Git metadata path lookup; assigned visible Unicode remains accepted; review-only source candidate",
+  "candidate_branch": "supervisor/shift-c-p2-unassigned-symbolic-20261101-1935",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-unassigned-symbolic-shift-c-20261101-1935",
+  "worker_action": "Shift C isolated project-owned source change, test-first real-Git regression, Patrol allow, focused native pytest, exact-head source commit and nonforce publication",
+  "movement_fact": "MATERIAL_SOURCE_IMPLEMENTATION_COMMITTED",
+  "health_fact": "NATIVE_111_PASS_REVIEW_PENDING_HOSTED_UNVERIFIED",
+  "engineering_health": {
+    "patrol": "ALLOW Prime-OS",
+    "predecessor": "RED: Git accepted U+0378 symbolic ref and build_manifest failed to reject",
+    "native_review_input": "111/111 PASS",
+    "python_compile": "PASS",
+    "git_diff_check": "PASS",
+    "hosted_exact_head": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical_release": "NOT_PROVEN"
+  },
+  "dependency_linkage": {
+    "blocked_project": "Origins Phase 8B",
+    "blocked_milestone": "pinned-release direct consumption",
+    "boundary": "FAIL_CLOSED",
+    "safe_upstream": "Prime P2 component/package review-input custody"
+  },
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-01T17:38:20Z"
+}
