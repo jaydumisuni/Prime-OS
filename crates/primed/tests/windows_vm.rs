@@ -248,10 +248,7 @@ fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
         assert!(path.len() >= 4096);
         guest.base_image = path;
         let error = validate_guest_definition(&guest).unwrap_err();
-        assert!(
-            matches!(&error, WindowsVmError::InvalidGuest(_)),
-            "{error}"
-        );
+        assert!(matches!(&error, WindowsVmError::InvalidGuest(_)), "{error}");
         assert!(error.to_string().contains("byte limit"), "{error}");
     }
 
@@ -262,6 +259,36 @@ fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
         validate_guest_definition(&guest),
         Err(WindowsVmError::Io(_))
     ));
+}
+
+#[test]
+fn guest_definition_rejects_oversized_image_path_component_before_filesystem_access() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let missing = dir.path().join("missing-windows.qcow2");
+    let mut guest = definition(&missing, b"nonempty-guest-image");
+
+    // Each candidate is below PATH_MAX but has one component over the
+    // conservative 255-byte Linux NAME_MAX boundary.
+    for component in ["a".repeat(256), "é".repeat(128)] {
+        guest.base_image = format!("/{component}");
+        assert!(guest.base_image.len() < 4096);
+        let error = validate_guest_definition(&guest).unwrap_err();
+        assert!(matches!(&error, WindowsVmError::InvalidGuest(_)), "{error}");
+        assert!(error.to_string().contains("component"), "{error}");
+    }
+
+    // Exactly 255 bytes is not rejected by the component-budget preflight.
+    // Its missing file is still a filesystem custody error.
+    for component in ["a".repeat(255), format!("{}b", "é".repeat(127))] {
+        guest.base_image = format!("/{component}");
+        assert_eq!(component.len(), 255);
+        assert!(matches!(
+            validate_guest_definition(&guest),
+            Err(WindowsVmError::Io(_))
+        ));
+    }
 }
 
 #[test]
@@ -4224,13 +4251,13 @@ fn w8_proof_session_root_rejects_script_prepended_format_marks() {
 
     let dir = private_tempdir();
     for name in [
-        "root\u{0600}runtime", // Arabic number sign.
-        "root\u{0605}runtime", // Arabic number mark above.
-        "root\u{06dd}runtime", // Arabic end of ayah.
-        "root\u{070f}runtime", // Syriac abbreviation mark.
-        "root\u{0890}runtime", // Arabic pound mark above.
-        "root\u{0891}runtime", // Arabic piastre mark above.
-        "root\u{08e2}runtime", // Arabic disputed end of ayah.
+        "root\u{0600}runtime",  // Arabic number sign.
+        "root\u{0605}runtime",  // Arabic number mark above.
+        "root\u{06dd}runtime",  // Arabic end of ayah.
+        "root\u{070f}runtime",  // Syriac abbreviation mark.
+        "root\u{0890}runtime",  // Arabic pound mark above.
+        "root\u{0891}runtime",  // Arabic piastre mark above.
+        "root\u{08e2}runtime",  // Arabic disputed end of ayah.
         "root\u{110bd}runtime", // Kaithi number sign.
         "root\u{110cd}runtime", // Kaithi number sign above.
     ] {

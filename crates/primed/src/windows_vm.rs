@@ -607,9 +607,19 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let confusable_path_separator = value.chars().any(|character| {
         matches!(
             character,
-            '\u{2044}' | '\u{2215}' | '\u{2216}' | '\u{2571}' | '\u{2572}' | '\u{29f5}'
-                | '\u{29f6}' | '\u{29f7}' | '\u{29f8}' | '\u{29f9}' | '\u{fe68}'
-                | '\u{ff0f}' | '\u{ff3c}'
+            '\u{2044}'
+                | '\u{2215}'
+                | '\u{2216}'
+                | '\u{2571}'
+                | '\u{2572}'
+                | '\u{29f5}'
+                | '\u{29f6}'
+                | '\u{29f7}'
+                | '\u{29f8}'
+                | '\u{29f9}'
+                | '\u{fe68}'
+                | '\u{ff0f}'
+                | '\u{ff3c}'
         )
     });
     parser_delimiter
@@ -1348,6 +1358,18 @@ pub fn validate_guest_definition(
             "base image path exceeds byte limit",
         ));
     }
+    // A path below PATH_MAX may still exceed the Linux NAME_MAX budget of
+    // 255 UTF-8 bytes in a single component. Deny it before filesystem I/O,
+    // so an overlong manifest identity cannot masquerade as a missing image.
+    if definition
+        .base_image
+        .split('/')
+        .any(|segment| segment.len() > 255)
+    {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path component exceeds byte limit",
+        ));
+    }
     let image = PathBuf::from(&definition.base_image);
     let worker_uid = unsafe { libc::geteuid() };
     if !image.is_absolute() {
@@ -1367,7 +1389,10 @@ pub fn validate_guest_definition(
     // Keep the exact review/launch pathname unambiguous before filesystem I/O.
     if definition.base_image.contains("//")
         || definition.base_image.ends_with('/')
-        || definition.base_image.split('/').any(|segment| segment == ".")
+        || definition
+            .base_image
+            .split('/')
+            .any(|segment| segment == ".")
         || image
             .components()
             .any(|component| matches!(component, Component::ParentDir))
