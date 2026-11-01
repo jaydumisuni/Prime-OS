@@ -1,0 +1,38 @@
+{
+  "action": "Reject U+2D7F Tifinagh consonant joiner from component manifest text and durable transaction failure/recovery reasons; preserve visible text",
+  "before_head": "77db7a1ab338fdcbfdf412934cbbeeeeb73918f5",
+  "branch": "supervisor/shift-b-p2-tifinagh-text-20261102-0012",
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B pinned-release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package authority"
+  },
+  "frontier": "P2_COMPONENT_MANIFEST_AND_TRANSACTION_REASON_TIFINAGH_FORMAT_CUSTODY",
+  "hosted_exact_head_ci": "UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "project": "origins-phase8b",
+  "proof": {
+    "cargo_fmt": "PASS",
+    "git_diff_check": "PASS",
+    "patrol": "exit 0; explicit ALLOW not emitted",
+    "prime_contracts": "31/31 PASS",
+    "primed": "143/143 PASS plus 3 bin tests PASS",
+    "strict_clippy": "PASS"
+  },
+  "protected_boundaries": {
+    "control_plane_touched": false,
+    "origins_release": "NOT_ADMITTED",
+    "production_touched": false,
+    "stolen_device_touched": false
+  },
+  "review": "PENDING",
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "B",
+  "source_after_head": "6d2cccc695d08e251cf2054262838e2c39fdcffe",
+  "test_first": {
+    "prime_contracts": "RED: admitted U+2D7F in version",
+    "primed": "RED: admitted U+2D7F in failure reason"
+  },
+  "time_utc": "2026-11-01T22:14:27.568734+00:00",
+  "upstream_repository": "jaydumisuni/Prime-OS",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-tifinagh-text-shift-b-20261102-0012"
+}

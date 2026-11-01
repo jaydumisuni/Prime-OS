@@ -1,0 +1,57 @@
+{
+  "after": {
+    "branch": "supervisor/shift-b-p2-nfc-symbolic-20261101-1412",
+    "pr": "https://github.com/jaydumisuni/Prime-OS/pull/180",
+    "source_head": "95d40b57af370fd520c3a9837e6930bbcb5fb7e8",
+    "state": "NFC-canonical symbolic HEAD required before metadata path inspection; six real-Git positive/negative controls"
+  },
+  "before": {
+    "head": "64966a79c6192014d34f0db6e0c3d03ba405d967",
+    "pr": "https://github.com/jaydumisuni/Prime-OS/pull/178",
+    "state": "Git-valid canonically equivalent Unicode symbolic HEAD refs both admitted"
+  },
+  "canonical_registry": {
+    "enabled_project": true,
+    "head": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "oracle_phase27_prep_enabled": false,
+    "ref": "main",
+    "repository": "jaydumisuni/cookpit"
+  },
+  "dependency_linkage": {
+    "blocked_milestone": "pinned-release consumption",
+    "blocked_project": "Origins Phase 8B",
+    "boundary": "FAIL_CLOSED",
+    "safe_upstream": "Prime P2 component/package review-input custody"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+  "engineering_health": {
+    "before_real_git": "NFC and NFD branch names both admitted",
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_p2_review_inputs": "108/108 PASS",
+    "not_movement": true,
+    "patrol": "check exit 0; explicit ALLOW text not observed",
+    "physical": "NOT_PROVEN"
+  },
+  "frontier": "Prime P2 canonical Unicode symbolic HEAD ref identity before review-input authority",
+  "implementation_movement": {
+    "after_head": "95d40b57af370fd520c3a9837e6930bbcb5fb7e8",
+    "at_utc": "2026-11-01T12:12:40.881686+00:00",
+    "before_head": "64966a79c6192014d34f0db6e0c3d03ba405d967",
+    "kind": "MATERIAL_SOURCE_HEAD_ADVANCED",
+    "material": true
+  },
+  "project": "origins-phase8b",
+  "protected": {
+    "oracle_runtime_touched": false,
+    "production_touched": false,
+    "protected_merge": false,
+    "stolen_device_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "schema": "ttg.cookpit.supervisor.project-dispatch.v1",
+  "shift": "B",
+  "upstream_project": "Prime-OS",
+  "worker_action": "Shift B project-owned isolated Prime worktree source and regression correction, nonforce publication"
+}

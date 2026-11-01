@@ -1,0 +1,62 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "E",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-10-31T18:45:41Z",
+  "frontier": "Prime P2 exact-head review-input index control-path framing",
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "upstream": "Prime P2 component/package review-input authority",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 154,
+    "branch": "supervisor/shift-a-p2-standalone-commondir-framing-20261031",
+    "head": "d661097d2b4af469c442a0817d07cd9ba97e17d5",
+    "defect": "index git-path output decoded with strip; malformed framing accepted"
+  },
+  "worker_action": "Cloud fallback: exact-parent project-owned source/test tree commit, non-force expected-head update, draft PR #156",
+  "after": {
+    "source_head": "40232e2cea2454161ed6a0aa878a216a895eb617",
+    "source_tree": "8a54002fa3852cbd8927a82d01f78285ffb89a69",
+    "branch": "supervisor/shift-e-p2-index-path-framing-20261031-2048",
+    "pr": 156,
+    "source_files": [
+      "tools/p2_component_review_inputs.py",
+      "tests/test_p2_component_review_inputs.py"
+    ],
+    "source_changes": {
+      "additions": 32,
+      "deletions": 4
+    }
+  },
+  "proof": {
+    "predecessor_predicate": "3 malformed framing variants normalize to valid index pathname in old code",
+    "corrected_predicate": "existing strict git_control_path rejects malformed LF/CRLF and invalid UTF-8 with ReviewInputError",
+    "adversarial_regressions": 4,
+    "github_source_blob": "f50305cf2cb21d0ec2d119d57bb99f94c3909996",
+    "github_test_blob": "435243e554f4e7b3b75b30f23831a46cb19d1d34",
+    "github_exact_parent_tree": "MATCH",
+    "patrol": "UNVERIFIED — Oracle Live roster failed; KRATOS inaccessible",
+    "native_pytest": "UNVERIFIED",
+    "hosted_exact_head_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical_release": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_SOURCE_HEAD_ADVANCED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_PENDING_LOCAL_RECONCILIATION",
+  "local_attention_reconciliation": "QUEUED: on KRATOS return verify project worktree/Patrol, run focused pytest, reconcile cloud head and receipt under local dispatches; do not fabricate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}

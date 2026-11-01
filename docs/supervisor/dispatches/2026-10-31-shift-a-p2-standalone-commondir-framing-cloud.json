@@ -1,0 +1,55 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "A",
+  "observed_at_utc": "2026-10-31T17:07:30Z",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "dependency_linkage": "Origins Phase 8B direct release consumption remains blocked; Prime P2 component/package review-input source preparation is independently actionable",
+  "frontier": "P2 standalone separate-git-dir --git-common-dir output framing and UTF-8 identity",
+  "transport": "authenticated GitHub connector; KRATOS Oracle terminal unavailable",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true
+  },
+  "before": {
+    "head": "269be75049e3a6bae45f4e9f6ed1fe25b8ef99ee",
+    "pr": 152,
+    "review_count": 0
+  },
+  "action": {
+    "worker": "Shift A cloud source-only implementation",
+    "branch": "supervisor/shift-a-p2-standalone-commondir-framing-20261031",
+    "files": [
+      "tools/p2_component_review_inputs.py",
+      "tests/test_p2_component_review_inputs.py"
+    ],
+    "details": "Reject missing/extra LF, non-UTF8 bytes, and control characters in standalone Git common-directory authority output instead of decoding and stripping it."
+  },
+  "after": {
+    "source_head": "60f2d0b652dd34941122739fe63f5f413b27eb5b",
+    "source_blob": "c641eb3bf54176461da4021e96fc810e86542d80",
+    "test_blob": "12259f445c8d9dab677cf5b01f89a2c9d23cf8b8",
+    "ahead_by": 2,
+    "behind_by": 0
+  },
+  "proof": {
+    "isolated_predicate": "4/4 malformed records denied; baseline predecessor accepts 3/4 and throws raw UnicodeDecodeError for 1/4",
+    "exact_blob_readback": "MATCH",
+    "git_ancestry": "2 commits ahead, 0 behind",
+    "native_prime_pytest": "UNVERIFIED",
+    "patrol_preflight": "UNVERIFIED_KRATOS_UNAVAILABLE",
+    "hosted_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical_release": "NOT_PROVEN"
+  },
+  "health": "SOURCE_READBACK_VERIFIED_NATIVE_UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_HEAD_ADVANCED",
+  "disposition": "SOURCE_PUBLISHED_PROOF_PENDING",
+  "local_attention_reconciliation": "QUEUED_ON_KRATOS_RETURN",
+  "production_touched": false,
+  "oracle_runtime_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false
+}
