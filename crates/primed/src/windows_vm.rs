@@ -1676,6 +1676,24 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime path contains QEMU option delimiters or invisible Unicode controls",
         ));
     }
+    // Canonicalize() equality below is the final filesystem identity check,
+    // but it runs after opening and parsing the overlay header. Refuse lexical
+    // aliases before that I/O: dot, parent, doubled and trailing separators
+    // must not turn a noncanonical VM authority into a filesystem error first.
+    if [&request.overlay_image, &request.runtime_dir]
+        .iter()
+        .any(|path| {
+            path.to_str().is_none_or(|text| {
+                text.contains("//")
+                    || text.ends_with('/')
+                    || text.split('/').any(|segment| matches!(segment, "." | ".."))
+            })
+        })
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime path is not lexically canonical",
+        ));
+    }
     // Query the effective identity that will own the session, not the
     // environment's spoofable UID text. No privilege or identity is changed.
     let overlay_meta = fs::symlink_metadata(&request.overlay_image)?;
