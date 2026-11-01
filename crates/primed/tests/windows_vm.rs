@@ -232,6 +232,39 @@ fn guest_definition_rejects_lexically_aliased_canonical_image_paths() {
 }
 
 #[test]
+fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let missing = dir.path().join("missing-windows.qcow2");
+    let mut guest = definition(&missing, b"nonempty-guest-image");
+
+    // The 4096-byte Linux syscall limit includes the terminating NUL.
+    // Count UTF-8 bytes, not Unicode scalar values or grapheme clusters.
+    for path in [
+        format!("/{}", "a".repeat(4095)),
+        format!("/{}", "é".repeat(2048)),
+    ] {
+        assert!(path.len() >= 4096);
+        guest.base_image = path;
+        let error = validate_guest_definition(&guest).unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidGuest(_)),
+            "{error}"
+        );
+        assert!(error.to_string().contains("byte limit"), "{error}");
+    }
+
+    // A normal-length missing image still reaches the existing filesystem
+    // custody check rather than being misclassified as oversized.
+    guest.base_image = missing.display().to_string();
+    assert!(matches!(
+        validate_guest_definition(&guest),
+        Err(WindowsVmError::Io(_))
+    ));
+}
+
+#[test]
 fn guest_definition_rejects_noncanonical_guest_identity() {
     let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
