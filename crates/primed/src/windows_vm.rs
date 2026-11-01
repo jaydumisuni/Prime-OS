@@ -1647,6 +1647,42 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable path contains unsafe text",
         ));
     }
+    // Validate every caller-owned runtime identity before QEMU filesystem I/O.
+    // An absent or inaccessible executable must not mask an invalid overlay
+    // or session path as an unrelated host I/O failure.
+    if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime paths are not absolute",
+        ));
+    }
+    // QEMU parses commas inside -drive and -chardev values as new options.
+    // Refuse paths that could change the requested VM isolation contract.
+    if [&request.overlay_image, &request.runtime_dir]
+        .iter()
+        .any(|path| path.to_str().is_none_or(runtime_path_has_unsafe_text))
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime path contains QEMU option delimiters or invisible Unicode controls",
+        ));
+    }
+    // Canonicalize() equality below is the final filesystem identity check,
+    // but it runs after opening and parsing the overlay header. Refuse lexical
+    // aliases before that I/O: dot, parent, doubled and trailing separators
+    // must not turn a noncanonical VM authority into a filesystem error first.
+    if [&request.overlay_image, &request.runtime_dir]
+        .iter()
+        .any(|path| {
+            path.to_str().is_none_or(|text| {
+                text.contains("//")
+                    || text.ends_with('/')
+                    || text.split('/').any(|segment| matches!(segment, "." | ".."))
+            })
+        })
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "runtime path is not lexically canonical",
+        ));
+    }
     let qemu = fs::canonicalize(&request.qemu_binary)?;
     if qemu.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
@@ -1705,39 +1741,6 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
                 "QEMU executable directory is untrusted or invalid",
             ));
         }
-    }
-    if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
-        return Err(WindowsVmError::InvalidPlan(
-            "runtime paths are not absolute",
-        ));
-    }
-    // QEMU parses commas inside -drive and -chardev values as new options.
-    // Refuse paths that could change the requested VM isolation contract.
-    if [&request.overlay_image, &request.runtime_dir]
-        .iter()
-        .any(|path| path.to_str().is_none_or(runtime_path_has_unsafe_text))
-    {
-        return Err(WindowsVmError::InvalidPlan(
-            "runtime path contains QEMU option delimiters or invisible Unicode controls",
-        ));
-    }
-    // Canonicalize() equality below is the final filesystem identity check,
-    // but it runs after opening and parsing the overlay header. Refuse lexical
-    // aliases before that I/O: dot, parent, doubled and trailing separators
-    // must not turn a noncanonical VM authority into a filesystem error first.
-    if [&request.overlay_image, &request.runtime_dir]
-        .iter()
-        .any(|path| {
-            path.to_str().is_none_or(|text| {
-                text.contains("//")
-                    || text.ends_with('/')
-                    || text.split('/').any(|segment| matches!(segment, "." | ".."))
-            })
-        })
-    {
-        return Err(WindowsVmError::InvalidPlan(
-            "runtime path is not lexically canonical",
-        ));
     }
     // Query the effective identity that will own the session, not the
     // environment's spoofable UID text. No privilege or identity is changed.
