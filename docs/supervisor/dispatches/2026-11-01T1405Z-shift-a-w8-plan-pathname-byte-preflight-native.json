@@ -1,0 +1,43 @@
+{
+  "after_state": "Isolated Prime-owned W8 source candidate PR183; pre-I/O 4096 total and 255 component byte preflight for all three plan paths",
+  "before_head": "ef4a8b7c1789486a8a18b6433d090b2c4c5911f7",
+  "before_state": "PR181 W8 candidate: build_qemu_plan canonicalized QEMU before rejecting oversized QEMU/overlay/runtime path bytes; no fresh worker",
+  "dependency_linkage": {
+    "control": "https://github.com/jaydumisuni/cookpit/pull/102 (guarded draft, not live)",
+    "guest": "W8 physical Gates 7-9 HOLD",
+    "predecessor_pr": "https://github.com/jaydumisuni/Prime-OS/pull/181"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_148_PASS_REVIEW_AND_GUEST_HOLD",
+  "engineering_health": {
+    "cargo_fmt": "PASS",
+    "focused": "1/1 PASS with six adversarial path combinations",
+    "git_diff_check": "PASS",
+    "guest_gates_7_9": "HOLD",
+    "hosted_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_windows_vm": "148/148 PASS",
+    "patrol": "xvfb-run patrol check exit 0; explicit ALLOW text not observed",
+    "predecessor_red": "ENAMETOOLONG for oversized QEMU component; expected InvalidPlan",
+    "strict_clippy": "PASS",
+    "w9": "NOT_AUTHORIZED"
+  },
+  "force_push": false,
+  "frontier": "W8_QEMU_PLAN_PATHNAME_BYTE_PREFLIGHT_BEFORE_FILESYSTEM_IO",
+  "implementation_after_head": "75517b24320b0740ae148ff6e71729cb305775a1",
+  "movement": {
+    "classification": "MATERIAL_SOURCE_PUBLISHED",
+    "source_commit": "75517b24320b0740ae148ff6e71729cb305775a1",
+    "worker_active": false
+  },
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/183",
+  "production_touched": false,
+  "project": "prime-windows",
+  "project_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-pathname-byte-preflight-shift-a-20261101-1600",
+  "protected_merge": false,
+  "schedules_changed": false,
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "A",
+  "stolen_device_touched": false,
+  "time_utc": "2026-11-01T14:04:53.146556+00:00",
+  "worker_action": "Patrol headless preflight; test-first RED; bounded Rust implementation; focused/full native tests; ordinary push; draft PR183"
+}
