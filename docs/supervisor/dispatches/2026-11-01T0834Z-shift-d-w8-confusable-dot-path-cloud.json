@@ -16,7 +16,7 @@
     "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/173",
     "branch": "supervisor/shift-a-w8-private-use-image-path-20261101-0900",
     "source_implementation_head": "ef7ab6e83a7ec51d127798607cc1c1dc132eee20",
-    "receipt_bearing_head": "PREDECESSOR_BRANCH_REF_VERIFIED_EXACT_SHA_NOT_EXPOSED_BY_CONNECTOR"
+    "receipt_bearing_head": "8263fbf225d86fbc8152b49e40c4ca54e4b868b1"
   },
   "after_implementation_head": "15864ddffedf9ce5d1509ded3d72170fc2d160dc",
   "before_state": "The W8 pathname guard rejects confusable separators, controls, private-use and noncharacters, but accepts four real Linux filename scalars that display as ASCII-like dots; a reviewer may mistake a component or extension spelling.",
@@ -69,5 +69,7 @@
   "protected_merge": false,
   "force_push": false,
   "credentials_changed": false,
-  "schedules_changed": false
+  "schedules_changed": false,
+  "before_head": "8263fbf225d86fbc8152b49e40c4ca54e4b868b1",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/175"
 }
