@@ -1121,6 +1121,41 @@ def test_rejects_git_accepted_canonically_equivalent_symbolic_refs(
         assert probed_refs[-1] == ref
 
 
+def test_rejects_git_accepted_compatibility_equivalent_symbolic_refs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Git-valid compatibility aliases must not claim a second review identity."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_control_path = module.git_control_path
+    probed_refs = []
+
+    def traced_control_path(repo: Path, name: str) -> Path:
+        if name.startswith("refs/heads/"):
+            probed_refs.append(name)
+        return original_control_path(repo, name)
+
+    monkeypatch.setattr(module, "git_control_path", traced_control_path)
+    # Each is NFC but not NFKC, and Git accepts the byte-distinct ref.
+    for branch in ("review-\uff21", "review-\u2460", "review-\ufb03", "review-\u2163"):
+        ref = "refs/heads/" + branch
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="symbolic HEAD Unicode"):
+            module.build_manifest(root, head)
+        assert not probed_refs, "compatibility alias reached metadata-path inspection"
+
+    # Visible NFKC-stable Unicode remains admissible.
+    for branch in ("review-caf\u00e9", "review-\u6f22", "review-\u03b2"):
+        ref = "refs/heads/" + branch
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert module.build_manifest(root, head)["candidate_head"] == head
+        assert probed_refs[-1] == ref
+
+
 def test_rejects_git_accepted_unicode_blank_ref_aliases(tmp_path: Path) -> None:
     """Git-valid blank-looking refs must not become P2 review authority."""
     import pytest
