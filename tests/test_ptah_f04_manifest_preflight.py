@@ -84,6 +84,33 @@ class ManifestPreflightTests(unittest.TestCase):
                 with self.assertRaisesRegex(f04.ManifestError, "invalid_artifact_path"):
                     f04.validate_manifest(value)
 
+    def test_windows_device_and_trailing_dot_aliases_are_denied(self):
+        # These ASCII spellings can address device namespaces or normalize
+        # to a different filename on a future Windows package consumer.
+        for path in (
+            "CON", "bin/con.txt", "bin/LPT9", "bin/COM1.exe",
+            "bin/foo.", "bin/foo..", "bin/dir./file",
+            "bin/PRN/readme", "bin/NUL.log", "bin/AUX",
+        ):
+            with self.subTest(path=path):
+                value = candidate()
+                value["artifacts"][0]["path"] = path
+                with self.assertRaisesRegex(f04.ManifestError, "invalid_artifact_path"):
+                    f04.validate_manifest(value)
+                with self.assertRaisesRegex(f04.ManifestError, "invalid_artifact_path"):
+                    f04.load_manifest(json.dumps(value).encode())
+
+    def test_portable_visible_dots_and_nonreserved_names_still_admit(self):
+        for path in ("bin/COM10", "bin/.hidden", "bin/foo.bar", "bin/a.b..c"):
+            with self.subTest(path=path):
+                value = candidate()
+                value["artifacts"][0]["path"] = path
+                self.assertEqual(f04.validate_manifest(value)["result"], "preflight_ok")
+                self.assertEqual(
+                    f04.load_manifest(json.dumps(value).encode())["result"],
+                    "preflight_ok",
+                )
+
     def test_duplicate_paths_rejected_even_on_case_insensitive_consumers(self):
         value = candidate()
         second = copy.deepcopy(value["artifacts"][0])

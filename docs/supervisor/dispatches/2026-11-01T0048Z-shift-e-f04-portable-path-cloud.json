@@ -1,0 +1,68 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "E",
+  "project": "ptah",
+  "implementation_owner": "Prime-OS",
+  "frontier": "Prime OS-owned F04 source-only artifact path custody: deny Windows device basenames and trailing-dot aliases",
+  "observed_at_utc": "2026-11-01T00:48:19Z",
+  "canonical_authority": {
+    "cookpit_repository": "jaydumisuni/cookpit",
+    "main_head": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_profile": "profiles/ptah.json",
+    "ptah_roadmap": "jaydumisuni/ptah-roadmap- main:IMPLEMENTATION_ROADMAP.md",
+    "prime_roadmap": "docs/PRIME_OS_ROADMAP.md",
+    "prime_handoff": "docs/AI_HANDOFF.md"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-e-f04-portable-path-custody-20261101-0248",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/165",
+  "before_head": "6d786f2e29913cb3416ecc2fb4d74663d87cc3ba",
+  "source_after_head": "a1bac6b8f4c33d2129c2fb213b65b8dcfb1440cd",
+  "worker": "Shift E authenticated GitHub source-only fallback; Oracle Live cloud roster and KRATOS terminal returned internal errors",
+  "action": "Added non-authorizing F04 path guard rejecting Windows CON/PRN/AUX/NUL/COM1-9/LPT1-9 basename aliases with extensions and trailing-dot path components; authored 10 negative and 4 positive regression fixtures for direct and JSON-loaded admission; updated proposal contract",
+  "movement": {
+    "state": "MATERIAL_SOURCE_PUBLISHED",
+    "time_utc": "2026-11-01T00:48:04Z",
+    "head_advanced": true,
+    "commits_ahead": 3,
+    "commits_behind": 0,
+    "files_changed": 3,
+    "additions": 43,
+    "deletions": 2
+  },
+  "proof": {
+    "source_blob": "1ba2122f612936cabdad8f089bee49e3712e1665",
+    "test_blob": "b0969e2825b0469ed59e84d4202a46b91b615826",
+    "contract_blob": "2ffecd289f66c7064e5d4cfa7f1643ce6074f87b",
+    "exact_source_test_readback": "MATCH",
+    "github_compare": "3 ahead, 0 behind, three Prime-owned files",
+    "isolated_python_predicate": "PASS: predecessor accepted 10/10 targeted aliases; corrected rejected 10/10; positive 4/4 preserved",
+    "isolated_predicate_is_native_test": false,
+    "hosted_ci": "NO_EXACT_HEAD_RUN_RETURNED",
+    "kratos_patrol": "UNVERIFIED",
+    "native_project_tests": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical_or_release": "NOT_PROVEN"
+  },
+  "health": {
+    "supervisor_pool": "All A/B/C/D/E enabled and unchanged; initial 02:46 Lusaka due-slot evaluation A/B/C/D/E HEALTHY; zero genuine missed slots",
+    "nodie_roster": "UNVERIFIED: Oracle Live cloud roster internal error",
+    "kratos": "UNVERIFIED: Oracle terminal internal error",
+    "source_custody": "VERIFIED",
+    "implementation_movement": "MATERIAL_SOURCE_PUBLISHED"
+  },
+  "dependency_linkage": {
+    "upstream": "Ptah E06/E07 standalone complete; F04-F07 Prime OS-owned",
+    "downstream": "Prime F04 OS image/package acceptance and physical/release proof remain protected",
+    "fairness": "Oldest surveyed eligible project-owned source candidate: Prime F04 PR #160 at 2026-10-31T21:00Z; no fresh worker lease verified"
+  },
+  "disposition": "SOURCE_PUBLISHED_REVIEW_AND_NATIVE_PROOF_PENDING",
+  "kratos_local_attention": "QUEUED_RECONCILIATION",
+  "kratos_local_dispatch": "QUEUED_RECONCILIATION",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false
+}
