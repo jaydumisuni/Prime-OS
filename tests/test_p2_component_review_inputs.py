@@ -2452,3 +2452,87 @@ def test_rejects_noncanonical_git_blob_size_control_records(
         with pytest.raises(module.ReviewInputError, match="invalid committed review input size"):
             module.build_manifest(root, head)
     monkeypatch.setattr(module, "git", original_git)
+
+
+def test_rejects_noncanonical_git_object_id_control_records(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Neither HEAD nor blob OIDs may be normalized from forged Git output."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    commands = (
+        ("rev-parse", "HEAD"),
+        ("rev-parse", f"{head}:{module.INPUTS[0]}"),
+    )
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    for command in commands:
+        canonical = original_git(root, *command)
+        assert len(canonical) == 41 and canonical.endswith(b"\n")
+        hostile = (
+            canonical + b"\n",
+            canonical[:-1] + b"\r\n",
+            canonical[:-1],
+            b"+" + canonical,
+            b"F" * 40 + b"\n",
+            b"0" * 39 + b"\n",
+        )
+        for forged in hostile:
+            def forged_git(repo: Path, *args: str) -> bytes:
+                if args == command:
+                    return forged
+                return original_git(repo, *args)
+
+            monkeypatch.setattr(module, "git", forged_git)
+            with pytest.raises(module.ReviewInputError, match="Git object identity"):
+                module.build_manifest(root, head)
+    monkeypatch.setattr(module, "git", original_git)
+
+
+def test_rejects_well_framed_blob_oid_disagreeing_with_tree(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A syntactically valid but unrelated Git blob ID is not review authority."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    command = ("rev-parse", f"{head}:{module.INPUTS[0]}")
+    canonical = original_git(root, *command)
+    forged = b"0" * 40 + b"\n"
+    assert canonical != forged
+
+    def forged_git(repo: Path, *args: str) -> bytes:
+        if args == command:
+            return forged
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", forged_git)
+    with pytest.raises(module.ReviewInputError, match="blob identity differs from tree"):
+        module.build_manifest(root, head)
+
+
+def test_rejects_malformed_final_git_head_oid(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The final HEAD probe must reject ambiguous framing, not strip it."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    head_reads = 0
+
+    def forged_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        data = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                return data + b"\n"
+        return data
+
+    monkeypatch.setattr(module, "git", forged_final_head)
+    with pytest.raises(module.ReviewInputError, match="invalid HEAD Git object identity"):
+        module.build_manifest(root, head)
+    assert head_reads == 2
