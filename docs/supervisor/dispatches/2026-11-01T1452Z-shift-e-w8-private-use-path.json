@@ -1,0 +1,40 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "project": "prime-windows",
+  "shift": "E",
+  "frontier": "W8_PRIVATE_USE_UNICODE_GUEST_AND_RUNTIME_PATH_CUSTODY",
+  "time_utc": "2026-11-01T14:52:35Z",
+  "before_head": "ef4a8b7c1789486a8a18b6433d090b2c4c5911f7",
+  "implementation_head": "d30f80d1456739524d4108410c98483409bf99a3",
+  "worker_action": "Isolated Prime-owned W8 worktree; shared runtime pathname admission rejects all Unicode private-use planes before guest-image I/O or VM proof-root admission.",
+  "material_movement": {
+    "source_changed": true,
+    "source_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "negative_cases": 12,
+    "positive_controls": 2
+  },
+  "proof": {
+    "predecessor_red": "Focused test FAILED: private-use BMP guest image path admitted",
+    "focused_after": "1/1 PASS",
+    "native_w8": "148/148 PASS",
+    "rustfmt": "PASS",
+    "clippy_strict": "PASS",
+    "git_diff_check": "PASS",
+    "patrol": "xvfb-run -a patrol check exit 0, no explicit ALLOW text",
+    "hosted_ci": "UNVERIFIED",
+    "independent_review": "PENDING"
+  },
+  "dependency_linkage": {
+    "upstream": "Prime W8 draft PR #181, head ef4a8b7c",
+    "downstream": "Windows guest Gates 7-9 and W9 protected; no guest proof or admission"
+  },
+  "engineering_health": "NATIVE_SOURCE_PROOF_PASS_REVIEW_PENDING_GUEST_HOLD",
+  "movement": "MATERIAL_IMPLEMENTATION_COMMIT_ADVANCED",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false
+}

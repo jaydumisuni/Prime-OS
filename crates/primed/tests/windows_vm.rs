@@ -4426,6 +4426,47 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
     assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn w8_private_use_unicode_cannot_authorize_guest_image_or_runtime_root() {
+    use primed::windows_vm::vm_session_paths;
+
+    // Private-use scalars are legal filesystem bytes, but their glyphs are
+    // font-defined rather than stable evidence identities across reviewers.
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-private-use-guest";
+    for (label, scalar) in [
+        ("bmp-start", "\u{e000}"),
+        ("bmp-end", "\u{f8ff}"),
+        ("plane15-start", "\u{f0000}"),
+        ("plane15-end", "\u{ffffd}"),
+        ("plane16-start", "\u{100000}"),
+        ("plane16-end", "\u{10fffd}"),
+    ] {
+        let image = dir.path().join(format!("guest-{label}-{scalar}.qcow2"));
+        private_guest_image(&image, bytes);
+        assert!(
+            validate_guest_definition(&definition(&image, bytes)).is_err(),
+            "private-use guest image pathname admitted: {label}"
+        );
+
+        let runtime = dir.path().join(format!("runtime-{label}-{scalar}"));
+        private_runtime_dir(&runtime);
+        assert!(
+            vm_session_paths(&runtime, "app", "session").is_err(),
+            "private-use W8 runtime proof root admitted: {label}"
+        );
+    }
+
+    // The guard is not an ASCII-only pathname policy.
+    let visible_image = dir.path().join("caf\u{00e9}-guest.qcow2");
+    private_guest_image(&visible_image, bytes);
+    assert!(validate_guest_definition(&definition(&visible_image, bytes)).is_ok());
+    let visible_runtime = dir.path().join("caf\u{00e9}-runtime");
+    private_runtime_dir(&visible_runtime);
+    assert!(vm_session_paths(&visible_runtime, "app", "session").is_ok());
+}
+
 #[test]
 fn guest_definition_rejects_decomposed_combining_diacritic_image_aliases() {
     let dir = private_tempdir();
