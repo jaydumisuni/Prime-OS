@@ -595,6 +595,17 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 | '\u{fe20}'..='\u{fe2f}'
         )
     });
+    // Private-use scalar values have no standard glyph or stable review
+    // representation. Distinct guest-image path bytes can be rendered as the
+    // same replacement glyph by a proof viewer, so refuse them before I/O.
+    let private_use_character = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{e000}'..='\u{f8ff}'
+                | '\u{f0000}'..='\u{ffffd}'
+                | '\u{100000}'..='\u{10fffd}'
+        )
+    });
     // Unicode noncharacters are valid Rust scalar values but are reserved
     // from text interchange and have no stable visible proof identity. Deny
     // U+FDD0..FDEF and the final two code points of every Unicode plane.
@@ -615,6 +626,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     parser_delimiter
         || confusable_path_separator
         || unicode_noncharacter
+        || private_use_character
         || bidi_control
         || invisible_control
         || unicode_line_break
