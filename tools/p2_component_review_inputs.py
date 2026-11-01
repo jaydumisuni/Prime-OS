@@ -157,8 +157,12 @@ def has_hidden_git_path_scalar(value: str) -> bool:
     for character in value:
         point = ord(character)
         if (unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp")
+                # Non-ASCII Unicode spaces and the Braille blank can disguise
+                # a Git-valid ref as an ordinary visible branch identity.
+                # Preserve ASCII spaces in legitimate worktree directories.
+                or (unicodedata.category(character) == "Zs" and character != " ")
                 or point in (0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5,
-                             0x3164, 0xFFA0)
+                             0x2800, 0x3164, 0xFFA0)
                 or 0x180B <= point <= 0x180D
                 or 0xFE00 <= point <= 0xFE0F
                 or 0xE0100 <= point <= 0xE01EF):
