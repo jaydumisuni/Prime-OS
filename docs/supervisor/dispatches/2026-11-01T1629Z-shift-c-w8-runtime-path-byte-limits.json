@@ -1,0 +1,44 @@
+{
+  "after_implementation_head": "2827352649955b7b235df664fdf60c747c0ab939",
+  "before_head": "f261ccf7525de97cd70ca4773d45ed898cd41a13",
+  "candidate_branch": "supervisor/shift-c-w8-runtime-name-max-20261101-1824",
+  "candidate_pr": "https://github.com/jaydumisuni/Prime-OS/pull/186",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-runtime-name-max-shift-c-20261101-1824",
+  "dependency_linkage": {
+    "base_review": "Prime-OS PR184 stacked predecessor",
+    "control": "Cookpit PR102 guarded rebind remains pending; no live rebound",
+    "downstream": "W8 Windows guest Gates 7-9 HOLD; W9 unauthorized"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PROOF_PASS_REVIEW_PENDING",
+  "engineering_health": {
+    "clippy": "PASS strict -D warnings",
+    "diff": "PASS git diff --check",
+    "format": "PASS cargo fmt --all -- --check",
+    "hosted_ci": "UNVERIFIED",
+    "independent_exact_head_review": "PENDING",
+    "native": "150/150 PASS cargo test -p primed --test windows_vm --locked",
+    "patrol": "ALLOW Prime-OS on actual and proposed worktrees",
+    "predecessor": "RED: QEMU runtime overlong component yielded ENAMETOOLONG after filesystem I/O",
+    "remote_source_head": "MATCH"
+  },
+  "frontier": "W8_RUNTIME_PATHNAME_BYTE_LIMIT_PREFLIGHT",
+  "guest_physical_proof": false,
+  "material_delta": {
+    "added_lines": 88,
+    "files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "removed_lines": 0,
+    "source_head_advanced": true
+  },
+  "production_touched": false,
+  "project": "prime-windows",
+  "project_owner": "jaydumisuni/Prime-OS",
+  "protected_promotion": false,
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "C",
+  "supervisor_schedule_modified": false,
+  "time_utc": "2026-11-01T16:29:22.336653+00:00",
+  "worker_action": "Shift C project-owned isolated W8 source and adversarial regression change"
+}
