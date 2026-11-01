@@ -1,0 +1,60 @@
+{
+  "after": {
+    "candidate_branch": "supervisor/shift-d-p2-symbolic-head-20261101-1136",
+    "source_commit": "b1748721c410b10e1ad1d868c3728c6e81b2d485",
+    "state": "Deny seven hidden scalar families in Git control path identities, preserving visible Unicode; seven real-Git negative and two positive controls"
+  },
+  "before": {
+    "head": "1929690683305b86e2ece5a9eb25d9f0415613ca",
+    "pr": 176,
+    "state": "Git accepts non-Cf default-ignorable branch scalars; existing Cc/Cf/Zl/Zp guard admits them"
+  },
+  "canonical_registry": {
+    "commit": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "enabled_project": true,
+    "oracle_phase27_prep_enabled": false,
+    "ref": "origin/main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "repository": "jaydumisuni/cookpit"
+  },
+  "dependency_linkage": {
+    "direct_consumption": "FAIL_CLOSED",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "upstream": "Prime P2 component/package review-input authority"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+  "engineering_health": {
+    "proof_is_not_implementation_movement": true,
+    "state": "NATIVE_FOCUSED_106_PASS_REVIEW_PENDING"
+  },
+  "frontier": "Prime P2 Git-accepted non-Cf invisible symbolic ref identity refusal before review-input authority admission",
+  "implementation_movement": {
+    "after_source_head": "b1748721c410b10e1ad1d868c3728c6e81b2d485",
+    "before_head": "1929690683305b86e2ece5a9eb25d9f0415613ca",
+    "state": "MATERIAL_SOURCE_HEAD_ADVANCED"
+  },
+  "observed_at_utc": "2026-11-01T09:39:56.452853+00:00",
+  "project": "origins-phase8b",
+  "proof": {
+    "git_diff_check": "PASS",
+    "hosted_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_focused_pytest": "106/106 PASS after exact PR176 reconciliation",
+    "new_adversarial_cases": 7,
+    "patrol": "ALLOW Prime-OS",
+    "physical": "NOT_PROVEN",
+    "real_git_before": "Non-Cf U+034F U+180B U+FE0F U+115F U+3164 accepted by Git and prepatch review manifest",
+    "visible_unicode_positive_controls": 2
+  },
+  "protected": {
+    "oracle_runtime_touched": false,
+    "production_touched": false,
+    "protected_merge": false,
+    "stolen_device_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "schema": "ttg.cookpit.supervisor.project-dispatch.v1",
+  "shift": "D",
+  "upstream_project": "Prime-OS",
+  "worker_action": "Shift D Oracle Live KRATOS isolated Prime project worktree, Patrol preflight; rebase unpublished candidate onto Shift C PR176 exact head after concurrent C catch-up"
+}
