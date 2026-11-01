@@ -8024,3 +8024,72 @@ fn qemu_agent_socket_path_accepts_exact_unix_boundary_and_rejects_overflow() {
         }
     }
 }
+
+#[test]
+fn w8_plan_path_bytes_are_preflighted_before_unrelated_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let missing_qemu = dir.path().join("qemu-not-installed");
+    let overlay = dir.path().join("overlay.qcow2");
+    let runtime = dir.path().join("runtime");
+    let long_component = dir.path().join("é".repeat(128));
+    let long_path = dir.path().join(
+        std::iter::repeat_n("x".repeat(200), 21)
+            .collect::<Vec<_>>()
+            .join("/"),
+    );
+
+    for (label, qemu_binary, overlay_image, runtime_dir) in [
+        (
+            "qemu component",
+            long_component.clone(),
+            overlay.clone(),
+            runtime.clone(),
+        ),
+        (
+            "qemu total",
+            long_path.clone(),
+            overlay.clone(),
+            runtime.clone(),
+        ),
+        (
+            "overlay component",
+            missing_qemu.clone(),
+            long_component.clone(),
+            runtime.clone(),
+        ),
+        (
+            "overlay total",
+            missing_qemu.clone(),
+            long_path.clone(),
+            runtime.clone(),
+        ),
+        (
+            "runtime component",
+            missing_qemu.clone(),
+            overlay.clone(),
+            long_component.clone(),
+        ),
+        (
+            "runtime total",
+            missing_qemu.clone(),
+            overlay.clone(),
+            long_path.clone(),
+        ),
+    ] {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary,
+            overlay_image,
+            runtime_dir,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains("byte limit")),
+            "{label}: reject malformed path bytes before unrelated QEMU or overlay I/O: {error}"
+        );
+    }
+}
