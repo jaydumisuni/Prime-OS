@@ -1,0 +1,37 @@
+{
+  "schema": "ttg.prime.p2.supervisor.dispatch.v1",
+  "shift": "D",
+  "project": "origins-phase8b",
+  "implementation_owner": "Prime-OS",
+  "frontier": "P2_LINKED_GITDIR_COMMONDIR_POINTER_LEXICAL_CUSTODY",
+  "before_head": "8917e814aaba6818cc94ee4dd37b6fda8582b047",
+  "before_state": "PR189 exact-head candidate accepted Git-valid redundant separator and dot-segment linked Git control pointer spellings; Origins Phase 8B consumption FAIL_CLOSED",
+  "worker_action": "Patrol-allowed Prime-owned isolated worktree; real-Git test-first RED, narrow pointer-spelling validation, 113 native tests, nonforce branch push and draft PR191",
+  "implementation_head": "1f1a175f280b896291d302c6f6f00fd47772005c",
+  "after_state": "PR191 draft published; four Git-valid lossy pointer spellings denied; legitimate named/.. path custody preserved; Origins direct consumption FAIL_CLOSED",
+  "proof": {
+    "patrol": "ALLOW Prime-OS",
+    "test_first": "RED: Git-valid pointer alias accepted without ReviewInputError",
+    "targeted": "1 PASS; four pointer alias variants",
+    "native": "113/113 PASS",
+    "python_compile": "PASS",
+    "git_diff_check": "PASS",
+    "remote_source_head": "1f1a175f280b896291d302c6f6f00fd47772005c",
+    "independent_review": "PENDING",
+    "hosted_qualification": "UNVERIFIED",
+    "physical_release": "NOT_CLAIMED"
+  },
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-gitfile-lexical-shift-d-20261101-2236",
+  "branch": "supervisor/shift-d-p2-gitfile-lexical-20261101-2236",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/191",
+  "dependency_linkage": {
+    "blocked_project": "Origins Phase 8B",
+    "safe_upstream": "Prime P2 component/package review-input custody",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "time_utc": "2026-11-01T20:39:06.051341+00:00",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING_ORIGINS_HOLD",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
