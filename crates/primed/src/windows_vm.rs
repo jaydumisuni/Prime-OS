@@ -1649,6 +1649,19 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable path contains unsafe text",
         ));
     }
+    // The executable identity is also review/launch authority. A lexical
+    // alias may resolve to a trusted inode but still misrepresent the path
+    // recorded in W8 evidence. Reject dot, parent, doubled and trailing
+    // separators before QEMU filesystem I/O, even when QEMU is missing.
+    if request.qemu_binary.to_str().is_none_or(|text| {
+        text.contains("//")
+            || text.ends_with('/')
+            || text.split('/').any(|segment| matches!(segment, "." | ".."))
+    }) {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable path is not lexically canonical",
+        ));
+    }
     // Validate every caller-owned runtime identity before QEMU filesystem I/O.
     // An absent or inaccessible executable must not mask an invalid overlay
     // or session path as an unrelated host I/O failure.
