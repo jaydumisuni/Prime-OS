@@ -169,6 +169,11 @@ def git_control_path(root: Path, name: str) -> Path:
         for character in value
     ):
         raise ReviewInputError("invalid Git control pathname")
+    # Path() normalizes repeated separators, dot segments and trailing slashes.
+    # Those are alternate raw spellings of Git metadata authority, not
+    # canonical control records. Reject them before Path can erase the bytes.
+    if os.path.normpath(value) != value:
+        raise ReviewInputError("noncanonical Git control pathname")
     path = Path(value)
     return path if path.is_absolute() else root / path
 
