@@ -19,6 +19,20 @@ UUID7 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 PACKAGE_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\Z")
+# Windows treats these ASCII device basenames as reserved even with extensions.
+# F04 source manifests must not encode aliases for a future cross-OS consumer.
+WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)}
+)
+
+
+def _portable_artifact_path(path: str) -> bool:
+    for part in path.split("/"):
+        if (part in {".", ".."} or part.endswith(".")
+                or part.split(".", 1)[0].upper() in WINDOWS_DEVICE_NAMES):
+            return False
+    return True
 
 
 class ManifestError(ValueError):
@@ -71,7 +85,7 @@ def validate_manifest(value: object) -> dict:
         path = item["path"]
         if (type(path) is not str or not 0 < len(path) <= 256
                 or PACKAGE_PATH.fullmatch(path) is None
-                or any(part in {".", ".."} for part in path.split("/"))):
+                or not _portable_artifact_path(path)):
             raise ManifestError("invalid_artifact_path")
         folded = path.casefold()
         if folded in seen:
