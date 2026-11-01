@@ -1615,6 +1615,23 @@ fn validate_runtime_owner(owner_uid: u32, worker_uid: u32) -> Result<(), Windows
 }
 
 pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmError> {
+    // The W8 plan binds all three caller-supplied path identities. Preflight
+    // Linux pathname bytes before opening QEMU: a missing executable must not
+    // mask an oversized overlay/runtime identity, and an oversized executable
+    // must not escape as a raw ENAMETOOLONG filesystem error. This reconciles
+    // the independent W8 executable and runtime path guards.
+    if [
+        &request.qemu_binary,
+        &request.overlay_image,
+        &request.runtime_dir,
+    ]
+    .iter()
+    .any(|path| runtime_path_exceeds_linux_byte_limits(path))
+    {
+        return Err(WindowsVmError::InvalidPlan(
+            "VM plan path exceeds Linux pathname byte limit",
+        ));
+    }
     if !request.qemu_binary.is_absolute() {
         return Err(WindowsVmError::InvalidPlan("QEMU path is not absolute"));
     }
@@ -1692,14 +1709,6 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     if !request.overlay_image.is_absolute() || !request.runtime_dir.is_absolute() {
         return Err(WindowsVmError::InvalidPlan(
             "runtime paths are not absolute",
-        ));
-    }
-    if [&request.overlay_image, &request.runtime_dir]
-        .iter()
-        .any(|path| runtime_path_exceeds_linux_byte_limits(path))
-    {
-        return Err(WindowsVmError::InvalidPlan(
-            "runtime path exceeds Linux pathname byte limit",
         ));
     }
     // QEMU parses commas inside -drive and -chardev values as new options.
