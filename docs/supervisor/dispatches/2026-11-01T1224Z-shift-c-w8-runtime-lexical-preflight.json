@@ -1,0 +1,37 @@
+{
+  "before_head": "a0784398f65e32a465734c597c2faa447273f98c",
+  "branch": "supervisor/shift-c-w8-runtime-lexical-20261101-1424",
+  "dependency_linkage": {
+    "W8_Gates_7_9": "HOLD",
+    "W9": "NOT_AUTHORIZED",
+    "control_rebind": "https://github.com/jaydumisuni/cookpit/pull/102; guarded, not admitted",
+    "predecessor_pr": "https://github.com/jaydumisuni/Prime-OS/pull/179"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING_GUEST_HOLD",
+  "force_push": false,
+  "frontier": "W8_RUNTIME_PATH_LEXICAL_PREFLIGHT_BEFORE_OVERLAY_IO",
+  "health": {
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_windows_vm": "147/147 PASS",
+    "patrol": "ALLOW",
+    "predecessor_regression": "RED: Io(ENOENT) instead of lexical rejection",
+    "rustfmt": "PASS",
+    "strict_clippy": "PASS",
+    "windows_guest": "NOT_PROVEN"
+  },
+  "implementation_after_head": "5a9db98433d75a6fe4239eb37c37becfc4533d3c",
+  "material_movement": "SOURCE_IMPLEMENTATION_PUBLISHED",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/181",
+  "production_touched": false,
+  "project": "prime-windows",
+  "protected_merge": false,
+  "schedules_changed": false,
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "C",
+  "stolen_device_touched": false,
+  "time_utc": "2026-11-01T12:24:55Z",
+  "worker_action": "Patrol-approved project-owned isolated W8 Rust implementation, RED/GREEN native proof, non-force push and draft review PR",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-runtime-lexical-shift-c-20261101"
+}

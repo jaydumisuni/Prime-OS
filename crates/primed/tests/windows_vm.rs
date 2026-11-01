@@ -1749,6 +1749,57 @@ fn qemu_plan_rejects_preexisting_agent_socket_nodes() {
 }
 
 #[test]
+fn qemu_plan_rejects_lexical_runtime_aliases_before_overlay_io() {
+    // The manifest path must be rejected on its spelling alone. A missing
+    // overlay must not turn an ambiguous authority into an I/O error first.
+    let dir = private_tempdir();
+    let root = dir.path().to_string_lossy();
+    let candidates = [
+        (
+            format!("{root}/runtime/../other/overlay.qcow2"),
+            format!("{root}/runtime"),
+        ),
+        (
+            format!("{root}/runtime/./overlay.qcow2"),
+            format!("{root}/runtime"),
+        ),
+        (
+            format!("{root}//runtime/overlay.qcow2"),
+            format!("{root}/runtime"),
+        ),
+        (
+            format!("{root}/runtime/overlay.qcow2"),
+            format!("{root}/runtime/."),
+        ),
+        (
+            format!("{root}/runtime/overlay.qcow2"),
+            format!("{root}//runtime"),
+        ),
+        (
+            format!("{root}/runtime/overlay.qcow2"),
+            format!("{root}/runtime/"),
+        ),
+    ];
+    for (overlay, runtime) in candidates {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay.into(),
+            runtime_dir: runtime.into(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("runtime path is not lexically canonical"),
+            "expected pre-I/O lexical rejection, got {error}"
+        );
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_cross_session_overlay_and_traversal() {
     let dir = private_tempdir();
     let runtime = dir.path().join("session-a");
