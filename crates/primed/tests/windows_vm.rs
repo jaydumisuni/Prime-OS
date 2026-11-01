@@ -8165,3 +8165,53 @@ fn w8_runtime_authority_is_rejected_before_unrelated_qemu_io() {
         );
     }
 }
+
+#[test]
+fn w8_qemu_executable_lexical_aliases_fail_before_filesystem_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let root = dir.path();
+    let overlay = root.join("overlay.qcow2");
+    let runtime = root.join("runtime");
+    let cases = [
+        ("parent traversal", root.join("other/../qemu-missing")),
+        ("current directory", root.join("./qemu-missing")),
+        (
+            "doubled separator",
+            format!("{}//qemu-missing", root.display()).into(),
+        ),
+        (
+            "trailing separator",
+            format!("{}/qemu-missing/", root.display()).into(),
+        ),
+    ];
+    // A plain, missing executable must retain its ordinary filesystem error;
+    // lexical validation must not pretend that every absent QEMU is malformed.
+    let missing = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: root.join("qemu-missing"),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime.clone(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    })
+    .unwrap_err();
+    assert!(matches!(missing, WindowsVmError::Io(_)));
+
+    for (label, qemu_binary) in cases {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary,
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains("QEMU executable path is not lexically canonical")),
+            "{label}: reject QEMU executable aliases before filesystem I/O: {error}"
+        );
+    }
+}

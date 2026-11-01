@@ -1,0 +1,35 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "E",
+  "project": "prime-windows",
+  "frontier": "W8_QEMU_EXECUTABLE_LEXICAL_AUTHORITY_BEFORE_FILESYSTEM_IO",
+  "time_utc": "2026-11-01T22:54:38.241910+00:00",
+  "before_head": "e38e8e0afb3c2b92e9412af182fbf6e0b22cca5c",
+  "before_state": "PR192 accepted QEMU executable dot/parent/doubled/trailing separator aliases until filesystem canonicalize; missing QEMU returned ENOENT instead of InvalidPlan",
+  "implementation_head": "9113aedd449f1b2737f5c7f6c2a8743fc46adc24",
+  "after_state": "QEMU executable lexical aliases rejected as InvalidPlan before QEMU filesystem I/O; plain missing executable preserves Io error",
+  "worker_action": "Patrol ALLOW; isolated Prime-OS worktree; test-first RED; bounded Rust source and 4 negative plus 1 positive control; focused and 153 native tests; strict Clippy; rustfmt",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-qemu-lexical-shift-e-20261102-0048",
+  "branch": "supervisor/shift-e-w8-qemu-lexical-20261102-0048",
+  "proof": {
+    "patrol": "ALLOW registered Prime-OS",
+    "predecessor": "RED parent traversal returned ENOENT",
+    "focused": "1/1 PASS with 4 negative and 1 positive control",
+    "native": "153/153 PASS",
+    "rustfmt": "PASS",
+    "strict_clippy": "PASS",
+    "diff_check": "PASS",
+    "hosted": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "windows_guest_gates_7_9": "HOLD"
+  },
+  "dependency_linkage": {
+    "predecessor": "Prime-OS PR192",
+    "control": "Cookpit PR102 guarded; no live rebound",
+    "downstream": "W8 Windows guest Gates 7-9 HOLD; W9 unauthorized"
+  },
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "disposition": "MATERIAL_SOURCE_COMMITTED_NATIVE_PASS_REVIEW_PENDING"
+}
