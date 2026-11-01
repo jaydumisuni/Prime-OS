@@ -265,6 +265,44 @@ fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
 }
 
 #[test]
+fn guest_definition_rejects_oversized_path_component_before_filesystem_access() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let mut guest = definition(
+        &dir.path().join("missing-windows.qcow2"),
+        b"nonempty-guest-image",
+    );
+    let root = dir.path().display();
+
+    // A path shorter than PATH_MAX can still exceed Linux NAME_MAX in one
+    // component. The guard measures UTF-8 bytes, not Unicode characters.
+    for component in ["a".repeat(256), "é".repeat(128)] {
+        guest.base_image = format!("{root}/{component}");
+        assert!(guest.base_image.len() < 4096);
+        let error = validate_guest_definition(&guest).unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidGuest(_)),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("component exceeds byte limit"),
+            "{error}"
+        );
+    }
+
+    // At the component boundary, nonexistent files must continue into the
+    // existing filesystem custody check, not be rejected by this preflight.
+    for component in ["a".repeat(255), "é".repeat(127)] {
+        guest.base_image = format!("{root}/{component}");
+        assert!(matches!(
+            validate_guest_definition(&guest),
+            Err(WindowsVmError::Io(_))
+        ));
+    }
+}
+
+#[test]
 fn guest_definition_rejects_noncanonical_guest_identity() {
     let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
