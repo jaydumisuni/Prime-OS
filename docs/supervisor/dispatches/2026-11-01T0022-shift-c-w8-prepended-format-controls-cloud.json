@@ -1,0 +1,61 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "C",
+  "project": "prime-windows",
+  "frontier": "W8 source-only proof-root and guest-image pathname identity: reject script-specific prepended format controls",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-c-w8-prepended-format-controls-20261101-0224",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/164",
+  "before_head": "b0df0fb075be6e36cb90e67bf0526ae69edc347b",
+  "implementation_after_head": "0f5679950627f06504cc0a699f9afb2132371d74",
+  "material_movement": {
+    "status": "PUBLISHED_SOURCE_DELTA",
+    "time_utc": "2026-11-01T00:22:35Z",
+    "implementation_commits": 2,
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "delta": "64 additions, 0 deletions"
+  },
+  "worker_action": "Shift C authenticated GitHub cloud fallback; add bounded script-format Unicode guard and adversarial source tests at W8 proof-root and guest-image boundaries",
+  "before_after": {
+    "head_before": "b0df0fb075be6e36cb90e67bf0526ae69edc347b",
+    "source_head_after": "0f5679950627f06504cc0a699f9afb2132371d74",
+    "compare": "2 ahead, 0 behind; two Rust files"
+  },
+  "engineering_health": {
+    "git_ancestry": "PASS: exact GitHub comparison",
+    "source_test_readback": "PASS: exact GitHub source/test ref readback",
+    "isolated_unicode_model": "PASS: 9/9 Unicode Cf negative samples; 1/1 visible Arabic letter positive sample",
+    "patrol": "UNVERIFIED: KRATOS terminal internal error",
+    "native_cargo": "UNVERIFIED",
+    "rustfmt_clippy": "UNVERIFIED",
+    "hosted_exact_head_ci": "PENDING",
+    "independent_review": "PENDING",
+    "guest_physical": "NOT_PROVEN",
+    "oracle_roster": "UNVERIFIED: internal error"
+  },
+  "dependency_linkage": {
+    "parent_pr": "https://github.com/jaydumisuni/Prime-OS/pull/162",
+    "w8_guest_gates": "7-9 HOLD: authorized digest-bound Windows guest absent",
+    "w9": "NOT_AUTHORIZED",
+    "cookpit_control_binding": "GUARDED_REVIEW_REQUIRED",
+    "kratos_local_attention": "PENDING_RECONCILIATION",
+    "kratos_local_dispatch": "PENDING_RECONCILIATION"
+  },
+  "health": "SOURCE_CUSTODY_VERIFIED; NATIVE_PROOF_UNVERIFIED",
+  "movement": "PUBLISHED_SOURCE_DELTA",
+  "disposition": "SOURCE_ONLY_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false
+}
