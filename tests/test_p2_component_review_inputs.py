@@ -1086,6 +1086,31 @@ def test_rejects_format_control_symbolic_head_before_ref_path_probe(
     assert probed_refs == ["refs/heads/" + visible]
 
 
+def test_rejects_git_accepted_unicode_blank_ref_aliases(tmp_path: Path) -> None:
+    """Git-valid blank-looking refs must not become P2 review authority."""
+    import pytest
+
+    blanks = ("\u2800", "\u00a0", "\u2007", "\u202f", "\u3000")
+    for index, character in enumerate(blanks):
+        case = tmp_path / f"blank-{index}"
+        case.mkdir()
+        root, head = sample_repo(case)
+        ref = f"refs/heads/review{character}branch"
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="Git control pathname"):
+            module.build_manifest(root, head)
+
+    # Ordinary ASCII spaces in a worktree pathname are not a hidden alias.
+    case = tmp_path / "ordinary-space"
+    case.mkdir()
+    root, head = sample_repo(case)
+    spaced = root.with_name("p2 review root")
+    root.rename(spaced)
+    assert module.build_manifest(spaced, head)["candidate_head"] == head
+
+
 def test_rejects_git_accepted_hidden_symbolic_ref_aliases(tmp_path: Path) -> None:
     """A Git-valid invisible branch scalar must not become review authority."""
     import pytest
