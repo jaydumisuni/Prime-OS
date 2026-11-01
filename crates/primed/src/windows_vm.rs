@@ -1340,6 +1340,14 @@ pub fn validate_guest_definition(
             "unbound or empty guest image digest",
         ));
     }
+    // Linux pathname syscalls admit at most 4095 non-NUL bytes (PATH_MAX
+    // includes the terminating NUL). Reject oversized manifest-controlled
+    // strings before constructing a path or touching the filesystem.
+    if definition.base_image.len() >= 4096 {
+        return Err(WindowsVmError::InvalidGuest(
+            "base image path exceeds byte limit",
+        ));
+    }
     let image = PathBuf::from(&definition.base_image);
     let worker_uid = unsafe { libc::geteuid() };
     if !image.is_absolute() {
