@@ -269,7 +269,10 @@ fn guest_definition_rejects_oversized_path_component_before_filesystem_access() 
     use primed::windows_vm::WindowsVmError;
 
     let dir = private_tempdir();
-    let mut guest = definition(&dir.path().join("missing-windows.qcow2"), b"nonempty-guest-image");
+    let mut guest = definition(
+        &dir.path().join("missing-windows.qcow2"),
+        b"nonempty-guest-image",
+    );
     let root = dir.path().display();
 
     // A path shorter than PATH_MAX can still exceed Linux NAME_MAX in one
@@ -278,8 +281,14 @@ fn guest_definition_rejects_oversized_path_component_before_filesystem_access() 
         guest.base_image = format!("{root}/{component}");
         assert!(guest.base_image.len() < 4096);
         let error = validate_guest_definition(&guest).unwrap_err();
-        assert!(matches!(&error, WindowsVmError::InvalidGuest(_)), "{error}");
-        assert!(error.to_string().contains("component exceeds byte limit"), "{error}");
+        assert!(
+            matches!(&error, WindowsVmError::InvalidGuest(_)),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("component exceeds byte limit"),
+            "{error}"
+        );
     }
 
     // At the component boundary, nonexistent files must continue into the
