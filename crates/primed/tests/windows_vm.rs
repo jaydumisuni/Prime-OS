@@ -231,6 +231,36 @@ fn guest_definition_rejects_lexically_aliased_canonical_image_paths() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn guest_definition_rejects_private_use_image_path_identities() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let bytes = b"prime-w8-private-use-path-identity";
+
+    // Private-use characters can be real Linux filename bytes, but their
+    // rendered glyphs are font-dependent and cannot bind review identity.
+    for marker in ['\u{e000}', '\u{f0000}', '\u{100000}'] {
+        let image = dir.path().join(format!("windows-{marker}.qcow2"));
+        private_guest_image(&image, bytes);
+        let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidGuest(_)),
+            "private-use path was admitted: {marker:?}; {error}"
+        );
+        assert!(
+            error.to_string().contains("Unicode controls"),
+            "{error}"
+        );
+    }
+
+    // Precomposed visible Unicode remains an ordinary filename identity.
+    let visible = dir.path().join("windows-é.qcow2");
+    private_guest_image(&visible, bytes);
+    assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+}
+
 #[test]
 fn guest_definition_rejects_oversized_image_path_before_filesystem_access() {
     use primed::windows_vm::WindowsVmError;
