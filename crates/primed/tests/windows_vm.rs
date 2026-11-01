@@ -249,10 +249,7 @@ fn guest_definition_rejects_private_use_image_path_identities() {
             matches!(&error, WindowsVmError::InvalidGuest(_)),
             "private-use path was admitted: {marker:?}; {error}"
         );
-        assert!(
-            error.to_string().contains("Unicode controls"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("Unicode controls"), "{error}");
     }
 
     // Precomposed visible Unicode remains an ordinary filename identity.
