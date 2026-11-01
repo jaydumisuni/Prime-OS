@@ -8093,3 +8093,61 @@ fn w8_plan_path_bytes_are_preflighted_before_unrelated_qemu_io() {
         );
     }
 }
+
+#[test]
+fn w8_runtime_authority_is_rejected_before_unrelated_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let root = dir.path();
+    let missing_qemu = root.join("qemu-not-installed");
+    let overlay = root.join("overlay.qcow2");
+    let runtime = root.join("runtime");
+    let cases = [
+        (
+            "overlay invisible",
+            root.join("overlay\u{202e}.qcow2"),
+            runtime.clone(),
+            "runtime path contains",
+        ),
+        (
+            "runtime option delimiter",
+            overlay.clone(),
+            root.join("runtime,hostfwd"),
+            "runtime path contains",
+        ),
+        (
+            "overlay traversal",
+            root.join("other/../overlay.qcow2"),
+            runtime.clone(),
+            "runtime path is not lexically canonical",
+        ),
+        (
+            "runtime doubled separator",
+            overlay.clone(),
+            format!("{}//runtime", root.display()).into(),
+            "runtime path is not lexically canonical",
+        ),
+        (
+            "runtime relative",
+            overlay.clone(),
+            "relative-runtime".into(),
+            "runtime paths are not absolute",
+        ),
+    ];
+    for (label, overlay_image, runtime_dir, expected) in cases {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: missing_qemu.clone(),
+            overlay_image,
+            runtime_dir,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains(expected)),
+            "{label}: expected {expected} before opening unrelated QEMU, got {error}"
+        );
+    }
+}

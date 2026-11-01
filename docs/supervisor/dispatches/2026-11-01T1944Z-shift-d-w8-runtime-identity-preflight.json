@@ -1,0 +1,47 @@
+{
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "D",
+  "project": "prime-windows",
+  "project_owner": "jaydumisuni/Prime-OS",
+  "frontier": "W8_RUNTIME_IDENTITY_PREFLIGHT_BEFORE_QEMU_IO",
+  "time_utc": "2026-11-01T19:44:04Z",
+  "before_head": "cbb08dec469ea908e8a8be24e5cb703828e51a83",
+  "after_implementation_head": "9e145429e2faccab2c6f66218221ce8232638bb2",
+  "before_state": "PR188 checks overlay/runtime text, lexical and absolute identities after QEMU canonicalize/open; invalid runtime with missing QEMU returns raw ENOENT",
+  "after_state": "Existing runtime identity checks moved before QEMU filesystem I/O; invalid inputs rejected as InvalidPlan before unrelated missing QEMU",
+  "candidate_branch": "supervisor/shift-d-w8-runtime-identity-preflight-20261101-2136",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-runtime-identity-preflight-shift-d-20261101-2136",
+  "candidate_pr": "https://github.com/jaydumisuni/Prime-OS/pull/190",
+  "worker_action": "Patrol ALLOW; five-case RED; bounded Rust source/test correction; 152 native tests, fmt/clippy/diff; non-force push and draft PR",
+  "material_delta": {
+    "source_head_advanced": true,
+    "files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "adversarial_cases": 5
+  },
+  "engineering_health": {
+    "patrol": "ALLOW",
+    "predecessor": "RED raw ENOENT",
+    "focused": "1/1 PASS five cases",
+    "native": "152/152 PASS",
+    "clippy": "PASS strict",
+    "format": "PASS",
+    "diff": "PASS",
+    "hosted_ci": "UNVERIFIED_PENDING",
+    "independent_review": "PENDING",
+    "guest_gates_7_9": "HOLD"
+  },
+  "dependency_linkage": {
+    "stacked_predecessor": "Prime-OS PR188 exact cbb08de",
+    "control": "Cookpit PR102 guarded draft pending exact-head update; no live rebind",
+    "downstream": "W8 guest Gates7-9 HOLD; W9 unauthorized"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_152_PASS_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedule_modified": false,
+  "physical_guest_proof": false
+}
