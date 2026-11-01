@@ -2917,3 +2917,43 @@ def test_git_control_path_rejects_lexical_alias_records(
 
     monkeypatch.setattr(module, "git", original_git)
     assert module.git_control_path(root, "index") == root / ".git" / "index"
+
+
+def test_rejects_git_accepted_noncanonical_linked_control_pointer_spelling(
+    tmp_path: Path,
+) -> None:
+    """Git may normalize alias bytes that review custody must reject."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    linked = tmp_path / "linked-review"
+    git(root, "worktree", "add", "-q", "-b", "linked-review", str(linked), head)
+    pointer = linked / ".git"
+    original_pointer = pointer.read_bytes()
+    assert b"/worktrees/" in original_pointer
+    gitdir = Path(original_pointer.split(b"gitdir: ", 1)[1].strip().decode())
+    commondir = gitdir / "commondir"
+    original_common = commondir.read_bytes()
+    assert module.build_manifest(linked, head)["candidate_head"] == head
+
+    cases = (
+        ("gitdir doubled separator", pointer,
+         original_pointer.replace(b"/worktrees/", b"//worktrees/", 1)),
+        ("gitdir dot segment", pointer,
+         original_pointer.replace(b"/worktrees/", b"/./worktrees/", 1)),
+        ("commondir doubled separator", commondir,
+         original_common.replace(b"/", b"//", 1)),
+        ("commondir dot segment", commondir,
+         original_common.replace(b"/", b"/./", 1)),
+    )
+    for label, path, altered in cases:
+        original = original_pointer if path == pointer else original_common
+        assert altered != original, label
+        try:
+            path.write_bytes(altered)
+            assert git(linked, "rev-parse", "HEAD") == head, label
+            with pytest.raises(module.ReviewInputError, match="gitdir|commondir"):
+                module.build_manifest(linked, head)
+        finally:
+            path.write_bytes(original)
+    assert module.build_manifest(linked, head)["candidate_head"] == head
