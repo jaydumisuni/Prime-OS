@@ -1,0 +1,70 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "B",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T06:18:51Z",
+  "material_movement_at_utc": "2026-11-01T06:18:51Z",
+  "frontier": "Prime P2 Git metadata pathname raw lexical framing",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "main_commit": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input custody",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 170,
+    "head": "3e87131901edb0be33be48cbd5f31b8b9dea6695",
+    "state": "Git --git-path output decoded to Path() without checking raw lexical normalization; repeated separators and dot components accepted"
+  },
+  "worker_action": "Shift B cloud-only GitHub source correction; KRATOS Oracle terminal unavailable (internal error), native Patrol unavailable",
+  "after": {
+    "source_commit": "090e0ac60f9644b6ea55c5575966a08ff377ee2d",
+    "test_commit": "c243f7a3c1d5a36fc38118000f83ffea27dec060",
+    "branch": "supervisor/shift-b-p2-git-control-path-lexical-20261101-0812",
+    "pr": 172,
+    "state": "Reject noncanonical Git metadata pathname lexical aliases before Path normalization; six adversarial regressions and canonical positive controls"
+  },
+  "proof": {
+    "source_blob": "18b5e9af7f353a0506901a26f75756156cccc9e7",
+    "test_blob": "a1518c039749f8e49b821a69c6bed0492e2528f5",
+    "github_compare": "2 ahead, 0 behind exact predecessor before receipt",
+    "disposable_git": "Canonical .git/index LF output observed; six lexical aliases rejected by isolated Python predicate",
+    "regressions_added": 6,
+    "project_native_pytest": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "hosted_ci": "NOT_YET_CONFIRMED",
+    "independent_review": "PENDING",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": {
+    "state": "SOURCE_PROOF_VERIFIED_NATIVE_QUALIFICATION_OPEN",
+    "proof_is_not_implementation_movement": true
+  },
+  "implementation_movement": {
+    "state": "MATERIAL_SOURCE_DELTA_PUBLISHED",
+    "before_head": "3e87131901edb0be33be48cbd5f31b8b9dea6695",
+    "after_head": "c243f7a3c1d5a36fc38118000f83ffea27dec060"
+  },
+  "local_reconciliation": {
+    "attention_path": "/home/kratos/.local/state/ttg-cookpit/supervisors",
+    "required": "When KRATOS returns: fetch cloud candidate, run Patrol/preflight and focused pytest on actual Prime P2 workspace; reconcile local dispatch/attention without duplicate PASS"
+  },
+  "protected": {
+    "production_touched": false,
+    "stolen_device_touched": false,
+    "protected_merge": false,
+    "oracle_runtime_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "disposition": "SOURCE_IMPLEMENTATION_PUBLISHED_NATIVE_QUALIFICATION_PENDING"
+}
