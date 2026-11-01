@@ -601,6 +601,16 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let unicode_noncharacter = value.chars().any(|character| {
         matches!(character, '\u{fdd0}'..='\u{fdef}') || (character as u32 & 0xffff) >= 0xfffe
     });
+    // Private-use scalars have font-dependent glyph identities. Two hosts can
+    // render the same pathname bytes differently (or as blank boxes), making
+    // guest-image authority and VM proof paths unreviewable across machines.
+    // Deny the BMP and both supplementary private-use planes before I/O.
+    let private_use_scalar = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}'
+        )
+    });
     // These visible Unicode glyphs resemble filesystem separators in review
     // logs but are distinct pathname bytes. A proof reviewer must not mistake
     // a single path component for a hierarchy (or vice versa).
@@ -625,6 +635,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     parser_delimiter
         || confusable_path_separator
         || unicode_noncharacter
+        || private_use_scalar
         || bidi_control
         || invisible_control
         || unicode_line_break
