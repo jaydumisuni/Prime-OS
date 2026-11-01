@@ -1,0 +1,61 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "B",
+  "project": "prime-windows",
+  "frontier": "W8 non-authorizing guest-image lexical identity preflight",
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "branch": "supervisor/shift-b-w8-host-preflight-before-prefix-20261101-0412",
+  "pr_url": "https://github.com/jaydumisuni/Prime-OS/pull/167",
+  "before_head": "15b67acbd0fa6960cb0228c5bdbcef19d8efc54a",
+  "implementation_after_head": "580698b90fb0d39bf592d3c11b09286b4958c6fb",
+  "material_movement": {
+    "status": "PUBLISHED_SOURCE_DELTA",
+    "time_utc": "2026-11-01T02:12:32Z",
+    "source_commit": "1996c3f9af47a32d3135db2b5255967c1abd7423",
+    "test_commit": "580698b90fb0d39bf592d3c11b09286b4958c6fb",
+    "changed_files": [
+      "crates/primed/src/windows_vm.rs",
+      "crates/primed/tests/windows_vm.rs"
+    ],
+    "delta": "43 insertions, 0 deletions; 3 negative lexical alias cases plus canonical positive control"
+  },
+  "worker_action": "Shift B authenticated GitHub cloud fallback; add exact lexical path guard to W8 guest-image definition and project-owned regression tests; no KRATOS worker lease asserted",
+  "before_after": {
+    "head_before": "15b67acbd0fa6960cb0228c5bdbcef19d8efc54a",
+    "source_head_after": "580698b90fb0d39bf592d3c11b09286b4958c6fb",
+    "compare": "2 ahead, 0 behind; two Prime-owned Rust files"
+  },
+  "engineering_health": {
+    "git_ancestry": "PASS: exact GitHub compare",
+    "source_test_readback": "PASS: exact GitHub source/test blobs",
+    "rust_path_semantics": "SPEC_VERIFIED: std::path::Path PartialEq normalizes redundant separators and non-leading dot components (https://doc.rust-lang.org/stable/std/path/)",
+    "patrol": "UNVERIFIED: KRATOS Oracle terminal internal error",
+    "native_cargo": "UNVERIFIED",
+    "rustfmt_clippy": "UNVERIFIED",
+    "hosted_exact_head_ci": "NO_RUNS_RETURNED",
+    "independent_review": "PENDING: 0 submissions",
+    "guest_physical": "NOT_PROVEN",
+    "oracle_roster": "UNVERIFIED: internal error"
+  },
+  "dependency_linkage": {
+    "parent_pr": "https://github.com/jaydumisuni/Prime-OS/pull/164",
+    "w8_guest_gates": "7-9 HOLD: authorized digest-bound Windows guest absent",
+    "w9": "NOT_AUTHORIZED",
+    "kratos_local_attention": "PENDING_RECONCILIATION",
+    "kratos_local_dispatch": "PENDING_RECONCILIATION"
+  },
+  "health": "SOURCE_CUSTODY_VERIFIED; NATIVE_PROOF_UNVERIFIED",
+  "movement": "PUBLISHED_SOURCE_DELTA",
+  "disposition": "SOURCE_ONLY_REVIEW_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_merge": false,
+  "force_push": false,
+  "schedules_changed": false
+}
