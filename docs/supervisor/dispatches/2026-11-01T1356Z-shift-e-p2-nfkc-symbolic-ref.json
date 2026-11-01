@@ -1,0 +1,60 @@
+{
+  "after": {
+    "branch": "supervisor/shift-e-p2-nfkc-symbolic-20261101-1548",
+    "pr": "https://github.com/jaydumisuni/Prime-OS/pull/182",
+    "source_head": "760967c91d45eb53b8adc46edb5fe18684a69e2b",
+    "state": "NFKC-stable symbolic HEAD required before Git ref metadata-path inspection; hidden blank diagnostic preserved"
+  },
+  "before": {
+    "head": "786b7f9ef4cd2e1091d55bf4632af1ace2b8f65a",
+    "pr": "https://github.com/jaydumisuni/Prime-OS/pull/180",
+    "state": "NFC-only symbolic HEAD review guard admits Git-valid NFKC compatibility aliases"
+  },
+  "canonical_registry": {
+    "enabled_project": true,
+    "head": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "oracle_phase27_prep_enabled": false,
+    "ref": "origin/main",
+    "repository": "jaydumisuni/cookpit"
+  },
+  "dependency_linkage": {
+    "blocked_milestone": "pinned-release consumption",
+    "blocked_project": "Origins Phase 8B",
+    "boundary": "FAIL_CLOSED",
+    "safe_upstream": "Prime P2 component/package review-input custody"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+  "engineering_health": {
+    "focused_regression": "1/1 PASS after patch",
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_review_inputs": "109/109 PASS",
+    "not_movement": true,
+    "patrol": "ALLOW project Prime-OS",
+    "physical": "NOT_PROVEN",
+    "python_compile": "PASS",
+    "reproduction": "RED: Git-valid compatibility alias admitted before patch"
+  },
+  "frontier": "Prime P2 NFKC-stable symbolic Git HEAD review-input identity",
+  "implementation_movement": {
+    "after_head": "760967c91d45eb53b8adc46edb5fe18684a69e2b",
+    "at_utc": "2026-11-01T13:55:25Z",
+    "before_head": "786b7f9ef4cd2e1091d55bf4632af1ace2b8f65a",
+    "kind": "MATERIAL_SOURCE_HEAD_ADVANCED",
+    "material": true
+  },
+  "observed_at_utc": "2026-11-01T13:55:57Z",
+  "project": "origins-phase8b",
+  "protected": {
+    "oracle_runtime_touched": false,
+    "production_touched": false,
+    "protected_merge": false,
+    "stolen_device_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "schema": "ttg.cookpit.supervisor.project-dispatch.v1",
+  "shift": "E",
+  "upstream_project": "Prime-OS",
+  "worker_action": "Shift E isolated Prime project worktree: reproduced defect, patched Python review guard, added real-Git regression, committed and nonforce pushed source"
+}
