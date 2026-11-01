@@ -36,6 +36,13 @@ class ReviewInputError(Exception):
     pass
 
 
+def canonical_git_oid(raw: bytes, label: str) -> str:
+    """Require exactly one lowercase SHA-1 object ID and one Git framing LF."""
+    if re.fullmatch(rb"[0-9a-f]{40}\n", raw) is None:
+        raise ReviewInputError(f"invalid {label} Git object identity")
+    return raw[:-1].decode("ascii")
+
+
 def git(repo: Path, *args: str) -> bytes:
     # A pinned Git executable is insufficient if the child inherits loader
     # controls (LD_PRELOAD/LD_AUDIT/LD_DEBUG), Git configuration locations,
@@ -76,7 +83,7 @@ def git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def require_clean_index(repo: Path, head: str, relative: str) -> None:
+def require_clean_index(repo: Path, head: str, relative: str) -> str:
     """Check staged identity against HEAD without invoking clean filters."""
     try:
         tree = git(repo, "ls-tree", head, "--", relative).decode().splitlines()
@@ -90,6 +97,7 @@ def require_clean_index(repo: Path, head: str, relative: str) -> None:
         if (kind != "blob" or tree_path != relative or index_path != relative
                 or stage != "0" or tree_mode != index_mode or tree_blob != index_blob):
             raise ValueError("index differs from committed tree")
+        return tree_blob
     except (ValueError, UnicodeDecodeError):
         raise ReviewInputError(f"review input has local changes: {relative}") from None
 
@@ -669,7 +677,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     objects_path = git_control_path(root, "objects")
     require_no_object_alternates(alternates_path)
     object_epoch = capture_git_object_epoch(objects_path)
-    head = git(repo, "rev-parse", "HEAD").decode().strip()
+    head = canonical_git_oid(git(repo, "rev-parse", "HEAD"), "HEAD")
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
     entries = []
@@ -720,10 +728,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
                 or stat_identity(before) != stat_identity(after)):
             raise ReviewInputError(f"review input changed during read: {relative}")
-        require_clean_index(root, head, relative)
+        tree_blob = require_clean_index(root, head, relative)
         if committed != working:
             raise ReviewInputError(f"review input has local changes: {relative}")
-        blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
+        blob = canonical_git_oid(
+            git(root, "rev-parse", f"{head}:{relative}"), "review input blob"
+        )
+        if blob != tree_blob:
+            raise ReviewInputError(f"review input blob identity differs from tree: {relative}")
         verified_inputs.append((relative, stat_identity(after)))
         entries.append({
             "path": relative,
@@ -784,7 +796,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # review evidence despite an intervening HEAD or worktree change.
     for relative, _ in verified_inputs:
         require_clean_index(root, head, relative)
-    if git(root, "rev-parse", "HEAD").decode().strip() != head:
+    if canonical_git_oid(git(root, "rev-parse", "HEAD"), "HEAD") != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
     # No Git subprocesses follow this point. Recheck every admitted input's
     # filesystem identity after all final Git probes have completed.
