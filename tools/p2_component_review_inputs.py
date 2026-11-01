@@ -165,7 +165,11 @@ def has_hidden_git_path_scalar(value: str) -> bool:
                              0x2800, 0x3164, 0xFFA0)
                 or 0x180B <= point <= 0x180D
                 or 0xFE00 <= point <= 0xFE0F
-                or 0xE0100 <= point <= 0xE01EF):
+                or 0xE0100 <= point <= 0xE01EF
+                # Unicode noncharacters are valid UTF-8 and Git ref bytes,
+                # but are reserved, non-renderable review identities.
+                or 0xFDD0 <= point <= 0xFDEF
+                or (point & 0xFFFE) == 0xFFFE):
             return True
     return False
 

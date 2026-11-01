@@ -1215,6 +1215,41 @@ def test_rejects_git_accepted_hidden_symbolic_ref_aliases(tmp_path: Path) -> Non
         assert module.build_manifest(root, head)["candidate_head"] == head
 
 
+def test_rejects_git_accepted_unicode_noncharacter_symbolic_refs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Reserved noncharacters must never become visible review identities."""
+    import pytest
+
+    root, head = sample_repo(tmp_path)
+    original_control_path = module.git_control_path
+    probed_refs = []
+
+    def traced_control_path(repo: Path, name: str) -> Path:
+        if name.startswith("refs/heads/"):
+            probed_refs.append(name)
+        return original_control_path(repo, name)
+
+    monkeypatch.setattr(module, "git_control_path", traced_control_path)
+    # Git accepts these noncharacters across the BMP and supplementary
+    # planes, but their rendering is not a stable review authority.
+    for point in (0xFDD0, 0xFDEF, 0xFFFE, 0xFFFF, 0x1FFFE, 0x10FFFF):
+        ref = f"refs/heads/review{chr(point)}branch"
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert git(root, "rev-parse", "HEAD") == head
+        with pytest.raises(module.ReviewInputError, match="Git control pathname"):
+            module.build_manifest(root, head)
+        assert not probed_refs, "noncharacter reached metadata-path inspection"
+
+    for branch in ("review-caf\u00e9", "review-\u6f22"):
+        ref = "refs/heads/" + branch
+        git(root, "update-ref", ref, head)
+        git(root, "symbolic-ref", "HEAD", ref)
+        assert module.build_manifest(root, head)["candidate_head"] == head
+        assert probed_refs[-1] == ref
+
+
 def test_rejects_ambiguous_symbolic_head_command_framing(
     tmp_path: Path, monkeypatch,
 ) -> None:
