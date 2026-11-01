@@ -4450,6 +4450,7 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
     for name in [
         "guest\u{202e}image.qcow2",   // Bidirectional display override.
         "guest\u{200b}image.qcow2",   // Zero-width path alias.
+        "guest\u{2d7f}image.qcow2",   // Tifinagh default-ignorable joiner.
         "guest\u{1160}image.qcow2",   // Invisible Hangul Jungseong filler.
         "guest\u{ffa0}image.qcow2",   // Halfwidth Hangul filler.
         "guest\u{2800}image.qcow2",   // Braille blank disguises path identity.
@@ -4487,6 +4488,9 @@ fn guest_definition_rejects_disguised_unicode_image_path_authority() {
     let visible = dir.path().join("caf\u{00e9}-guest.qcow2");
     private_guest_image(&visible, bytes);
     assert!(validate_guest_definition(&definition(&visible, bytes)).is_ok());
+    let visible_tifinagh = dir.path().join("guest-\u{2d30}.qcow2");
+    private_guest_image(&visible_tifinagh, bytes);
+    assert!(validate_guest_definition(&definition(&visible_tifinagh, bytes)).is_ok());
 }
 
 #[cfg(unix)]
@@ -7841,6 +7845,7 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
         ("arabic-letter-mark", "\u{061c}"),
         ("deprecated-symmetric-swap", "\u{206a}"),
         ("soft-hyphen", "\u{00ad}"),
+        ("tifinagh-consonant-joiner", "\u{2d7f}"),
         ("hangul-choseong-filler", "\u{115f}"),
         ("hangul-jungseong-filler", "\u{1160}"),
         // Khmer inherent vowel signs have no standalone visible glyph; their
@@ -7925,6 +7930,9 @@ fn w8_runtime_paths_reject_bidi_and_invisible_controls_before_vm_plan() {
     let visible = dir.path().join("résumé");
     private_runtime_dir(&visible);
     assert!(vm_session_paths(&visible, "app", "session").is_ok());
+    let visible_tifinagh = dir.path().join("runtime-\u{2d30}");
+    private_runtime_dir(&visible_tifinagh);
+    assert!(vm_session_paths(&visible_tifinagh, "app", "session").is_ok());
     let overlay = visible.join("overlay.qcow2");
     private_overlay(&overlay);
     assert!(build_qemu_plan(&VmPlanRequest {
@@ -8114,6 +8122,12 @@ fn w8_runtime_authority_is_rejected_before_unrelated_qemu_io() {
             "runtime option delimiter",
             overlay.clone(),
             root.join("runtime,hostfwd"),
+            "runtime path contains",
+        ),
+        (
+            "runtime default-ignorable joiner",
+            overlay.clone(),
+            root.join("runtime\u{2d7f}"),
             "runtime path contains",
         ),
         (

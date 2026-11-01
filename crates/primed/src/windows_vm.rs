@@ -550,7 +550,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 | '\u{180b}'..='\u{180f}'
                 | '\u{0600}'..='\u{0605}' | '\u{06dd}' | '\u{070f}'
                 | '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{110bd}' | '\u{110cd}'
-                | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{3164}'
+                | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}'
+                | '\u{2d7f}' // Tifinagh consonant joiner is default-ignorable in path evidence.
+                | '\u{3164}'
                 | '\u{13430}'..='\u{1343f}' // Egyptian hieroglyph format controls alter proof rendering.
                 | '\u{1bca0}'..='\u{1bca3}' // Shorthand format controls are invisible.
                 | '\u{1d173}'..='\u{1d17a}' // Musical format controls hide in proof paths.
