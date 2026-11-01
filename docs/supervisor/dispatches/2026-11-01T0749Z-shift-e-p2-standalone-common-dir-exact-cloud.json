@@ -4,7 +4,7 @@
   "project": "origins-phase8b",
   "upstream_project": "Prime-OS",
   "observed_at_utc": "2026-11-01T07:49:34Z",
-  "material_movement_at_utc": "2026-11-01T07:48:00Z",
+  "material_movement_at_utc": "2026-11-01T07:49:14Z",
   "frontier": "Prime P2 standalone separate-gitdir common-directory exact control-record custody",
   "canonical_registry": {
     "repository": "jaydumisuni/cookpit",
@@ -70,5 +70,6 @@
     "oracle_runtime_touched": false,
     "supervisor_schedules_changed": false
   },
-  "disposition": "SOURCE_IMPLEMENTATION_PUBLISHED_NATIVE_QUALIFICATION_PENDING"
+  "disposition": "SOURCE_IMPLEMENTATION_PUBLISHED_NATIVE_QUALIFICATION_PENDING",
+  "material_movement_time_basis": "Verified draft PR #174 creation time; source/test commits already published"
 }
