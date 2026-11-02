@@ -1,0 +1,55 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "D",
+  "project": "prime-windows",
+  "frontier": "W8_FULLWIDTH_DOS_DEVICE_STEM_PATH_IDENTITY",
+  "observed_at_utc": "2026-11-02T20:34:54Z",
+  "before_head": "9cf70f1a6f9a5b2a4e737110a93c0f207f12db90",
+  "test_head": "6c3e78e31fd26a2a3fdce5da0b892c0d45dedf88",
+  "implementation_head": "b979767163629c5ac91f5ed65e9346ba04a56b00",
+  "candidate_branch": "supervisor/shift-d-w8-fullwidth-device-stems-20261102-2236",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/216",
+  "worker_action": "Authenticated GitHub source-only fallback; test-first fullwidth DOS-device-stem lexical guard in Prime-owned W8 workspace branch; KRATOS Oracle transport failed",
+  "before_state": "W8 lexical preflight rejects literal Windows reserved device stems but admits fullwidth letter/digit/dollar variants with equivalent reviewed DOS device identities",
+  "after_state": "W8 lexical preflight folds fullwidth ASCII only for reserved DOS device stem comparison across QEMU executable, overlay and runtime paths; internationalized non-device names remain accepted",
+  "source_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "proof": {
+    "canonical_cookpit_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "canonical_registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "exact_predecessor": "9cf70f1a6f9a5b2a4e737110a93c0f207f12db90",
+    "source_test_readback": "PASS exact GitHub source/test blobs",
+    "git_ancestry": "PASS 3 ahead 0 behind predecessor, 2 files only, +14/-2 source and +59 test lines",
+    "independent_python_lexical_model": "Before 0/8 aliases rejected; after 8/8 aliases rejected; 4/4 positive controls preserved; synthetic, not native Rust",
+    "regression_matrix": "24 negative field/alias combinations and 4 positive controls; native execution UNVERIFIED",
+    "intermediate_repair": "First implementation update expanded replacement string; corrected in later commit; only final exact-head diff is accepted",
+    "kratos_patrol": "UNVERIFIED_ORACLE_LIVE_INTERNAL_FAILURE",
+    "native_rust": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "hosted_exact_head": "NO_RUNS_OR_COMBINED_STATUSES_RETURNED",
+    "independent_review": "PENDING",
+    "windows_guest": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_ORACLE_LIVE_INTERNAL_FAILURE",
+    "local_dispatch_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "health": "CLOUD_SOURCE_READBACK_PASS_NATIVE_UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "dependency_linkage": {
+    "upstream": "Prime W8 VM fallback path identity",
+    "related": "Prime P2 fullwidth package path custody PR #215 separate authority",
+    "downstream": [
+      "Prime W9 TTG workload certification",
+      "Ptah integration"
+    ],
+    "external_gate": "authorized digest-bound Windows guest",
+    "admission_granted": false
+  },
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false,
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_STATIC_VERIFIED_NATIVE_UNVERIFIED_REVIEW_PENDING_GUEST_HOLD"
+}
