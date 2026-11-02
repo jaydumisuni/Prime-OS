@@ -541,6 +541,33 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let terminal_component_alias = value.split('/').any(|component| {
         !component.is_empty() && (component.ends_with('.') || component.ends_with(' '))
     });
+    // W8 launch/proof pathnames may be reviewed by Windows tooling even
+    // though QEMU runs on Linux. DOS device basenames (including an extension
+    // and superscript COM/LPT digits) and NTFS stream punctuation can name a
+    // different resource on Windows. Reject these before host filesystem I/O.
+    let windows_portability_alias = value.split('/').any(|component| {
+        if component.contains(':') {
+            return true;
+        }
+        let stem = component
+            .split('.')
+            .next()
+            .unwrap_or(component)
+            .trim_matches(' ')
+            .to_ascii_uppercase();
+        matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        ) || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+    });
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
@@ -659,6 +686,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     });
     parser_delimiter
         || terminal_component_alias
+        || windows_portability_alias
         || confusable_path_separator
         || unicode_noncharacter
         || private_use_scalar
