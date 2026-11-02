@@ -8277,3 +8277,83 @@ fn w8_ascii_backslash_path_authority_fails_before_qemu_io() {
         );
     }
 }
+
+#[test]
+fn w8_policy_preflight_precedes_unrelated_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    // No QEMU, overlay, or runtime directory is created: these invalid
+    // caller-owned policy inputs must be refused before any host I/O.
+    let baseline = VmPlanRequest {
+        qemu_binary: dir.path().join("missing-qemu"),
+        overlay_image: dir.path().join("missing-overlay.qcow2"),
+        runtime_dir: dir.path().join("missing-runtime"),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    assert!(
+        matches!(build_qemu_plan(&baseline), Err(WindowsVmError::Io(_))),
+        "a valid policy with a missing QEMU retains the host I/O error"
+    );
+
+    let cases: Vec<(&str, u32, u8, Vec<String>, &str)> = vec![
+        ("memory below minimum", 0, 2, vec![], "resource"),
+        ("memory above maximum", 32769, 2, vec![], "resource"),
+        ("zero vcpus", 2048, 0, vec![], "resource"),
+        ("too many vcpus", 2048, 17, vec![], "resource"),
+        (
+            "oversized USB allowlist",
+            2048,
+            2,
+            (1..=16)
+                .map(|device| format!("/dev/bus/usb/001/{device:03}"))
+                .collect(),
+            "capacity",
+        ),
+        (
+            "invalid USB node",
+            2048,
+            2,
+            vec!["/dev/bus/usb/001/000".to_owned()],
+            "invalid_usb",
+        ),
+        (
+            "duplicate USB authority",
+            2048,
+            2,
+            vec![
+                "/dev/bus/usb/001/018".to_owned(),
+                "/dev/bus/usb/001/018".to_owned(),
+            ],
+            "duplicate",
+        ),
+    ];
+    for (label, memory_mib, vcpus, nodes, expected) in cases {
+        let request = VmPlanRequest {
+            memory_mib,
+            vcpus,
+            usb_nodes: nodes.into_iter().map(Into::into).collect(),
+            ..baseline.clone()
+        };
+        let error = build_qemu_plan(&request).unwrap_err();
+        let rejected_as_policy = match expected {
+            "resource" => {
+                matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains("resource bounds"))
+            }
+            "capacity" => {
+                matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains("controller capacity"))
+            }
+            "invalid_usb" => matches!(&error, WindowsVmError::InvalidUsb(_)),
+            "duplicate" => {
+                matches!(&error, WindowsVmError::InvalidPlan(message) if message.contains("duplicate USB"))
+            }
+            _ => false,
+        };
+        assert!(
+            rejected_as_policy,
+            "{label}: policy must fail before missing QEMU I/O: {error}"
+        );
+    }
+}

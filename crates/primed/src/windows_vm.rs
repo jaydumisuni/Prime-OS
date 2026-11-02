@@ -1700,6 +1700,35 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "runtime path is not lexically canonical",
         ));
     }
+    // Resource and USB passthrough policy are caller-owned plan authority,
+    // not properties of QEMU or the overlay. Validate them after lexical
+    // pathname preflight but before any filesystem I/O: a missing QEMU must
+    // not conceal an invalid resource request or USB allowlist.
+    if !(512..=32768).contains(&request.memory_mib) || !(1..=16).contains(&request.vcpus) {
+        return Err(WindowsVmError::InvalidPlan("resource bounds exceeded"));
+    }
+
+    // The single qemu-xhci controller has bounded port capacity. Do not
+    // silently deduplicate an oversized caller allowlist into apparent authority.
+    if request.usb_nodes.len() > WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES {
+        return Err(WindowsVmError::InvalidPlan(
+            "USB passthrough allowlist exceeds controller capacity",
+        ));
+    }
+    let mut usb = Vec::new();
+    for node in &request.usb_nodes {
+        usb.push(parse_usb_node(node)?);
+    }
+    usb.sort_unstable();
+    // The W7 allowlist is explicit authority, not a bag of requested
+    // devices. Silently deduplicating a repeated node conceals malformed
+    // caller state and changes the approved request before QEMU planning.
+    if usb.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(WindowsVmError::InvalidPlan(
+            "duplicate USB passthrough node in allowlist",
+        ));
+    }
+
     let qemu = fs::canonicalize(&request.qemu_binary)?;
     if qemu.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
@@ -2087,31 +2116,6 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     // Rebind the validated header to its original inode and pathname before
     // any VM arguments are constructed.
     verify_overlay_stable(&request.overlay_image, &overlay_file, &overlay_meta)?;
-    if !(512..=32768).contains(&request.memory_mib) || !(1..=16).contains(&request.vcpus) {
-        return Err(WindowsVmError::InvalidPlan("resource bounds exceeded"));
-    }
-
-    // The single qemu-xhci controller has bounded port capacity. Do not
-    // silently deduplicate an oversized caller allowlist into apparent authority.
-    if request.usb_nodes.len() > WINDOWS_VM_MAX_USB_PASSTHROUGH_NODES {
-        return Err(WindowsVmError::InvalidPlan(
-            "USB passthrough allowlist exceeds controller capacity",
-        ));
-    }
-    let mut usb = Vec::new();
-    for node in &request.usb_nodes {
-        usb.push(parse_usb_node(node)?);
-    }
-    usb.sort_unstable();
-    // The W7 allowlist is explicit authority, not a bag of requested
-    // devices. Silently deduplicating a repeated node conceals malformed
-    // caller state and changes the approved request before QEMU planning.
-    if usb.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(WindowsVmError::InvalidPlan(
-            "duplicate USB passthrough node in allowlist",
-        ));
-    }
-
     let agent = request.runtime_dir.join("agent.sock");
     validate_agent_socket_path(&agent)?;
     // Reject an already-occupied agent socket path before handing it to QEMU.
