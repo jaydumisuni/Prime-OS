@@ -1437,7 +1437,23 @@ fn windows_nonportable_package_component(part: &[u8]) -> bool {
     // superscript 1/2/3 are also reserved COM/LPT suffixes on Windows.
     // This is a lexical check only: no Windows APIs or package I/O.
     let stem = part.split(|byte| *byte == b'.').next().unwrap_or_default();
-    let mut upper = stem.trim_ascii_end().to_vec();
+    // Only fold fullwidth ASCII letters, digits and '$' for the reserved
+    // device-name comparison. A broad NFKC conversion would unnecessarily
+    // reject unrelated international filenames and change path semantics.
+    let Ok(stem_text) = std::str::from_utf8(stem) else {
+        return true;
+    };
+    let folded_stem: String = stem_text
+        .chars()
+        .map(|ch| match ch {
+            '\u{ff10}'..='\u{ff19}'
+            | '\u{ff21}'..='\u{ff3a}'
+            | '\u{ff41}'..='\u{ff5a}'
+            | '\u{ff04}' => char::from_u32(ch as u32 - 0xfee0).unwrap_or(ch),
+            _ => ch,
+        })
+        .collect();
+    let mut upper = folded_stem.as_bytes().trim_ascii_end().to_vec();
     upper.make_ascii_uppercase();
     let name = upper.as_slice();
     name == b"CON"
@@ -3999,6 +4015,67 @@ mod tests {
             "console.primepkg", "Com10.primepkg", "LPT0.primepkg",
             "NULish.primepkg", "vendor release.v1 東京.primepkg",
         ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_fullwidth_windows_device_aliases_before_io() {
+        // Fullwidth ASCII letters, digits and dollar signs can make a
+        // Unix-only path look like a reserved DOS device in release evidence.
+        // Scope the rejection to reserved stems, not all fullwidth text.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-fullwidth-device-custody";
+        let signed = manifest(bytes);
+        for name in [
+            "ＣＯＮ.primepkg",
+            "ｃｏｍ１.primepkg",
+            "ＬＰＴ².primepkg",
+            "ＮＵＬ.txt",
+            "ＣＯＮＩＮ＄.txt",
+            "ＰＲＮ.txt",
+            "ＡＵＸ.txt",
+            "ＣＯＮＯＵＴ＄.txt",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in ["ＣＯＮ", "ｃｏｍ１", "ＬＰＴ²", "ＣＯＮＩＮ＄"] {
+            let parent = dir.path().join(name);
+            fs::create_dir(&parent).unwrap();
+            let path = parent.join("component.primepkg");
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in ["ＦＯＯ.primepkg", "ＣＯＮSOLE.primepkg", "東京.primepkg"] {
             let path = dir.path().join(name);
             fs::write(&path, bytes).unwrap();
             assert!(canonical_package_path_spelling(&path), "{name:?}");
