@@ -3872,6 +3872,12 @@ mod tests {
             "CON", "con.txt", "PrN.dat", "AUX", "NUL.primepkg",
             "COM1", "com9.log", "LPT1", "lpt9.txt",
             "CONIN$", "CONOUT$", "vendor:stream.primepkg",
+            // Windows can trim a leading space or spaces before a device
+            // extension; superscript digits are reserved COM/LPT suffixes.
+            " CON.txt", "  COM1.primepkg", "NUL .txt",
+            "COM1 .primepkg", "LPT9  .txt",
+            "COM¹.primepkg", "COM².primepkg", "COM³.primepkg",
+            "LPT¹.primepkg", "LPT².primepkg", "LPT³.primepkg",
             "vendor?release.primepkg", "vendor*release.primepkg",
             "vendor|release.primepkg", "vendor<release.primepkg",
             "vendor>release.primepkg", "vendor\"release.primepkg",
@@ -3900,7 +3906,10 @@ mod tests {
         }
         let ancestors = dir.path().join("ancestor");
         fs::create_dir(&ancestors).unwrap();
-        for name in ["CON", "NUL.txt", "COM1", "LPT9", "vendor:stream"] {
+        for name in [
+            "CON", "NUL.txt", "COM1", "LPT9", "vendor:stream",
+            " CON", "NUL .txt", "COM1 .primepkg", "COM¹", "LPT².txt",
+        ] {
             let parent = ancestors.join(name);
             fs::create_dir(&parent).unwrap();
             let path = parent.join("component.primepkg");
