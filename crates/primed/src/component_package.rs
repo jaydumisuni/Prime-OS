@@ -1463,6 +1463,15 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                             | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
                             | 0xE0000..=0xE0FFF
                     )
+                    // Unicode slash and backslash lookalikes can make two
+                    // different signed package paths appear to name the
+                    // same directory structure in audit/release evidence.
+                    || matches!(
+                        ch,
+                        '\u{2044}' | '\u{2215}' | '\u{2216}'
+                            | '\u{29f8}' | '\u{29f9}' | '\u{fe68}'
+                            | '\u{ff0f}' | '\u{ff3c}'
+                    )
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
@@ -3656,6 +3665,55 @@ mod tests {
         fs::write(&valid, bytes).unwrap();
         assert!(validate_package_path(&valid).is_ok());
         assert_eq!(sha256_file(&valid).unwrap(), manifest.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_unicode_separator_lookalikes_before_io() {
+        // These are legal Unix filename scalars but visually impersonate
+        // path separators in signed offline package custody evidence.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-separator-lookalike";
+        let signed = manifest(bytes);
+        for scalar in [
+            '\u{2044}', // fraction slash
+            '\u{2215}', // division slash
+            '\u{2216}', // set minus
+            '\u{29f8}', // big solidus
+            '\u{29f9}', // big reverse solidus
+            '\u{fe68}', // small reverse solidus
+            '\u{ff0f}', // fullwidth solidus
+            '\u{ff3c}', // fullwidth reverse solidus
+        ] {
+            let path = dir.path().join(format!("vendor{scalar}release.primepkg"));
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(
+                    validate_package_path(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "separator lookalike U+{:X} must not identify a signed package",
+                scalar as u32
+            );
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        let visible = dir.path().join("cafe\u{301} 東京.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
     }
 
     #[cfg(unix)]
