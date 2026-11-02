@@ -1433,6 +1433,9 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
     let raw = path.as_os_str().as_bytes();
     raw.first() == Some(&b'/')
         && raw.len() > 1
+        // Reject terminal control bytes and the Windows separator before
+        // filesystem I/O: both make package evidence path identity ambiguous.
+        && raw.iter().all(|byte| !byte.is_ascii_control() && *byte != b'\\')
         && raw[1..]
             .split(|byte| *byte == b'/')
             .all(|part| !part.is_empty() && part != b"." && part != b"..")
@@ -3569,6 +3572,56 @@ mod tests {
             result,
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_ambiguous_ascii_control_and_backslash_names() {
+        // Unix permits these bytes in filenames, but they are ambiguous in
+        // cross-platform package evidence, log lines, and displayed custody.
+        let dir = tempdir().unwrap();
+        let bytes = b"p2-package-path-identity";
+        let manifest = manifest(bytes);
+        for name in [
+            "vendor\\release.primepkg",
+            "vendor\nrelease.primepkg",
+            "vendor\rrelease.primepkg",
+            "vendor\trelease.primepkg",
+            "vendor\u{7f}release.primepkg",
+        ] {
+            let candidate = dir.path().join(name);
+            fs::write(&candidate, bytes).unwrap();
+            assert!(
+                matches!(
+                    validate_package_path(&candidate),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "ambiguous package name must be rejected: {name:?}"
+            );
+            assert!(
+                matches!(
+                    sha256_file(&candidate),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "direct hasher must reject ambiguous name: {name:?}"
+            );
+            assert!(matches!(
+                verify_offline_component_package(
+                    &candidate,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+
+        // Ordinary spaces and visible Unicode remain valid package identities.
+        let valid = dir.path().join("vendor café release.primepkg");
+        fs::write(&valid, bytes).unwrap();
+        assert!(validate_package_path(&valid).is_ok());
+        assert_eq!(sha256_file(&valid).unwrap(), manifest.package_digest);
     }
 
     #[cfg(unix)]
