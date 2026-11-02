@@ -1432,10 +1432,12 @@ fn windows_nonportable_package_component(part: &[u8]) -> bool {
     }) {
         return true;
     }
-    // Windows reserves these device basenames even with a file extension.
+    // Windows reserves these device basenames even with an extension.
+    // Spaces immediately before the extension do not distinguish a device;
+    // superscript 1/2/3 are also reserved COM/LPT suffixes on Windows.
     // This is a lexical check only: no Windows APIs or package I/O.
     let stem = part.split(|byte| *byte == b'.').next().unwrap_or_default();
-    let mut upper = stem.to_vec();
+    let mut upper = stem.trim_ascii_end().to_vec();
     upper.make_ascii_uppercase();
     let name = upper.as_slice();
     name == b"CON"
@@ -1444,9 +1446,15 @@ fn windows_nonportable_package_component(part: &[u8]) -> bool {
         || name == b"NUL"
         || name == b"CONIN$"
         || name == b"CONOUT$"
-        || (name.len() == 4
+        || (name.len() >= 4
             && (name.starts_with(b"COM") || name.starts_with(b"LPT"))
-            && (b'1'..=b'9').contains(&name[3]))
+            && {
+                let digit = &name[3..];
+                (digit.len() == 1 && (b'1'..=b'9').contains(&digit[0]))
+                    || digit == "¹".as_bytes()
+                    || digit == "²".as_bytes()
+                    || digit == "³".as_bytes()
+            })
 }
 
 #[cfg(unix)]
@@ -1524,6 +1532,7 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // across offline release evidence and host platforms.
                     && part.last() != Some(&b'.')
                     && part.last() != Some(&b' ')
+                    && part.first() != Some(&b' ')
                     && !windows_nonportable_package_component(part)
             })
 }
