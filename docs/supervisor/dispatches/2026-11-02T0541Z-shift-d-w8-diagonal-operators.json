@@ -1,0 +1,34 @@
+{
+  "after_implementation_head": "016d535",
+  "after_state": "W8 host-only source/test correction; 9 path/field combinations denied; Windows guest Gates 7-9 HOLD",
+  "before_head": "b1e1a6a733abb12888cf627a09fd85487916bb46",
+  "before_state": "Prime-OS PR200 draft; no fresh implementation worker; mathematical slash/backslash path aliases reached unrelated QEMU ENOENT",
+  "candidate_branch": "supervisor/shift-d-w8-diagonal-operators-20261102-0736",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-diagonal-operators-shift-d-20261102-0736",
+  "dependency_linkage": {
+    "control": "Cookpit PR102 guarded profile rebind requires separate independent review",
+    "downstream": "W8 authorized guest image/physical Gates 7-9 HOLD; W9 unauthorized",
+    "upstream": "Prime-OS W8 source-only safe preparation"
+  },
+  "frontier": "W8_MATHEMATICAL_DIAGONAL_PATH_ALIASES_PRE_QEMU_IO",
+  "production_touched": false,
+  "project": "prime-windows",
+  "proof": {
+    "clippy": "PASS -D warnings",
+    "diff_check": "PASS",
+    "fmt": "PASS",
+    "focused": "1/1 PASS (nine path/glyph combinations)",
+    "guest": "NOT RUN; Windows guest Gates 7-9 HOLD",
+    "hosted": "UNVERIFIED",
+    "native": "158/158 PASS",
+    "patrol": "explicit ALLOW for workspace, source and tests",
+    "predecessor": "RED: mathematical rising diagonal U+27CB in QEMU path yielded ENOENT instead of InvalidPlan",
+    "review": "PENDING"
+  },
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "D",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T05:41:43.507344+00:00",
+  "worker_action": "Patrol explicit ALLOW for worktree/source/tests; test-first RED; Rust guard and nine negative cases; focused/full Rust PASS; strict Clippy/fmt/diff PASS; isolated project-owned source commit"
+}
