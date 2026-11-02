@@ -1,0 +1,41 @@
+{
+  "schema": "ttg.supervisor.dispatch.v1",
+  "shift": "C",
+  "project": "origins-phase8b",
+  "implementation_owner": "Prime-OS",
+  "frontier": "P2_OFFLINE_PACKAGE_NONRENDERING_SCALAR_PATH_CUSTODY",
+  "observed_at_utc": "2026-11-02T06:33:36.041241+00:00",
+  "before_head": "0a9c63cf08d72de13f11fd75c7f2bc9071e037a3",
+  "implementation_head": "bc51a5352aa40792cfdd4f0a778c340ccd1ed153",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-invisible-scalar-shift-c-20261102-0824",
+  "worker_action": "bounded project-owned Rust implementation and adversarial regression",
+  "delta": "75 Rust lines: fail-closed nonrendering Unicode path scalars and noncharacters before filesystem I/O; 12 negative scalar cases and visible international-name control",
+  "patrol": {
+    "decision": "ALLOW",
+    "project": "Prime-OS"
+  },
+  "proof": {
+    "predecessor_focused": "RED at U+00AD",
+    "corrected_focused": "1/1 PASS",
+    "primed_lib": "148/148 PASS",
+    "prime_contracts_component": "31/31 PASS",
+    "strict_clippy": "PASS",
+    "rustfmt": "PASS",
+    "git_diff_check": "PASS",
+    "hosted_exact_head": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package source authority",
+    "admission_granted": false
+  },
+  "disposition": "MATERIAL_SOURCE_COMMITTED_REVIEW_PENDING",
+  "protected": {
+    "oracle_production_touched": false,
+    "stolen_device_touched": false,
+    "release_promotion": false,
+    "live_timer_rebound": false
+  }
+}
