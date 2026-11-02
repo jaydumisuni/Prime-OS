@@ -526,12 +526,14 @@ pub fn validate_guest_agent_hello(
 }
 
 fn runtime_path_has_unsafe_text(value: &str) -> bool {
-    // QEMU option separators are parser authority. Bidirectional formatting
-    // controls can also disguise the displayed path in a proof/review log.
-    // Ordinary visible Unicode remains valid, subject to the AF_UNIX byte cap.
+    // QEMU option separators are parser authority. An ASCII backslash is a
+    // literal Linux pathname byte but a Windows-style hierarchy separator;
+    // admitting it creates ambiguous W8 launch/proof identities. Reject it
+    // alongside commas and control bytes before any filesystem I/O.
+    // Bidirectional formatting controls can also disguise review logs.
     let parser_delimiter = value
         .bytes()
-        .any(|byte| byte == b',' || byte.is_ascii_control());
+        .any(|byte| byte == b',' || byte == b'\\' || byte.is_ascii_control());
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
