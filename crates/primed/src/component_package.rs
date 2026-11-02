@@ -1500,6 +1500,33 @@ fn sha256_file(path: &Path) -> Result<String, ComponentAdmissionError> {
     #[cfg(unix)]
     let (mut file, opened_metadata, opened_ancestors) = {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        // On Linux, pin the leaf without opening it for I/O. An untrusted
+        // pathname may be replaced by a socket/device after path preflight:
+        // O_NONBLOCK avoids FIFO waits, but does not prevent open side effects.
+        // O_PATH + O_NOFOLLOW lets fstat reject non-regular leaves first.
+        #[cfg(target_os = "linux")]
+        let file = {
+            use std::os::fd::AsRawFd;
+            let pinned = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(path)?;
+            let pinned_metadata = pinned.metadata()?;
+            if !private_package_inode(&pinned_metadata) {
+                return Err(ComponentAdmissionError::UnsafePackagePath);
+            }
+            // The proc-fd link names the pinned inode, not a fresh path
+            // lookup. Keep the pin live until the read descriptor is opened.
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))?;
+            if !stable_package_metadata(&pinned_metadata, &file.metadata()?) {
+                return Err(ComponentAdmissionError::UnsafePackagePath);
+            }
+            file
+        };
+        #[cfg(not(target_os = "linux"))]
         let file = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -3620,6 +3647,22 @@ mod tests {
                 |_, _| true
             ),
             Ok(ComponentAdmissionOutcome::Ready(_))
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn package_hasher_rejects_socket_leaf_before_effectful_open() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("socket.primepkg");
+        let _listener = UnixListener::bind(&socket_path).unwrap();
+        // A Unix socket is not a package. The hasher must reject its type
+        // before attempting O_RDONLY, which otherwise fails as I/O.
+        assert!(matches!(
+            sha256_file(&socket_path),
+            Err(ComponentAdmissionError::UnsafePackagePath)
         ));
     }
 
