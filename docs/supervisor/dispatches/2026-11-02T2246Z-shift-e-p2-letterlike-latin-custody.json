@@ -1,0 +1,63 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "E",
+  "observed_at_utc": "2026-11-02T22:46:11.298Z",
+  "project": "origins-phase8b",
+  "repository": "jaydumisuni/Prime-OS",
+  "frontier": "Prime P2 upstream component/package authority — reject letterlike Latin NFKC path aliases before offline package I/O",
+  "selection": {
+    "basis": "Oldest cloud-visible material movement among inspected enabled safe frontiers: Prime P2 PR #217 at 2026-11-02T21:15Z; Formula 21:24Z, Data Fabric 21:40Z, Hardware Studio 21:53Z, Ptah 22:05Z, Sergeant 22:12Z, Nodie 22:29Z, Prime W8 22:39Z",
+    "canonical_registry": "jaydumisuni/cookpit@aa49182ce91c5261ac49d04d9d297fea6fe39b8d:registry.json",
+    "profile": "profiles/origins-phase8b.json",
+    "roadmap": "Prime-OS docs/PRIME_OS_MASTER_PLAN.md; docs/PRIME_OS_ROADMAP.md; docs/PRIME_CURRENT_STATUS.md; docs/AI_HANDOFF.md",
+    "local_worker_lease": "UNVERIFIED_ORACLE_ROSTER_FAILURE",
+    "patrol_preflight": "UNVERIFIED_ORACLE_ROSTER_FAILURE",
+    "local_dispatch_fairness": "UNVERIFIED_KRATOS_UNREACHABLE"
+  },
+  "before": {
+    "branch": "supervisor/shift-b-p2-math-alnum-path-custody-20261102-2312",
+    "head": "a780a13797f8203f88bc8ab652372fd3e1de1624",
+    "review": "draft PR #217, no independent reviews returned, review rate-limited",
+    "proof": "source-only model; native KRATOS Rust/Patrol unverified"
+  },
+  "action": {
+    "transport": "authenticated GitHub connector; project-owned cloud source-only",
+    "branch": "supervisor/shift-e-p2-letterlike-latin-path-custody-20261103",
+    "test_first_commit": "7ae171accdac46a41475a956c8993ee24fa7daa3",
+    "implementation_commit": "5c514bdc2bf5f15ed8228e3d6d51f1eb11ba654e",
+    "change": "Reject exactly the 32 Unicode letterlike Latin compatibility scalars in U+2100..U+214F whose NFKC mapping is one ASCII letter, including ℂ/ℕ/ℙ/ℭ/ℒ and Kelvin sign, before path lookup, hashing or offline verification.",
+    "tests": "11 negative leaf aliases, one ancestor alias, 3 visible positive controls; lexical, validation, hasher and offline admission assertions"
+  },
+  "after": {
+    "implementation_head": "5c514bdc2bf5f15ed8228e3d6d51f1eb11ba654e",
+    "ancestry": "exact predecessor +2, 0 behind",
+    "changed_files": [
+      "crates/primed/src/component_package.rs"
+    ],
+    "source_delta": "62 added lines, 0 removed"
+  },
+  "proof": {
+    "github_compare": "PASS exact ancestor 2 ahead 0 behind",
+    "remote_source_readback": "PASS",
+    "independent_unicode_nfkc_model": "PASS 32/32 exact scalar membership; 11/11 negatives rejected; 3/3 positive controls preserved",
+    "native_rust_tests": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "patrol": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical_device": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "blocked_downstream": "Origins Phase 8B direct release consumption remains fail-closed until pinned Prime component/package authority",
+    "eligible_upstream": "Prime P2 component/package source-only hardening in Prime-OS project-owned branch; no Origins release authorization granted"
+  },
+  "movement": "MATERIAL_IMPLEMENTATION_SOURCE_HEAD_ADVANCED",
+  "health": "SOURCE_AND_MODEL_VERIFIED_NATIVE_AND_REVIEW_PENDING",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_REVIEW_AND_NATIVE_QUALIFICATION_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "oracle_runtime_touched": false,
+  "protected_main_touched": false,
+  "supervisor_schedules_changed": false,
+  "local_dispatch_and_attention": "QUEUED_FOR_KRATOS_RECONCILIATION"
+}
