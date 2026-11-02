@@ -1,0 +1,50 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "C",
+  "project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_SPECIAL_LEAF_EFFECT_FREE_PINNED_HASH",
+  "before_head": "911a90a30f89041f02ac84dd433e3ae608708ae8",
+  "before_state": "Prime P2 PR195 package hasher opened an untrusted socket leaf before regular-file type preflight",
+  "implementation_head": "e56b3ff6242f3ed047fbb9394806a4377a57165d",
+  "after_state": "Linux offline package hash pins an O_PATH no-follow leaf, rejects special inode before I/O, and reads via pinned proc-fd only; draft PR197 stacked on PR195",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-special-leaf-pin-shift-c-20261102-0324",
+  "branch": "supervisor/shift-c-p2-special-leaf-pin-20261102-0324",
+  "worker_action": "Patrol ALLOW; isolated project-owned test-first RED/GREEN; Linux O_PATH descriptor custody fix; native proof; nonforce push; draft PR197",
+  "proof": {
+    "patrol": "ALLOW",
+    "predecessor": "RED 1/1 socket special-leaf test",
+    "focused": "PASS 1/1",
+    "primed_library": "145/145 PASS",
+    "prime_contracts_component": "31/31 PASS",
+    "clippy": "PASS -D warnings",
+    "fmt": "PASS",
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_PERFORMED"
+  },
+  "movement_fact": {
+    "kind": "MATERIAL_SOURCE_HEAD_ADVANCED",
+    "before_head": "911a90a30f89041f02ac84dd433e3ae608708ae8",
+    "implementation_head": "e56b3ff6242f3ed047fbb9394806a4377a57165d",
+    "tracked_delta": "43 Rust lines; one adversarial socket regression",
+    "active_worker": false,
+    "time_utc": "2026-11-02T01:33:25.815597+00:00"
+  },
+  "health_fact": {
+    "state": "NATIVE_PASS_HOSTED_UNVERIFIED_REVIEW_PENDING_ORIGINS_HOLD",
+    "proof_is_movement": false,
+    "observed_at_utc": "2026-11-02T01:33:25.815597+00:00"
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package authority",
+    "downstream": "Origins Phase 8B direct consumption FAIL_CLOSED",
+    "control": "Cookpit PR99 guarded proposal requires rebind to PR197 exact head"
+  },
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/197",
+  "time_utc": "2026-11-02T01:33:25.815597+00:00",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING_ORIGINS_HOLD",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
