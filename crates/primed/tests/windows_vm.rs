@@ -8215,3 +8215,65 @@ fn w8_qemu_executable_lexical_aliases_fail_before_filesystem_io() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn w8_ascii_backslash_session_root_is_not_proof_authority() {
+    use primed::windows_vm::{vm_session_paths, WindowsVmError};
+
+    let dir = private_tempdir();
+    let root = dir.path().join("runtime\\shadow");
+    private_runtime_dir(&root);
+    let error = vm_session_paths(&root, "app-001", "session-a").unwrap_err();
+    assert!(
+        matches!(error, WindowsVmError::InvalidPlan(_)),
+        "backslash is a distinct Linux byte but a Windows-style path separator"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn w8_ascii_backslash_path_authority_fails_before_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    let dir = private_tempdir();
+    let root = dir.path();
+    let qemu = root.join("qemu-missing");
+    let overlay = root.join("overlay.qcow2");
+    let runtime = root.join("runtime");
+    let cases = [
+        (
+            "executable",
+            root.join("qemu\\alias"),
+            overlay.clone(),
+            runtime.clone(),
+        ),
+        (
+            "overlay",
+            qemu.clone(),
+            root.join("overlay\\alias.qcow2"),
+            runtime.clone(),
+        ),
+        (
+            "runtime",
+            qemu.clone(),
+            overlay.clone(),
+            root.join("runtime\\alias"),
+        ),
+    ];
+    for (label, qemu_binary, overlay_image, runtime_dir) in cases {
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary,
+            overlay_image,
+            runtime_dir,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(
+            matches!(error, WindowsVmError::InvalidPlan(_)),
+            "{label}: backslash path identity reached filesystem I/O"
+        );
+    }
+}
