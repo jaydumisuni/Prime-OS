@@ -1472,6 +1472,14 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                             | '\u{29f8}' | '\u{29f9}' | '\u{fe68}'
                             | '\u{ff0f}' | '\u{ff3c}'
                     )
+                    // Compatibility dot leaders/full stops fold to ASCII
+                    // periods, including repeated "." and ".." segments,
+                    // making distinct signed path evidence visually ambiguous.
+                    || matches!(
+                        ch,
+                        '\u{2024}' | '\u{2025}' | '\u{2026}' | '\u{fe19}'
+                            | '\u{fe30}' | '\u{fe52}' | '\u{ff0e}'
+                    )
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
@@ -3711,6 +3719,54 @@ mod tests {
             ));
         }
         let visible = dir.path().join("cafe\u{301} 東京.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_compatibility_dot_aliases_before_io() {
+        // These distinct Unix filenames fold to one or more ASCII dots under
+        // Unicode compatibility normalization, spoofing signed path evidence.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-compatibility-dot-alias";
+        let signed = manifest(bytes);
+        for scalar in [
+            '\u{2024}', // one dot leader
+            '\u{2025}', // two dot leader
+            '\u{2026}', // horizontal ellipsis
+            '\u{fe19}', // vertical horizontal ellipsis
+            '\u{fe30}', // vertical two dot leader
+            '\u{fe52}', // small full stop
+            '\u{ff0e}', // fullwidth full stop
+        ] {
+            let path = dir.path().join(format!("vendor{scalar}release.primepkg"));
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(
+                    validate_package_path(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "compatibility dot alias U+{:X} must not identify a signed package",
+                scalar as u32
+            );
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        let visible = dir.path().join("cafe\u{301} 東京 release.primepkg");
         fs::write(&visible, bytes).unwrap();
         assert!(validate_package_path(&visible).is_ok());
         assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
