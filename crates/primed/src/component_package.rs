@@ -4046,24 +4046,33 @@ mod tests {
             let path = dir.path().join(name);
             fs::write(&path, bytes).unwrap();
             assert!(!canonical_package_path_spelling(&path), "{name:?}");
-            assert!(matches!(
-                validate_package_path(&path),
-                Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
-            assert!(matches!(
-                sha256_file(&path),
-                Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
-            assert!(matches!(
-                verify_offline_component_package(
+            assert!(
+                matches!(
+                    validate_package_path(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "{name:?}"
+            );
+            assert!(
+                matches!(
+                    sha256_file(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "{name:?}"
+            );
+            assert!(
+                matches!(
+                    verify_offline_component_package(
                     &path,
                     &signed,
                     &context(&[]),
                     |_| true,
                     |_, _| true,
                 ),
-                Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "{name:?}"
+            );
         }
         let parent = dir.path().join("\u{1d402}\u{1d40e}\u{1d40d}");
         fs::create_dir(&parent).unwrap();
