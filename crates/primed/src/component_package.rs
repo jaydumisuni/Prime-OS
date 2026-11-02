@@ -1424,6 +1424,32 @@ fn private_package_ancestors(
 }
 
 #[cfg(unix)]
+fn windows_nonportable_package_component(part: &[u8]) -> bool {
+    // A signed offline path must not be interpreted as an NTFS alternate
+    // stream, an invalid Win32 filename, or a reserved DOS device identity.
+    if part.iter().any(|byte| {
+        matches!(*byte, b':' | b'<' | b'>' | b'"' | b'|' | b'?' | b'*')
+    }) {
+        return true;
+    }
+    // Windows reserves these device basenames even with a file extension.
+    // This is a lexical check only: no Windows APIs or package I/O.
+    let stem = part.split(|byte| *byte == b'.').next().unwrap_or_default();
+    let mut upper = stem.to_vec();
+    upper.make_ascii_uppercase();
+    let name = upper.as_slice();
+    name == b"CON"
+        || name == b"PRN"
+        || name == b"AUX"
+        || name == b"NUL"
+        || name == b"CONIN$"
+        || name == b"CONOUT$"
+        || (name.len() == 4
+            && (name.starts_with(b"COM") || name.starts_with(b"LPT"))
+            && (b'1'..=b'9').contains(&name[3]))
+}
+
+#[cfg(unix)]
 fn canonical_package_path_spelling(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
 
@@ -1498,6 +1524,7 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // across offline release evidence and host platforms.
                     && part.last() != Some(&b'.')
                     && part.last() != Some(&b' ')
+                    && !windows_nonportable_package_component(part)
             })
 }
 
