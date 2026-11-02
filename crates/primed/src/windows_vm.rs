@@ -624,6 +624,11 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
             '\u{ff0c}' // Fullwidth comma can counterfeit a QEMU option delimiter.
                 | '\u{fe10}' // Vertical presentation comma resembles an option separator.
                 | '\u{fe50}' // Small comma resembles the QEMU parser delimiter.
+                | '\u{fe51}' // Small ideographic comma is a visually similar evidence alias.
+                | '\u{ff64}' // Halfwidth ideographic comma can impersonate a delimiter in logs.
+                | '\u{201a}' // Low-9 quotation mark renders as a comma in many fonts.
+                | '\u{2e32}' // Turned comma is an ambiguous reviewed path marker.
+                | '\u{2e41}' // Reversed comma is an ambiguous reviewed path marker.
                 | '\u{2024}' // One dot leader can counterfeit a current-directory segment.
                 | '\u{2025}' // Two dot leader can counterfeit a parent-directory segment.
                 | '\u{ff0e}' // Fullwidth full stop can disguise a dot path component.
