@@ -1729,6 +1729,12 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         ));
     }
 
+    // The guest-agent endpoint is a derived caller-owned path with a strict
+    // AF_UNIX byte budget. Check it before any QEMU/overlay filesystem I/O:
+    // a missing QEMU must not conceal an endpoint that cannot be bound.
+    let agent = request.runtime_dir.join("agent.sock");
+    validate_agent_socket_path(&agent)?;
+
     let qemu = fs::canonicalize(&request.qemu_binary)?;
     if qemu.to_str().is_none_or(runtime_path_has_unsafe_text) {
         return Err(WindowsVmError::InvalidPlan(
@@ -2116,8 +2122,6 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
     // Rebind the validated header to its original inode and pathname before
     // any VM arguments are constructed.
     verify_overlay_stable(&request.overlay_image, &overlay_file, &overlay_meta)?;
-    let agent = request.runtime_dir.join("agent.sock");
-    validate_agent_socket_path(&agent)?;
     // Reject an already-occupied agent socket path before handing it to QEMU.
     // The runtime directory still requires exclusive ownership against races.
     match fs::symlink_metadata(&agent) {
