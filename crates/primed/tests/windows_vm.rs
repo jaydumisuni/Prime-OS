@@ -1716,6 +1716,61 @@ fn w8_dot_leader_path_aliases_fail_before_qemu_filesystem_io() {
 }
 
 #[test]
+fn w8_win32_compatibility_punctuation_aliases_fail_before_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    // These Unicode compatibility glyphs fold under NFKC to punctuation
+    // that Windows cannot use in a pathname component. Linux accepts their
+    // original bytes, so reject the cross-platform evidence alias before I/O.
+    for glyph in [
+        '\u{fe13}', '\u{fe55}', '\u{ff1a}', // colon
+        '\u{fe64}', '\u{ff1c}', // less-than
+        '\u{fe65}', '\u{ff1e}', // greater-than
+        '\u{ff02}', '\u{ff0a}', '\u{ff1f}', '\u{ff5c}',
+    ] {
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let alias = format!("/tmp/prime-w8-compat{glyph}");
+            match field {
+                "qemu" => request.qemu_binary = format!("{alias}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{alias}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = alias.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, WindowsVmError::InvalidPlan(_)),
+                "field {field} admitted Win32 compatibility alias {glyph:?}: {error}"
+            );
+        }
+    }
+
+    // ASCII plus/equal signs and visible international names are portable.
+    // The deliberately missing QEMU binary must remain an I/O failure.
+    for component in ["vendor+release=1", "東京", "visible-name"] {
+        let request = VmPlanRequest {
+            qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+            overlay_image: format!("/tmp/{component}/overlay.qcow2").into(),
+            runtime_dir: "/tmp/prime-w8-missing".into(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        };
+        assert!(
+            matches!(build_qemu_plan(&request), Err(WindowsVmError::Io(_))),
+            "portable component {component:?} must pass lexical preflight"
+        );
+    }
+}
+
+#[test]
 fn w8_windows_device_and_ntfs_stream_aliases_fail_before_qemu_io() {
     use primed::windows_vm::WindowsVmError;
 
