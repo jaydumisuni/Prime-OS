@@ -1683,6 +1683,39 @@ fn qemu_plan_rejects_diagonal_operator_path_aliases_before_qemu_io() {
 }
 
 #[test]
+fn w8_dot_leader_path_aliases_fail_before_qemu_filesystem_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    // These Unicode dot-like glyphs can visually counterfeit "." and ".."
+    // hierarchy components in reviewed VM launch evidence, while naming
+    // distinct Linux pathname bytes. No host files are created here.
+    for glyph in ['\u{2024}', '\u{2025}', '\u{ff0e}'] {
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let aliased = format!("/tmp/prime-w8-{glyph}-missing");
+            match field {
+                "qemu" => request.qemu_binary = format!("{aliased}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{aliased}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = aliased.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, WindowsVmError::InvalidPlan(_)),
+                "field {field}, glyph {glyph:?} escaped lexical preflight: {error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
