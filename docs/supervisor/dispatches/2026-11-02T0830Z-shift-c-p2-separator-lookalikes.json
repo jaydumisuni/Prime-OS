@@ -1,0 +1,38 @@
+{
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "C",
+  "project": "Prime-OS",
+  "downstream_project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_SEPARATOR_LOOKALIKE_PATH_CUSTODY",
+  "before_head": "da11d7547111fb9d1d2e801cba7f34179bc2ee23",
+  "implementation_head": "181bb706a05366de051145b9f249b0ad64cb2093",
+  "branch": "supervisor/shift-c-p2-package-separator-lookalikes-20261102-1024",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-separator-lookalikes-shift-c-20261102-1024",
+  "action": "reject Unicode slash/backslash lookalikes before package filesystem I/O",
+  "proof": {
+    "patrol": "exit_0_without_explicit_allow_receipt",
+    "predecessor_focused": "RED U+2044",
+    "corrected_focused": "1/1 PASS",
+    "primed_lib": "149/149 PASS",
+    "prime_contracts_component": "31/31 PASS",
+    "strict_clippy": "PASS",
+    "rustfmt": "PASS",
+    "git_diff_check": "PASS",
+    "hosted_exact_head": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B direct release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package authority",
+    "admission_granted": false
+  },
+  "production_touched": false,
+  "protected_promotion": false,
+  "material_time_utc": "2026-11-02T08:30:00Z",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_REVIEW_PENDING",
+  "local_implementation_head": "d0be970",
+  "publication_transport": "authenticated_github_connector_after_local_git_auth_unavailable",
+  "local_worktree_head": "c6ef081",
+  "hosted_exact_head": "UNVERIFIED"
+}
