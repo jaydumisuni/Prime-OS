@@ -1,0 +1,43 @@
+{
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "B",
+  "project": "Prime-OS",
+  "downstream_project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_WINDOWS_DEVICE_ADS_PATH_CUSTODY",
+  "before_head": "38cd3ac8d7a901ef85074636e4f82d9f76853598",
+  "test_commit": "e3f56aefd766218f9e299d7979cec5a17a9a14e9",
+  "implementation_head": "f5d030e41653827648e1a4c3bf287cc4d8aa1624",
+  "branch": "supervisor/shift-b-p2-windows-path-custody-20261102-1512",
+  "worktree": "CLOUD_GITHUB_BRANCH_ONLY_KRATOS_ORACLE_UNAVAILABLE",
+  "action": "Reject Windows-reserved ASCII DOS device stems, NTFS ADS colons and Win32-invalid punctuation in every signed offline package path component before I/O; add 18 leaf/5 ancestor negative and 5 positive regression cases",
+  "proof": {
+    "canonical_cookpit_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "canonical_registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "github_predecessor_ancestry": "2 commits ahead, 0 behind, exact source HEAD verified",
+    "isolated_lexical_model": "23/23 predecessor aliases accepted; 23/23 corrected rejected; 5/5 positive controls accepted — MODEL ONLY",
+    "rust_native": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_LIVE_ROSTER_INTERNAL_FAILURE",
+    "hosted": "FAILURE_AT_WORKFLOW_START_NO_JOBS; same failure observed at predecessor head; NOT PASS",
+    "independent_review": "PENDING",
+    "physical": "NOT_CLAIMED",
+    "project_source_readback": "PASS"
+  },
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B direct release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package source custody",
+    "admission_granted": false
+  },
+  "observed_at_utc": "2026-11-02T13:35:02.029Z",
+  "material_movement_at_utc": "2026-11-02T13:33:55Z",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_MODEL_PROOF_NATIVE_UNVERIFIED_HOSTED_FAILURE_REVIEW_PENDING",
+  "production_touched": false,
+  "protected_promotion": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "cloud_fallback": true,
+  "local_dispatch_reconciliation": "QUEUED_KRATOS",
+  "local_attention_reconciliation": "QUEUED_KRATOS",
+  "control_rebind": "NOT_ATTEMPTED"
+}

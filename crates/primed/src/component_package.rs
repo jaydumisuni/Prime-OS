@@ -1424,6 +1424,40 @@ fn private_package_ancestors(
 }
 
 #[cfg(unix)]
+fn windows_nonportable_package_component(part: &[u8]) -> bool {
+    // A signed offline path must not be interpreted as an NTFS alternate
+    // stream, an invalid Win32 filename, or a reserved DOS device identity.
+    if part.iter().any(|byte| {
+        matches!(*byte, b':' | b'<' | b'>' | b'"' | b'|' | b'?' | b'*')
+    }) {
+        return true;
+    }
+    // Windows reserves these device basenames even with an extension.
+    // Spaces immediately before the extension do not distinguish a device;
+    // superscript 1/2/3 are also reserved COM/LPT suffixes on Windows.
+    // This is a lexical check only: no Windows APIs or package I/O.
+    let stem = part.split(|byte| *byte == b'.').next().unwrap_or_default();
+    let mut upper = stem.trim_ascii_end().to_vec();
+    upper.make_ascii_uppercase();
+    let name = upper.as_slice();
+    name == b"CON"
+        || name == b"PRN"
+        || name == b"AUX"
+        || name == b"NUL"
+        || name == b"CONIN$"
+        || name == b"CONOUT$"
+        || (name.len() >= 4
+            && (name.starts_with(b"COM") || name.starts_with(b"LPT"))
+            && {
+                let digit = &name[3..];
+                (digit.len() == 1 && (b'1'..=b'9').contains(&digit[0]))
+                    || digit == "¹".as_bytes()
+                    || digit == "²".as_bytes()
+                    || digit == "³".as_bytes()
+            })
+}
+
+#[cfg(unix)]
 fn canonical_package_path_spelling(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
 
@@ -1498,6 +1532,8 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // across offline release evidence and host platforms.
                     && part.last() != Some(&b'.')
                     && part.last() != Some(&b' ')
+                    && part.first() != Some(&b' ')
+                    && !windows_nonportable_package_component(part)
             })
 }
 
@@ -3830,6 +3866,79 @@ mod tests {
         fs::write(&visible, bytes).unwrap();
         assert!(validate_package_path(&visible).is_ok());
         assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_windows_device_and_ads_aliases_before_io() {
+        // Unix accepts these names; Windows treats device stems as reserved,
+        // and punctuation including ':' can change NTFS stream/path identity.
+        // Reject them in every signed package path component before I/O.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-windows-device-path-identity";
+        let signed = manifest(bytes);
+        for name in [
+            "CON", "con.txt", "PrN.dat", "AUX", "NUL.primepkg",
+            "COM1", "com9.log", "LPT1", "lpt9.txt",
+            "CONIN$", "CONOUT$", "vendor:stream.primepkg",
+            // Windows can trim a leading space or spaces before a device
+            // extension; superscript digits are reserved COM/LPT suffixes.
+            " CON.txt", "  COM1.primepkg", "NUL .txt",
+            "COM1 .primepkg", "LPT9  .txt",
+            "COM¹.primepkg", "COM².primepkg", "COM³.primepkg",
+            "LPT¹.primepkg", "LPT².primepkg", "LPT³.primepkg",
+            "vendor?release.primepkg", "vendor*release.primepkg",
+            "vendor|release.primepkg", "vendor<release.primepkg",
+            "vendor>release.primepkg", "vendor\"release.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        let ancestors = dir.path().join("ancestor");
+        fs::create_dir(&ancestors).unwrap();
+        for name in [
+            "CON", "NUL.txt", "COM1", "LPT9", "vendor:stream",
+            " CON", "NUL .txt", "COM1 .primepkg", "COM¹", "LPT².txt",
+        ] {
+            let parent = ancestors.join(name);
+            fs::create_dir(&parent).unwrap();
+            let path = parent.join("component.primepkg");
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in [
+            "console.primepkg", "Com10.primepkg", "LPT0.primepkg",
+            "NULish.primepkg", "vendor release.v1 東京.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
     }
 
     #[cfg(unix)]
