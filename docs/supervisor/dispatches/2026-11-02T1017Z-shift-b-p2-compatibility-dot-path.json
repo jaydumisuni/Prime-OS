@@ -1,0 +1,37 @@
+{
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "B",
+  "project": "Prime-OS",
+  "downstream_project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_COMPATIBILITY_DOT_PATH_CUSTODY",
+  "before_head": "bf31d79c1a282006f0d4a35b2c7829ce28575bd9",
+  "implementation_head": "124734493ea255304f663ca092e4db3e89077714",
+  "branch": "supervisor/shift-b-p2-package-dot-identity-20261102-1212",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-dot-identity-shift-b-20261102-1212",
+  "source_pr": "https://github.com/jaydumisuni/Prime-OS/pull/207",
+  "action": "reject seven Unicode compatibility-dot filename aliases before signed offline package filesystem I/O",
+  "proof": {
+    "patrol": "GUI_UNVERIFIED_MISSING_X_SERVER; manual exact-head preflight performed",
+    "predecessor": "RED U+2024 accepted",
+    "focused": "1/1 PASS",
+    "primed_lib": "150/150 PASS",
+    "prime_contracts": "31/31 PASS",
+    "strict_clippy": "PASS",
+    "rustfmt": "PASS",
+    "diff_check": "PASS",
+    "remote_head": "MATCH_BEFORE_RECEIPT_COMMIT",
+    "hosted": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B direct release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package source authority",
+    "admission_granted": false
+  },
+  "material_movement_at_utc": "2026-11-02T10:17:09Z",
+  "observed_at_utc": "2026-11-02T10:17:56.589836+00:00",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING",
+  "production_touched": false,
+  "protected_promotion": false
+}
