@@ -538,9 +538,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     // Windows path consumers can strip them. W8 launch/proof evidence must
     // have one portable lexical identity across review and guest tooling.
     // Preserve interior spaces/dots and leading dotfile names.
-    let terminal_component_alias = value
-        .split('/')
-        .any(|component| !component.is_empty() && (component.ends_with('.') || component.ends_with(' ')));
+    let terminal_component_alias = value.split('/').any(|component| {
+        !component.is_empty() && (component.ends_with('.') || component.ends_with(' '))
+    });
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
