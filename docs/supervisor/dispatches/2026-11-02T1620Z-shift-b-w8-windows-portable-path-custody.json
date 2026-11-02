@@ -1,0 +1,43 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "B",
+  "project": "prime-windows",
+  "frontier": "W8_WINDOWS_PORTABLE_VM_PROOF_PATH_IDENTITY",
+  "time_utc": "2026-11-02T16:19:07.354Z",
+  "before_head": "e4b47739ec19dde6a427a5158678138fde3abd78",
+  "test_head": "fa254602769cff1ba651b15e81e3e67543695ff2",
+  "implementation_head": "96260f7c8ad87bdeac3eae3cc394906879afc1df",
+  "candidate_branch": "supervisor/shift-b-w8-windows-portable-path-custody-20261102-1812",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/212",
+  "worker_action": "Authenticated GitHub cloud fallback: project-owned W8 test-first source-only guard for Windows reserved device basenames, superscript COM/LPT aliases, and NTFS stream punctuation",
+  "before_state": "W8 path preflight rejected terminal dot/space and Unicode confusables but lacked Windows DOS-device and NTFS stream path checks",
+  "after_state": "Shared W8 path preflight rejects DOS device stem identities, case-insensitive and extension-bearing, COM/LPT superscript variants, and colon stream syntax before QEMU filesystem I/O; ordinary portable names preserved",
+  "source_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "proof": {
+    "cloud_preflight": "EXACT_REMOTE_PREDECESSOR_READ; KRATOS_PATROL_UNVERIFIED_TRANSPORT_ERROR",
+    "source_test_readback": "PASS: source and test blob readback at exact implementation head",
+    "git_ancestry": "PASS: two commits ahead, zero behind exact predecessor; only source and regression test files changed",
+    "negative_matrix": "30 declared regression cases (10 aliases x 3 VM plan fields); native execution UNVERIFIED",
+    "positive_matrix": "5 declared portable-name controls; native execution UNVERIFIED",
+    "isolated_semantic_model": "10/10 negative aliases rejected, 5/5 positive names admitted; model only",
+    "predecessor_static": "PASS: prior source did not contain the new Windows portability guard; no native RED execution",
+    "native_rust_tests": "UNVERIFIED",
+    "rustfmt_clippy": "UNVERIFIED",
+    "hosted_ci": "NO_WORKFLOW_RUNS_OR_STATUSES_RETURNED_AT_IMPLEMENTATION_HEAD",
+    "independent_review": "PENDING",
+    "physical_guest_proof": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_ORACLE_LIVE_INTERNAL_ERROR",
+    "local_dispatch_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "dependency_linkage": "Prime Windows W8 host-only source preparation; W8 authorized Windows guest remains external gate; W9 certification held; Ptah E07 OS-owned integration downstream and Origins Phase 8B protected consumption unchanged",
+  "health": "SOURCE_STATIC_READBACK_PASS_NATIVE_UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false,
+  "disposition": "SOURCE_PUBLISHED_DRAFT_NATIVE_AND_REVIEW_PENDING"
+}
