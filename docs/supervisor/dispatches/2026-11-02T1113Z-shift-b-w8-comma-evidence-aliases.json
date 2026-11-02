@@ -1,0 +1,35 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "B",
+  "project": "prime-windows",
+  "frontier": "W8_QEMU_COMMA_LIKE_EVIDENCE_PATH_IDENTITY",
+  "time_utc": "2026-11-02T11:13:05Z",
+  "before_head": "3ca758eb97c65d7a8b7c30af972a339ee72b9831",
+  "test_head": "3bb0475405a003d0bc2ae74198be453cbf40cac1",
+  "implementation_head": "d1b25a1abc5cf651efe5517ec4f94f1a69b10da8",
+  "candidate_branch": "supervisor/shift-b-w8-comma-evidence-aliases-20261102-1312",
+  "worker_action": "GitHub cloud fallback: add five Unicode comma-like evidence-path aliases to existing W8 pre-I/O rejection and regression matrix",
+  "source_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "proof": {
+    "predecessor_static": "Five specified scalars absent from predecessor confusable_path_separator matcher; no native predecessor test executed",
+    "source_test_readback": "PASS: all five scalars present in source guard and test matrix on exact implementation head",
+    "negative_matrix": "24 lexical cases declared (8 glyphs x 3 caller-owned paths); execution UNVERIFIED",
+    "positive_controls": "Two existing visible-Unicode controls preserved in test source; execution UNVERIFIED",
+    "patrol": "UNVERIFIED: Oracle Live KRATOS terminal failed internally",
+    "native_rust_tests": "UNVERIFIED: no authorized Rust execution environment available",
+    "hosted_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical_guest_proof": "NOT_PROVEN"
+  },
+  "dependency_linkage": "Prime Windows W8 host-only preparation; guest W8/W9 acceptance remains held; Ptah F04-F07 OS-owned Prime integration; no Origins Phase 8B consumption",
+  "health": "UNVERIFIED_NATIVE",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false,
+  "disposition": "SOURCE_PUBLISHED_REVIEW_PENDING"
+}
