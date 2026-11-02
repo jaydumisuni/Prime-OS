@@ -3796,7 +3796,11 @@ mod tests {
             fs::create_dir(&parent).unwrap();
             paths.push(parent.join("component.primepkg"));
         }
-        for name in ["component.primepkg.", "component.primepkg ", "component.primepkg.."] {
+        for name in [
+            "component.primepkg.",
+            "component.primepkg ",
+            "component.primepkg..",
+        ] {
             paths.push(dir.path().join(name));
         }
         for path in paths {
