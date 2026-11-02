@@ -1722,7 +1722,10 @@ fn w8_qemu_comma_confusables_fail_before_filesystem_io() {
     // QEMU uses ASCII commas to separate -drive/-chardev options. These
     // comma lookalikes are different Linux bytes but can counterfeit the
     // option boundary in reviewed launch evidence. No files are created.
-    for glyph in ['\u{ff0c}', '\u{fe10}', '\u{fe50}'] {
+    for glyph in [
+        '\u{ff0c}', '\u{fe10}', '\u{fe50}',
+        '\u{fe51}', '\u{ff64}', '\u{201a}', '\u{2e32}', '\u{2e41}',
+    ] {
         for field in ["qemu", "overlay", "runtime"] {
             let mut request = VmPlanRequest {
                 qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
