@@ -553,8 +553,20 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
             .split('.')
             .next()
             .unwrap_or(component)
-            .trim_matches(' ')
-            .to_ascii_uppercase();
+            .trim_matches(' ');
+        // Fold only fullwidth ASCII letters, digits and the dollar sign for
+        // reserved DOS device comparisons; retain all other path spellings.
+        let folded_stem: String = stem
+            .chars()
+            .map(|character| match character {
+                '\u{ff10}'..='\u{ff19}'
+                | '\u{ff21}'..='\u{ff3a}'
+                | '\u{ff41}'..='\u{ff5a}'
+                | '\u{ff04}' => char::from_u32(character as u32 - 0xfee0).unwrap_or(character),
+                _ => character,
+            })
+            .collect();
+        let stem = folded_stem.to_ascii_uppercase();
         matches!(
             stem.as_str(),
             "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
