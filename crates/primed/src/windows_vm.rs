@@ -621,7 +621,10 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let confusable_path_separator = value.chars().any(|character| {
         matches!(
             character,
-            '\u{2024}' // One dot leader can counterfeit a current-directory segment.
+            '\u{ff0c}' // Fullwidth comma can counterfeit a QEMU option delimiter.
+                | '\u{fe10}' // Vertical presentation comma resembles an option separator.
+                | '\u{fe50}' // Small comma resembles the QEMU parser delimiter.
+                | '\u{2024}' // One dot leader can counterfeit a current-directory segment.
                 | '\u{2025}' // Two dot leader can counterfeit a parent-directory segment.
                 | '\u{ff0e}' // Fullwidth full stop can disguise a dot path component.
                 | '\u{2044}'

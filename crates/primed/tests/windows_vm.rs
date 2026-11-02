@@ -1716,6 +1716,61 @@ fn w8_dot_leader_path_aliases_fail_before_qemu_filesystem_io() {
 }
 
 #[test]
+fn w8_qemu_comma_confusables_fail_before_filesystem_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    // QEMU uses ASCII commas to separate -drive/-chardev options. These
+    // comma lookalikes are different Linux bytes but can counterfeit the
+    // option boundary in reviewed launch evidence. No files are created.
+    for glyph in ['\u{ff0c}', '\u{fe10}', '\u{fe50}'] {
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let aliased = format!("/tmp/prime-w8-{glyph}-missing");
+            match field {
+                "qemu" => request.qemu_binary = format!("{aliased}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{aliased}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = aliased.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, WindowsVmError::InvalidPlan(_)),
+                "field {field}, glyph {glyph:?} escaped lexical preflight: {error}"
+            );
+        }
+    }
+
+    // Visible international path text remains legal; the deliberately
+    // missing QEMU binary is then an I/O failure, not a lexical denial.
+    let mut ordinary = VmPlanRequest {
+        qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+        overlay_image: "/tmp/prime-w8-café/overlay.qcow2".into(),
+        runtime_dir: "/tmp/prime-w8-café".into(),
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+    assert!(matches!(
+        build_qemu_plan(&ordinary),
+        Err(WindowsVmError::Io(_))
+    ));
+    ordinary.overlay_image = "/tmp/prime-w8-missing/overlay.qcow2".into();
+    ordinary.runtime_dir = "/tmp/prime-w8-missing".into();
+    ordinary.qemu_binary = "/definitely/missing/qemu-café".into();
+    assert!(matches!(
+        build_qemu_plan(&ordinary),
+        Err(WindowsVmError::Io(_))
+    ));
+}
+
+#[test]
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
