@@ -568,6 +568,18 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 )
             })
     });
+    // Windows review and guest tooling can normalize these Unicode
+    // compatibility forms to Win32-invalid punctuation (: < > " * ? |).
+    // Reject the ambiguous Linux pathname identity before QEMU I/O.
+    let win32_compatibility_punctuation_alias = value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{fe13}' | '\u{fe55}' | '\u{ff1a}'
+                | '\u{fe64}' | '\u{ff1c}' | '\u{fe65}'
+                | '\u{ff1e}' | '\u{ff02}' | '\u{ff0a}'
+                | '\u{ff1f}' | '\u{ff5c}'
+        )
+    });
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
@@ -687,6 +699,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     parser_delimiter
         || terminal_component_alias
         || windows_portability_alias
+        || win32_compatibility_punctuation_alias
         || confusable_path_separator
         || unicode_noncharacter
         || private_use_scalar
