@@ -1449,6 +1449,25 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                             | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}'
                             | '\u{feff}'
                     )
+                    // Match the durable transaction-reason exclusion for
+                    // nonrendering scalars, including variation selectors,
+                    // Hangul fillers, soft hyphen, and annotation controls.
+                    || matches!(
+                        ch as u32,
+                        0x00AD | 0x034F | 0x0600..=0x0605 | 0x06DD | 0x070F
+                            | 0x08E2 | 0x0890..=0x0891 | 0x110BD | 0x110CD
+                            | 0x115F | 0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F
+                            | 0x2800 | 0x2D7F | 0x3164 | 0x13430..=0x1343F
+                            | 0xFE00..=0xFE0F | 0xFFA0 | 0xFFF0..=0xFFFB
+                            | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A
+                            | 0x1D185..=0x1D18B | 0x1D1AA..=0x1D1AD
+                            | 0xE0000..=0xE0FFF
+                    )
+                    || {
+                        let point = ch as u32;
+                        (0xFDD0..=0xFDEF).contains(&point)
+                            || (point & 0xFFFE) == 0xFFFE
+                    }
             })
         })
         && raw[1..]
@@ -3637,6 +3656,62 @@ mod tests {
         fs::write(&valid, bytes).unwrap();
         assert!(validate_package_path(&valid).is_ok());
         assert_eq!(sha256_file(&valid).unwrap(), manifest.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_nonrendering_scalar_aliases_before_io() {
+        // These names are legal Unix bytes, but they can render as the same
+        // visible package identity as a different signed pathname.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-invisible-scalar-alias";
+        let manifest = manifest(bytes);
+        for scalar in [
+            '\u{00ad}',
+            '\u{034f}',
+            '\u{115f}',
+            '\u{180e}',
+            '\u{2800}',
+            '\u{3164}',
+            '\u{fe0f}',
+            '\u{ffa0}',
+            '\u{fff9}',
+            '\u{e0100}',
+            '\u{fdd0}',
+            '\u{1fffe}',
+        ] {
+            let name = format!("vendor{scalar}release.primepkg");
+            let path = dir.path().join(&name);
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(
+                    validate_package_path(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "nonrendering scalar must not identify a package: U+{:X}",
+                scalar as u32
+            );
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+
+        // Visible combining accents and international names remain valid.
+        let visible = dir.path().join("cafe\u{301} 東京.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), manifest.package_digest);
     }
 
     #[cfg(unix)]
