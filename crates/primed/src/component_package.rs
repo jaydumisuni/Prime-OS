@@ -1545,6 +1545,17 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // device stems). Reject the style block as path evidence,
                     // not arbitrary visible international filenames.
                     || (0x1D400..=0x1D7FF).contains(&(ch as u32))
+                    // Letterlike Latin compatibility symbols and double-struck
+                    // differential letters also fold to ordinary ASCII under
+                    // NFKC. Reject only the single-letter folding scalars;
+                    // preserve unrelated visible symbols and native scripts.
+                    || matches!(
+                        ch as u32,
+                        0x2102 | 0x210A..=0x210E | 0x2110..=0x2113
+                            | 0x2115 | 0x2119..=0x211D | 0x2124 | 0x2128
+                            | 0x212A | 0x212C..=0x212D | 0x212F..=0x2131
+                            | 0x2133..=0x2134 | 0x2139 | 0x2145..=0x2149
+                    )
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
