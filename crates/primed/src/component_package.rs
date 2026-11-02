@@ -3870,6 +3870,62 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn package_path_rejects_compatibility_win32_punctuation_before_io() {
+        // These Unicode compatibility forms fold to Windows-invalid ASCII
+        // punctuation in NFKC review evidence, even though Unix accepts them.
+        // Reject both package leaves and ancestor components before I/O.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-win32-compat-punctuation";
+        let signed = manifest(bytes);
+        for scalar in [
+            '\u{fe13}', '\u{fe55}', '\u{ff1a}', // colon
+            '\u{fe64}', '\u{ff1c}', // less-than
+            '\u{fe65}', '\u{ff1e}', // greater-than
+            '\u{ff02}', '\u{ff0a}', '\u{ff1f}', '\u{ff5c}',
+        ] {
+            let name = format!("vendor{scalar}release.primepkg");
+            let path = dir.path().join(&name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+
+            let parent = dir.path().join(format!("parent{scalar}source"));
+            fs::create_dir(&parent).unwrap();
+            let child = parent.join("component.primepkg");
+            fs::write(&child, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&child), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&child),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        // Visible international text and Win32-portable punctuation remain valid.
+        let visible = dir.path().join("vendor+release=1 東京.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(canonical_package_path_spelling(&visible));
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_path_rejects_windows_device_and_ads_aliases_before_io() {
         // Unix accepts these names; Windows treats device stems as reserved,
         // and punctuation including ':' can change NTFS stream/path identity.
