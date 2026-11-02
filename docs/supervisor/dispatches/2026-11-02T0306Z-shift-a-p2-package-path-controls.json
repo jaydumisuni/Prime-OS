@@ -1,0 +1,50 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "A",
+  "project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_ASCII_CONTROL_AND_BACKSLASH_PATH_CUSTODY",
+  "time_utc": "2026-11-02T03:06:41.567520Z",
+  "before_head": "fe58e434f3fce73181354b100e6adae6e748234c",
+  "before_state": "Prime P2 offline package path admitted Unix filenames with ASCII control characters or backslash; ambiguous in audit/display/cross-platform evidence",
+  "implementation_head": "e3d58a70f4cfb35cb08e1150fdf27b5c03e4009a",
+  "after_state": "Pre-I/O lexical custody rejects ASCII controls and backslash at package path validator, direct hasher, and offline admission; valid spaces and visible Unicode remain supported; draft PR199",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-path-controls-shift-a-20261102-0500",
+  "branch": "supervisor/shift-a-p2-package-path-controls-20261102-0500",
+  "worker_action": "Headless Patrol exit 0 (no explicit ALLOW); isolated project-owned test-first RED/GREEN; bounded Rust source change; native proof; nonforce push; draft PR199",
+  "proof": {
+    "predecessor": "RED 1/1: existing backslash filename incorrectly admitted",
+    "focused": "1/1 PASS; five negative filename cases at three entry points and valid control",
+    "primed_library": "146/146 PASS",
+    "prime_contracts_component": "31/31 PASS",
+    "strict_clippy": "PASS",
+    "fmt": "PASS",
+    "diff_check": "PASS",
+    "patrol": "headless exit 0; explicit ALLOW not emitted",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_PERFORMED"
+  },
+  "movement_fact": {
+    "kind": "MATERIAL_INTERNAL_DEPENDENCY_SOURCE_HEAD_ADVANCED",
+    "before_head": "fe58e434f3fce73181354b100e6adae6e748234c",
+    "implementation_head": "e3d58a70f4cfb35cb08e1150fdf27b5c03e4009a",
+    "tracked_delta": "53 Rust lines: lexical guard and adversarial regression",
+    "active_worker": false,
+    "time_utc": "2026-11-02T03:06:41.567520Z"
+  },
+  "health_fact": {
+    "state": "NATIVE_PASS_HOSTED_UNVERIFIED_REVIEW_PENDING_ORIGINS_HOLD",
+    "proof_is_movement": false,
+    "observed_at_utc": "2026-11-02T03:06:41.567520Z"
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package authority",
+    "downstream": "Origins Phase 8B direct consumption FAIL_CLOSED",
+    "control": "Cookpit PR99 guarded rebind proposal, not admitted"
+  },
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/199",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING_ORIGINS_HOLD",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
