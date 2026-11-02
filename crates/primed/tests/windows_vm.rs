@@ -1652,6 +1652,37 @@ fn qemu_plan_pins_executable_before_alias_retarget() {
 }
 
 #[test]
+fn qemu_plan_rejects_diagonal_operator_path_aliases_before_qemu_io() {
+    // These visible mathematical slash/backslash operators are distinct Linux
+    // pathname bytes but resemble hierarchy separators in reviewed VM proof.
+    // An absent QEMU must not mask an ambiguous caller-owned path as ENOENT.
+    for glyph in ['\u{27cb}', '\u{27cd}', '\u{2afd}'] {
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let aliased = format!("/tmp/prime-w8-{glyph}-missing");
+            match field {
+                "qemu" => request.qemu_binary = format!("{aliased}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{aliased}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = aliased.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, primed::windows_vm::WindowsVmError::InvalidPlan(_)),
+                "field {field}, glyph {glyph:?} escaped lexical preflight: {error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");

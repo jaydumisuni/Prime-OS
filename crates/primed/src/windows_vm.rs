@@ -624,6 +624,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
             '\u{2044}'
                 | '\u{2215}'
                 | '\u{2216}'
+                | '\u{27cb}' // Mathematical rising diagonal resembles a pathname slash.
+                | '\u{27cd}' // Mathematical falling diagonal resembles a backslash.
+                | '\u{2afd}' // Double solidus operator resembles a slash hierarchy.
                 | '\u{2571}'
                 | '\u{2572}'
                 | '\u{29f5}'
