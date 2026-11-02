@@ -1,0 +1,70 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "D",
+  "observed_at_utc": "2026-11-02T22:38:43Z",
+  "project": "prime-windows",
+  "repository": "jaydumisuni/Prime-OS",
+  "frontier": "W8_MATHEMATICAL_ALPHANUMERIC_VM_PROOF_PATH_IDENTITY",
+  "canonical_authority": {
+    "cookpit_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json",
+    "handoff": "Prime-OS/docs/AI_HANDOFF.md",
+    "roadmap": "Prime-OS/docs/PRIME_OS_ROADMAP.md",
+    "status": "Prime-OS/docs/PRIME_CURRENT_STATUS.md"
+  },
+  "fairness": {
+    "selection": "oldest recovered safe latest-material frontier among current enabled cloud candidates; W8 last material source change 2026-11-02T20:34Z; Ptah had a later review-fix at 22:05Z",
+    "local_dispatch_ledger": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "active_local_worker": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "patrol": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE"
+  },
+  "before": {
+    "branch": "supervisor/shift-d-w8-fullwidth-device-stems-20261102-2236",
+    "head": "26134f40650dc4ac35f18044b40d38c4574f5a4e",
+    "review": "CodeRabbit exact-head review reported no actionable merge-blocking findings; native qualification still outstanding",
+    "state": "W8 path preflight rejects literal and fullwidth DOS device stems, but not mathematical styled Latin/digit aliases that NFKC-fold to reserved Windows device names"
+  },
+  "action": {
+    "transport": "authenticated GitHub connector; project-owned cloud source-only branch",
+    "branch": "supervisor/shift-d-w8-math-alnum-path-20261103-0036",
+    "test_first_commit": "e13c8293ed52d25dfba50631e0f631d47c931cf3",
+    "implementation_commit": "a6bab95a672ef211cdc584068fc82a43733eba12",
+    "change": "Reject U+1D400..U+1D7FF mathematical alphanumeric style block in W8 pre-I/O QEMU proof-path lexical guard, consistent with upstream Prime P2 package-path policy; preserve visible international filenames and normal Windows-device rejection.",
+    "test_matrix": "5 negative aliases across qemu/overlay/runtime = 15 pre-I/O cases, plus 4 positive portable-name controls"
+  },
+  "after": {
+    "implementation_head": "a6bab95a672ef211cdc584068fc82a43733eba12",
+    "source_blob": "31d811e2fd4da4c01877aef52accbfdbf2b931c1",
+    "test_blob": "29a8bdd0f927c43b7bb585ffd6e266295ab278f4",
+    "compare": "2 commits ahead, 0 behind; only windows_vm.rs source/test; +9 source lines, +56 test lines",
+    "state": "Mathematical styled proof path components fail lexical preflight before filesystem I/O; ordinary visible names retain existing behavior"
+  },
+  "proof": {
+    "exact_source_test_readback": "PASS",
+    "github_ancestry": "PASS",
+    "isolated_unicode_nfkc_model": "PASS 5/5 aliases normalize to reserved DOS device stems, 4/4 visible controls not blocked by new predicate; synthetic only",
+    "native_cargo_tests": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED_ORACLE_LIVE_INTERNAL_FAILURE",
+    "hosted_exact_head_ci": "PENDING",
+    "independent_review": "PENDING_NEW_HEAD",
+    "windows_guest": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_ORACLE_LIVE_INTERNAL_FAILURE"
+  },
+  "health": "CLOUD_SOURCE_READBACK_PASS_NATIVE_AND_PHYSICAL_UNVERIFIED",
+  "movement": "MATERIAL_TEST_AND_SOURCE_COMMITS",
+  "dependency_linkage": {
+    "related_upstream": "Prime P2 component/package mathematical alphanumeric path custody PR #217",
+    "downstream": "Prime W9 TTG workload certification; Ptah integration",
+    "blocked_gate": "authorized digest-bound Windows guest; no W8 freeze/W9 admission"
+  },
+  "local_dispatch_attention": "QUEUED_FOR_KRATOS_RECONCILIATION",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_CLOUD_VERIFIED_NATIVE_UNVERIFIED_REVIEW_PENDING",
+  "production_touched": false,
+  "oracle_runtime_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}
