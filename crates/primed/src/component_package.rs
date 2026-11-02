@@ -1489,7 +1489,16 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
         })
         && raw[1..]
             .split(|byte| *byte == b'/')
-            .all(|part| !part.is_empty() && part != b"." && part != b"..")
+            .all(|part| {
+                !part.is_empty()
+                    && part != b"."
+                    && part != b".."
+                    // Windows trims terminal ASCII spaces and periods from
+                    // path components. Preserve one signed path identity
+                    // across offline release evidence and host platforms.
+                    && part.last() != Some(&b'.')
+                    && part.last() != Some(&b' ')
+            })
 }
 
 fn validate_package_path(path: &Path) -> Result<(), ComponentAdmissionError> {
@@ -3767,6 +3776,57 @@ mod tests {
             ));
         }
         let visible = dir.path().join("cafe\u{301} 東京 release.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_terminal_ascii_dot_and_space_aliases_before_io() {
+        // Unix permits these names, while Windows aliases them by trimming
+        // terminal ASCII dots/spaces from each path component. Reject them
+        // lexically, before a package file is opened or hashed.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-terminal-component-alias";
+        let signed = manifest(bytes);
+        let mut paths = Vec::new();
+        for name in ["vendor.", "vendor ", "vendor..", "vendor. "] {
+            let parent = dir.path().join(name);
+            fs::create_dir(&parent).unwrap();
+            paths.push(parent.join("component.primepkg"));
+        }
+        for name in [
+            "component.primepkg.",
+            "component.primepkg ",
+            "component.primepkg..",
+        ] {
+            paths.push(dir.path().join(name));
+        }
+        for path in paths {
+            assert!(!canonical_package_path_spelling(&path));
+            fs::write(&path, bytes).unwrap();
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        // Interior dots/spaces and visible international names stay valid.
+        let visible = dir.path().join("vendor release.v1 東京.primepkg");
         fs::write(&visible, bytes).unwrap();
         assert!(validate_package_path(&visible).is_ok());
         assert_eq!(sha256_file(&visible).unwrap(), signed.package_digest);

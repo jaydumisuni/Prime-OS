@@ -1,0 +1,39 @@
+{
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "A",
+  "project": "Prime-OS",
+  "downstream_project": "origins-phase8b",
+  "frontier": "P2_OFFLINE_PACKAGE_TRAILING_ASCII_COMPONENT_PATH_CUSTODY",
+  "before_head": "2c0989f61aa88ab1121cc1ac2d6b3bf319e5457b",
+  "implementation_head": "154b7640c5888f01cde18f7f1f8d4fbed8a99868",
+  "branch": "supervisor/shift-a-p2-trailing-component-path-20261102-1400",
+  "worktree": "CLOUD_GITHUB_BRANCH_ONLY_KRATOS_UNAVAILABLE",
+  "action": "Reject terminal ASCII dot/space in any Unix offline package path component before I/O; add seven negative and two positive identity cases",
+  "proof": {
+    "predecessor_lexical_model": "7/7 accepted (model only)",
+    "corrected_lexical_model": "7/7 rejected and 2/2 controls accepted (model only)",
+    "github_exact_source_readback": "PASS",
+    "rust_native": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_ROSTER_FAILURE",
+    "hosted": "PENDING",
+    "independent_review": "PENDING",
+    "physical": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B direct release consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package source authority",
+    "admission_granted": false
+  },
+  "material_movement_at_utc": "2026-11-02T12:05:10.073Z",
+  "observed_at_utc": "2026-11-02T12:05:10.073Z",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_STATIC_PROOF_NATIVE_UNVERIFIED_REVIEW_PENDING",
+  "production_touched": false,
+  "protected_promotion": false,
+  "stolen_device_touched": false,
+  "cloud_fallback": true,
+  "local_dispatch_reconciliation": "QUEUED_KRATOS",
+  "control_rebind": "NOT_ATTEMPTED",
+  "canonical_registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb"
+}
