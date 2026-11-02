@@ -1,0 +1,36 @@
+{
+  "after_implementation_head": "6e6e4bc08a690c4cd84a06466efaa807e82d1edd",
+  "after_state": "PR198 draft; resource and USB policy checks before first QEMU I/O; seven invalid policy cases fail closed; guest Gates 7-9 HOLD",
+  "before_head": "100fcbd5571f1848e43c0b3fb1afd39e6d5d5974",
+  "before_state": "PR196 draft; resource and USB policy checks ran after QEMU/overlay I/O; invalid memory with missing QEMU returned ENOENT; no fresh implementation worker",
+  "candidate_branch": "supervisor/shift-a-w8-policy-preflight-20261102-0400",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-policy-preflight-shift-a-20261102-0400",
+  "dependency_linkage": {
+    "control": "Cookpit canonical profile still points to prior W8 workspace; guarded PR102 must be updated and independently reviewed before live rebound",
+    "downstream": "W8 Windows guest Gates 7-9 and W9 certification HOLD"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_156_PASS_REVIEW_PENDING_GUEST_HOLD",
+  "frontier": "W8_RESOURCE_USB_POLICY_PRECHECK_BEFORE_QEMU_FILESYSTEM_IO",
+  "production_touched": false,
+  "project": "prime-windows",
+  "project_pr": "https://github.com/jaydumisuni/Prime-OS/pull/198",
+  "proof": {
+    "clippy": "PASS strict -D warnings",
+    "diff_check": "PASS",
+    "fmt": "PASS",
+    "focused": "1/1 PASS, seven invalid policy cases",
+    "guest": "Gates 7-9 NOT RUN",
+    "hosted": "UNVERIFIED pending exact-head CI",
+    "independent_review": "PENDING",
+    "native": "156/156 PASS",
+    "patrol": "check exit 0, no explicit ALLOW text",
+    "predecessor": "RED: invalid memory returned raw ENOENT before policy validation"
+  },
+  "repository": "jaydumisuni/Prime-OS",
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "A",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T02:06:15.559091+00:00",
+  "worker_action": "Shift A isolated project-owned source correction, test-first RED, focused and full native proof, non-force push, draft PR"
+}
