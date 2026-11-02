@@ -592,6 +592,14 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
                 | '\u{ff1f}' | '\u{ff5c}'
         )
     });
+    // Mathematical styled Latin letters/digits can NFKC-fold to ASCII
+    // Windows device names while retaining different Linux pathname bytes.
+    // Prime P2 already denies this style block in signed package evidence;
+    // W8 must likewise reject ambiguous QEMU launch/proof identities.
+    // Preserve ordinary visible international path components.
+    let mathematical_alphanumeric_alias = value
+        .chars()
+        .any(|character| (0x1d400..=0x1d7ff).contains(&(character as u32)));
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
@@ -712,6 +720,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         || terminal_component_alias
         || windows_portability_alias
         || win32_compatibility_punctuation_alias
+        || mathematical_alphanumeric_alias
         || confusable_path_separator
         || unicode_noncharacter
         || private_use_scalar
