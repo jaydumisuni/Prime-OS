@@ -1,0 +1,34 @@
+{
+  "after_implementation_head": "2d49d09d4ba5411cde04682bcb61c7a49989b52a",
+  "after_state": "bounded host-only W8 source correction; exact-head independent review and guest Gates 7-9 pending",
+  "before_head": "21ba18512e6bb297d741c7662e8bd0931ef8bce1",
+  "before_state": "PR198 draft; agent socket AF_UNIX length checked only after QEMU and overlay filesystem I/O; no active implementation worker",
+  "candidate_branch": "supervisor/shift-e-w8-agent-socket-preflight-20261102-0548",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-agent-socket-preflight-shift-e-20261102-0548",
+  "dependency_linkage": {
+    "control": "Cookpit PR102 guarded proposal requires independent review/rebind; canonical profile unchanged",
+    "downstream": "W8 authorized Windows guest Gates 7-9 HOLD; W9 unauthorized",
+    "upstream": "Prime-OS W8 host-only safe preparation"
+  },
+  "frontier": "W8_AGENT_SOCKET_AF_UNIX_PRECHECK_BEFORE_QEMU_FILESYSTEM_IO",
+  "production_touched": false,
+  "project": "prime-windows",
+  "proof": {
+    "clippy": "PASS -D warnings",
+    "diff_check": "PASS",
+    "fmt": "PASS",
+    "focused": "1/1 PASS",
+    "guest": "NOT RUN; Gates 7-9 HOLD",
+    "hosted": "UNVERIFIED until exact-head CI",
+    "native": "157/157 PASS",
+    "patrol": "explicit ALLOW for project worktree and source/test paths",
+    "predecessor": "RED: overlong 108-byte AF_UNIX socket masked by missing QEMU ENOENT; valid 107-byte control retained Io",
+    "review": "PENDING"
+  },
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "E",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T03:53:58.079571+00:00",
+  "worker_action": "Patrol ALLOW; test-first RED; moved AF_UNIX preflight ahead of QEMU I/O; focused/full Rust PASS; strict Clippy/fmt/diff PASS; isolated source commit"
+}

@@ -8033,6 +8033,49 @@ fn qemu_agent_socket_path_accepts_exact_unix_boundary_and_rejects_overflow() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn w8_agent_socket_byte_limit_precedes_missing_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+    use std::os::unix::ffi::OsStrExt;
+
+    // The guest-agent endpoint is caller-owned launch authority. An absent
+    // QEMU executable must not mask an AF_UNIX path that can never be bound.
+    // Exactly 107 bytes remain admissible; 108 bytes require preflight denial.
+    let dir = private_tempdir();
+    let root_bytes = dir.path().as_os_str().as_bytes().len();
+    let suffix_bytes = b"/agent.sock".len();
+    for (socket_bytes, rejected) in [(107usize, false), (108, true)] {
+        let component_bytes = socket_bytes
+            .checked_sub(root_bytes + 1 + suffix_bytes)
+            .expect("test root leaves room for AF_UNIX");
+        let runtime = dir.path().join("s".repeat(component_bytes));
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: dir.path().join("qemu-not-installed"),
+            overlay_image: runtime.join("overlay.qcow2"),
+            runtime_dir: runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        if rejected {
+            assert!(
+                matches!(
+                    error,
+                    WindowsVmError::InvalidPlan("guest agent socket path exceeds AF_UNIX limit")
+                ),
+                "overlong socket must fail before QEMU I/O: {error}"
+            );
+        } else {
+            assert!(
+                matches!(error, WindowsVmError::Io(_)),
+                "valid 107-byte socket must retain ordinary missing-QEMU I/O: {error}"
+            );
+        }
+    }
+}
+
 #[test]
 fn w8_plan_path_bytes_are_preflighted_before_unrelated_qemu_io() {
     use primed::windows_vm::WindowsVmError;
