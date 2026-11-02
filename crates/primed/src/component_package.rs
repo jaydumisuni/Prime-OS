@@ -1545,6 +1545,17 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // device stems). Reject the style block as path evidence,
                     // not arbitrary visible international filenames.
                     || (0x1D400..=0x1D7FF).contains(&(ch as u32))
+                    // Letterlike Latin compatibility symbols and double-struck
+                    // differential letters also fold to ordinary ASCII under
+                    // NFKC. Reject only the single-letter folding scalars;
+                    // preserve unrelated visible symbols and native scripts.
+                    || matches!(
+                        ch as u32,
+                        0x2102 | 0x210A..=0x210E | 0x2110..=0x2113
+                            | 0x2115 | 0x2119..=0x211D | 0x2124 | 0x2128
+                            | 0x212A | 0x212C..=0x212D | 0x212F..=0x2131
+                            | 0x2133..=0x2134 | 0x2139 | 0x2145..=0x2149
+                    )
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
@@ -4084,6 +4095,57 @@ mod tests {
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
         for name in ["vendor+release=2.primepkg", "東京.primepkg"] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_letterlike_latin_compatibility_aliases_before_io() {
+        // NFKC folds these letterlike symbols to ordinary Latin letters.
+        // Keep the signed offline package path's displayed identity stable
+        // across Unix source storage and Windows release evidence.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-letterlike-latin-custody";
+        let signed = manifest(bytes);
+        for name in [
+            "ℂON.primepkg", "ℕUL.primepkg", "ℙRN.primepkg",
+            "ℭOM1.primepkg", "ℒPT2.primepkg", "ℳodule.primepkg",
+            "vendor-ℯ.primepkg", "ⅅriver.primepkg",
+            "ℹd.primepkg", "Kernel.primepkg", "ℊen.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path, &signed, &context(&[]), |_| true, |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        let parent = dir.path().join("ℂON");
+        fs::create_dir(&parent).unwrap();
+        let child = parent.join("component.primepkg");
+        fs::write(&child, bytes).unwrap();
+        assert!(!canonical_package_path_spelling(&child));
+        assert!(matches!(
+            validate_package_path(&child),
+            Err(ComponentAdmissionError::UnsafePackagePath)
+        ));
+        for name in ["東京.primepkg", "β-release.primepkg", "vendor-℞.primepkg"] {
             let path = dir.path().join(name);
             fs::write(&path, bytes).unwrap();
             assert!(canonical_package_path_spelling(&path), "{name:?}");
