@@ -1436,6 +1436,21 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
         // Reject terminal control bytes and the Windows separator before
         // filesystem I/O: both make package evidence path identity ambiguous.
         && raw.iter().all(|byte| !byte.is_ascii_control() && *byte != b'\\')
+        // A signed package path must be unambiguously representable in
+        // durable UTF-8 evidence. Reject Unicode direction overrides,
+        // zero-width format marks, and non-ASCII whitespace before I/O.
+        // Ordinary spaces and visible international filenames remain valid.
+        && std::str::from_utf8(raw).is_ok_and(|text| {
+            !text.chars().any(|ch| {
+                (ch.is_whitespace() && ch != ' ')
+                    || matches!(
+                        ch,
+                        '\u{061c}' | '\u{200b}'..='\u{200f}'
+                            | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}'
+                            | '\u{feff}'
+                    )
+            })
+        })
         && raw[1..]
             .split(|byte| *byte == b'/')
             .all(|part| !part.is_empty() && part != b"." && part != b"..")
@@ -3622,6 +3637,57 @@ mod tests {
         fs::write(&valid, bytes).unwrap();
         assert!(validate_package_path(&valid).is_ok());
         assert_eq!(sha256_file(&valid).unwrap(), manifest.package_digest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_invisible_unicode_identity_before_admission() {
+        // The filesystem permits these names, but rendered package custody
+        // can hide or reorder their identity even when bytes are signed.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-invisible-path-custody";
+        let manifest = manifest(bytes);
+        for name in [
+            "vendor\u{202e}release.primepkg",
+            "vendor\u{202a}release.primepkg",
+            "vendor\u{2066}release.primepkg",
+            "vendor\u{2069}release.primepkg",
+            "vendor\u{200b}release.primepkg",
+            "vendor\u{200e}release.primepkg",
+            "vendor\u{2060}release.primepkg",
+            "vendor\u{feff}release.primepkg",
+            "vendor\u{00a0}release.primepkg",
+            "vendor\u{202f}release.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(
+                    validate_package_path(&path),
+                    Err(ComponentAdmissionError::UnsafePackagePath)
+                ),
+                "invisible Unicode package identity accepted: {name:?}"
+            );
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &manifest,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+
+        let visible = dir.path().join("café 東京 package.primepkg");
+        fs::write(&visible, bytes).unwrap();
+        assert!(validate_package_path(&visible).is_ok());
+        assert_eq!(sha256_file(&visible).unwrap(), manifest.package_digest);
     }
 
     #[cfg(unix)]

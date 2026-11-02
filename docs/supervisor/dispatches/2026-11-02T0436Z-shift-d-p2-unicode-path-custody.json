@@ -1,0 +1,38 @@
+{
+  "after_state": "66 tracked Rust lines reject ambiguous UTF-8 package path identities before filesystem I/O; visible international path positive control preserved",
+  "before_head": "45f21b385eaf2f8737ecfa7bb48ce199d4bcaf48",
+  "before_state": "P2 offline package path custody accepted Unicode bidi/zero-width/nonbreaking-space aliases",
+  "branch": "supervisor/shift-d-p2-package-unicode-custody-20261102-0636",
+  "dependency_linkage": {
+    "control": "Cookpit guarded PR99, no live rebind",
+    "downstream": "Origins Phase 8B direct consumption FAIL_CLOSED",
+    "upstream": "Prime P2 component/package authority"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_NATIVE_PASS_REVIEW_PENDING_ORIGINS_HOLD",
+  "frontier": "P2_OFFLINE_PACKAGE_INVISIBLE_UNICODE_PATH_CUSTODY",
+  "implementation_head": "cff857f31034fc737fdf7c503408530dbe03796f",
+  "implementation_owner": "Prime-OS",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/201",
+  "production_touched": false,
+  "project": "origins-phase8b",
+  "proof": {
+    "focused": "1/1 PASS, 10 adversarial names across three entry points",
+    "git_diff_check": "PASS",
+    "hosted_exact_head_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "patrol": "ALLOW",
+    "physical": "NOT_PERFORMED",
+    "prime_contracts_component": "31/31 PASS",
+    "primed_lib": "147/147 PASS",
+    "rustfmt": "PASS",
+    "strict_clippy": "PASS",
+    "test_first": "RED: U+202E path admitted on predecessor"
+  },
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "D",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T04:36:27.049832+00:00",
+  "worker_action": "Patrol ALLOW; test-first RED; bounded Rust lexical validation and adversarial test; focused/full native proof; nonforce branch push; draft PR201",
+  "worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/p2-package-unicode-custody-shift-d-20261102-0636"
+}
