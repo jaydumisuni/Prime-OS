@@ -1,0 +1,52 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "A",
+  "project": "prime-windows",
+  "frontier": "W8_WIN32_NFKC_COMPATIBILITY_PUNCTUATION_IDENTITY",
+  "observed_at_utc": "2026-11-02T18:06:45.664Z",
+  "before_head": "7da1acbd0c37f1ffc75238101a137fd097469e97",
+  "test_head": "25be40845b1fc5a0a0df62959077198324fd6d57",
+  "implementation_head": "5596d0e838f4e24cf3d64d28c3d87a1666ffd842",
+  "candidate_branch": "supervisor/shift-a-w8-win32-compat-punctuation-20261102-2000",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/214",
+  "worker_action": "Authenticated GitHub cloud fallback, test-first project-owned source-only W8 lexical guard; no Oracle/KRATOS terminal access",
+  "before_state": "W8 VM path predicate rejects literal Win32 punctuation, reserved device names and several Unicode confusables but admits eleven NFKC Win32-invalid compatibility punctuation scalars",
+  "after_state": "Shared W8 path preflight rejects eleven NFKC punctuation aliases before QEMU filesystem I/O for QEMU binary, overlay and runtime path fields; portable positive controls retained",
+  "source_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "proof": {
+    "canonical_registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "predecessor_exact": "7da1acbd0c37f1ffc75238101a137fd097469e97",
+    "source_test_readback": "PASS exact branch source and test blob; 11/11 guard/test codepoints",
+    "git_ancestry": "PASS 2 ahead 0 behind predecessor; two source/test files only",
+    "independent_unicode_semantics": "11/11 compatibility scalars NFKC-fold to Win32-invalid punctuation; JavaScript Unicode model only",
+    "regression_matrix": "33 declared negative (11 x 3) and 3 positive; native execution UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED Oracle Live roster internal failure",
+    "native_rust": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "hosted_ci": "UNVERIFIED_FINAL_RECEIPT_HEAD",
+    "independent_review": "PENDING",
+    "authorized_windows_guest": "NOT_PROVEN",
+    "nodie_roster": "UNVERIFIED_ORACLE_LIVE_INTERNAL_ERROR",
+    "local_dispatch_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "health": "SOURCE_STATIC_READBACK_PASS_NATIVE_UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "dependency_linkage": {
+    "upstream": "Prime W8 host-side VM path identity",
+    "downstream": [
+      "Prime W9 real TTG workload certification",
+      "Ptah E07 integration"
+    ],
+    "external_gate": "authorized digest-bound Windows guest",
+    "admission_granted": false
+  },
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false,
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_STATIC_VERIFIED_NATIVE_UNVERIFIED_REVIEW_PENDING_GUEST_HOLD"
+}
