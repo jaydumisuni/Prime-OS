@@ -1,0 +1,35 @@
+{
+  "after_state": "W8 dot-leader path identity rejects before QEMU I/O; review and hosted qualification pending; guest Gates 7-9 HOLD",
+  "before_head": "b7518f0995716a01d7dc63f0446856be556952d4",
+  "before_state": "PR202 exact-head Codex review clean; dot-leader path identity reached missing-QEMU filesystem IO",
+  "candidate_branch": "supervisor/shift-e-w8-dot-leader-20261102-1048",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-dot-leader-shift-e-20261102-1048",
+  "dependency_linkage": {
+    "control": "Cookpit PR102 guarded binding requires independent review and admission",
+    "downstream": "W8 Windows guest Gates 7-9 HOLD; W9 unauthorized",
+    "upstream": "Prime W8 PR202 exact-head clean review consumed"
+  },
+  "disposition": "MATERIAL_SOURCE_CANDIDATE_NATIVE_PASS_REVIEW_PENDING_GUEST_HOLD",
+  "frontier": "W8_UNICODE_DOT_LEADER_PATH_AUTHORITY_PRE_QEMU_IO",
+  "implementation_head": "13c8c4e6192c2b03af607bef05b685df862fb835",
+  "production_touched": false,
+  "project": "prime-windows",
+  "proof": {
+    "clippy": "PASS -D warnings",
+    "diff_check": "PASS",
+    "fmt": "PASS",
+    "focused": "PASS nine glyph/field combinations",
+    "hosted": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native": "159/159 PASS",
+    "patrol": "ALLOW on project worktree and two source/test paths",
+    "physical_guest": "HOLD",
+    "test_first": "RED: U+2024 in QEMU path returned ENOENT"
+  },
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "E",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T08:20:03Z",
+  "worker_action": "Patrol ALLOW; isolated project-owned source/test change; test-first RED; nine dot-leader glyph/field combinations; native proof; nonforce publication"
+}
