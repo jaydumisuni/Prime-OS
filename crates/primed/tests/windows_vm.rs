@@ -1716,6 +1716,59 @@ fn w8_dot_leader_path_aliases_fail_before_qemu_filesystem_io() {
 }
 
 #[test]
+fn w8_trailing_ascii_component_aliases_fail_before_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    // Linux distinguishes these path bytes, but Windows tooling can strip a
+    // terminal ASCII dot or space. Reject ambiguous W8 evidence identities
+    // before touching a deliberately missing QEMU binary.
+    for suffix in ['.', ' '] {
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let aliased = format!("/tmp/prime-w8-identity{suffix}");
+            match field {
+                "qemu" => request.qemu_binary = format!("{aliased}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{aliased}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = aliased.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, WindowsVmError::InvalidPlan(_)),
+                "field {field}, suffix {suffix:?} escaped lexical preflight: {error}"
+            );
+        }
+    }
+
+    // Interior dots/spaces and leading dots are not terminal aliases.
+    for valid in [
+        "/tmp/prime-w8.inner/overlay.qcow2",
+        "/tmp/prime-w8 inner/overlay.qcow2",
+        "/tmp/.prime-w8/overlay.qcow2",
+    ] {
+        let request = VmPlanRequest {
+            qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+            overlay_image: valid.into(),
+            runtime_dir: "/tmp/prime-w8-missing".into(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        };
+        assert!(
+            matches!(build_qemu_plan(&request), Err(WindowsVmError::Io(_))),
+            "visible path {valid:?} should pass lexical preflight"
+        );
+    }
+}
+
+#[test]
 fn w8_qemu_comma_confusables_fail_before_filesystem_io() {
     use primed::windows_vm::WindowsVmError;
 

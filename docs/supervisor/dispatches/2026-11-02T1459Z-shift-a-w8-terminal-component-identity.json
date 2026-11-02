@@ -1,0 +1,41 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "A",
+  "project": "prime-windows",
+  "frontier": "W8_TERMINAL_ASCII_COMPONENT_PATH_IDENTITY",
+  "time_utc": "2026-11-02T14:59:17Z",
+  "before_head": "5d132cae29f765f7e17bec2ce7826b1384d79df2",
+  "test_head": "976d8d6bdb7d63db832270a99684efd2ccfffb9a",
+  "implementation_head": "a36b8a3ae152ff7f2064be9c6741fce3eff1a10a",
+  "formatted_implementation_head": "4910ffe599abfcb1093af3231864684c5806a293",
+  "candidate_branch": "supervisor/shift-a-w8-trailing-component-custody-20261102-1700",
+  "pr": "https://github.com/jaydumisuni/Prime-OS/pull/211",
+  "worker_action": "GitHub cloud fallback: test-first source-only W8 guard against terminal ASCII dot/space components before VM filesystem I/O",
+  "source_files": [
+    "crates/primed/src/windows_vm.rs",
+    "crates/primed/tests/windows_vm.rs"
+  ],
+  "before_state": "Predecessor W8 lexical predicate rejected traversal and confusable Unicode but did not reject ASCII terminal-dot/space components",
+  "after_state": "Shared W8 predicate denies terminal ASCII dot/space path components; test matrix specifies 6 negative and 3 positive cases",
+  "proof": {
+    "predecessor_static": "Missing terminal ASCII component alias guard confirmed in predecessor source; native RED not executed",
+    "source_test_readback": "PASS: guard and test cases present at exact implementation head; source/test whitespace clean",
+    "negative_matrix": "6 cases declared (2 suffixes x 3 path fields), native execution UNVERIFIED",
+    "positive_controls": "3 lexical controls declared, native execution UNVERIFIED",
+    "patrol": "UNVERIFIED: Oracle Live cloud roster and KRATOS terminal failed internally",
+    "native_rust_tests": "UNVERIFIED: no authorized native Rust runner available",
+    "rustfmt_clippy": "UNVERIFIED",
+    "hosted_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical_guest_proof": "NOT_PROVEN"
+  },
+  "dependency_linkage": "Prime Windows W8 host-only source preparation; authorized Windows guest remains an external acceptance gate, W9 held; Ptah F04-F07 Prime integration is downstream; Origins Phase 8B not admitted",
+  "health": "SOURCE_STATIC_READBACK_PASS_NATIVE_UNVERIFIED",
+  "movement": "MATERIAL_SOURCE_COMMIT",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "protected_promotion": false,
+  "supervisor_schedules_changed": false,
+  "local_attention_and_dispatch": "QUEUED_KRATOS_RECONCILIATION",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_AND_NATIVE_PENDING"
+}
