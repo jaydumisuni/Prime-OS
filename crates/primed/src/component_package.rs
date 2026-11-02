@@ -3834,6 +3834,70 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn package_path_rejects_windows_device_and_ads_aliases_before_io() {
+        // Unix accepts these names; Windows treats device stems as reserved,
+        // and punctuation including ':' can change NTFS stream/path identity.
+        // Reject them in every signed package path component before I/O.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-windows-device-path-identity";
+        let signed = manifest(bytes);
+        for name in [
+            "CON", "con.txt", "PrN.dat", "AUX", "NUL.primepkg",
+            "COM1", "com9.log", "LPT1", "lpt9.txt",
+            "CONIN$", "CONOUT$", "vendor:stream.primepkg",
+            "vendor?release.primepkg", "vendor*release.primepkg",
+            "vendor|release.primepkg", "vendor<release.primepkg",
+            "vendor>release.primepkg", "vendor\"release.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path,
+                    &signed,
+                    &context(&[]),
+                    |_| true,
+                    |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        let ancestors = dir.path().join("ancestor");
+        fs::create_dir(&ancestors).unwrap();
+        for name in ["CON", "NUL.txt", "COM1", "LPT9", "vendor:stream"] {
+            let parent = ancestors.join(name);
+            fs::create_dir(&parent).unwrap();
+            let path = parent.join("component.primepkg");
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in [
+            "console.primepkg", "Com10.primepkg", "LPT0.primepkg",
+            "NULish.primepkg", "vendor release.v1 東京.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_path_rejects_nonrendering_scalar_aliases_before_io() {
         // These names are legal Unix bytes, but they can render as the same
         // visible package identity as a different signed pathname.
