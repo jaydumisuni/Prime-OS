@@ -1540,6 +1540,11 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                             | '\u{ff1e}' | '\u{ff02}' | '\u{ff0a}'
                             | '\u{ff1f}' | '\u{ff5c}'
                     )
+                    // Mathematical styled Latin letters/digits can fold to
+                    // ordinary ASCII under NFKC (including reserved DOS
+                    // device stems). Reject the style block as path evidence,
+                    // not arbitrary visible international filenames.
+                    || (0x1D400..=0x1D7FF).contains(&(ch as u32))
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
