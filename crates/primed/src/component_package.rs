@@ -1514,6 +1514,16 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                         '\u{2024}' | '\u{2025}' | '\u{2026}' | '\u{fe19}'
                             | '\u{fe30}' | '\u{fe52}' | '\u{ff0e}'
                     )
+                    // NFKC folds these compatibility forms to Win32-invalid
+                    // punctuation (: < > " * ? |). Preserve signed package
+                    // path identity across Unix storage and Windows review.
+                    || matches!(
+                        ch,
+                        '\u{fe13}' | '\u{fe55}' | '\u{ff1a}'
+                            | '\u{fe64}' | '\u{ff1c}' | '\u{fe65}'
+                            | '\u{ff1e}' | '\u{ff02}' | '\u{ff0a}'
+                            | '\u{ff1f}' | '\u{ff5c}'
+                    )
                     || {
                         let point = ch as u32;
                         (0xFDD0..=0xFDEF).contains(&point)
