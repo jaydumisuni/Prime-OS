@@ -175,6 +175,26 @@ def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypa
         raise AssertionError("same-byte in-place rewrite admitted")
 
 
+def test_rejects_permission_change_during_review_input_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+
+    def changed_mode_during_read(file: Path) -> bytes:
+        content = original_read(file)
+        if file == target:
+            file.chmod(0o600)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", changed_mode_during_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed during read" in str(error)
+    else:
+        raise AssertionError("permission-changing review input admitted")
+
+
 def test_rejects_group_writable_review_root(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     root.chmod(0o770)

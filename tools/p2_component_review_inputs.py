@@ -118,7 +118,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if after.st_uid not in (0, os.geteuid()) or after.st_mode & 0o022:
             raise ReviewInputError(f"review input owner or permissions changed during read: {relative}")
         identity = lambda state: (
-            state.st_dev, state.st_ino, state.st_size,
+            state.st_dev, state.st_ino, state.st_mode, state.st_size,
             state.st_mtime_ns, state.st_ctime_ns,
         )
         if (not stat.S_ISREG(after.st_mode) or file.resolve() != file
