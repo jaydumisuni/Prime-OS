@@ -1,0 +1,64 @@
+{
+  "schema": "ttg.cookpit.supervisor.dispatch.v1",
+  "shift": "B",
+  "observed_at_utc": "2026-11-03T00:10:49.677Z",
+  "project": "origins-phase8b",
+  "repository": "jaydumisuni/Prime-OS",
+  "frontier": "Prime P2 upstream component/package custody — reject circled Latin NFKC aliases before signed package I/O",
+  "selection": {
+    "canonical_registry": "jaydumisuni/cookpit@aa49182ce91c5261ac49d04d9d297fea6fe39b8d:registry.json",
+    "profile": "profiles/origins-phase8b.json",
+    "basis": "Oldest verified cloud-visible candidate among inspected enabled non-device safe frontiers: Prime P2 PR #219 updated 2026-11-02T22:46:50Z; full KRATOS dispatch-ledger fairness unavailable",
+    "roadmap": "docs/PRIME_OS_MASTER_PLAN.md; docs/PRIME_OS_ROADMAP.md; docs/PRIME_CURRENT_STATUS.md; docs/AI_HANDOFF.md",
+    "local_worker_lease": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "patrol_preflight": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "local_dispatch_fairness": "UNVERIFIED_KRATOS_UNREACHABLE"
+  },
+  "before": {
+    "branch": "supervisor/shift-e-p2-letterlike-latin-path-custody-20261103",
+    "head": "c574a644a6a1b2e18be42cdb908b3ccfb311444e",
+    "review": "Draft PR #219; no review threads or reviews returned",
+    "proof": "GitHub source readback and isolated Unicode model only; native Rust/Patrol unverified"
+  },
+  "action": {
+    "transport": "authenticated GitHub connector; project-owned source-only cloud fallback",
+    "branch": "supervisor/shift-b-p2-circled-latin-path-custody-20261103-0207",
+    "test_first_commit": "5b671fc9b89af71df9b7f9286559dfe574fc83e3",
+    "implementation_commit": "605a368335abc310f647181268eef816ae449c82",
+    "formatting_commit": "a2c6619490a2c1a581ca7e19be3efc615508e7b5",
+    "change": "Reject all 52 circled Latin letters U+24B6..U+24E9 whose NFKC form is a single ASCII Latin letter, in signed package paths before lookup, hashing, or offline verification; preserve unrelated visible international names.",
+    "tests": "8 negative leaf aliases, 2 negative ancestors, 3 positive controls; pre-I/O path, validator, hasher and offline verification assertions"
+  },
+  "after": {
+    "implementation_head": "a2c6619490a2c1a581ca7e19be3efc615508e7b5",
+    "ancestry": "3 commits ahead, 0 behind exact predecessor",
+    "changed_files": [
+      "crates/primed/src/component_package.rs"
+    ],
+    "source_delta": "+61/-0 lines before receipt"
+  },
+  "proof": {
+    "github_compare": "PASS 3 ahead 0 behind",
+    "remote_source_readback": "PASS",
+    "independent_unicode_nfkc_model": "PASS 52/52 circled Latin scalars NFKC to single ASCII Latin; 8/8 negatives and 3/3 positives classified by isolated range model",
+    "native_rust_tests": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "patrol": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical_device": "NOT_CLAIMED"
+  },
+  "dependency_linkage": {
+    "blocked_downstream": "Origins Phase 8B release consumption remains fail-closed pending pinned Prime P2 component/package authority",
+    "eligible_upstream": "Prime P2 component/package source-only hardening in Prime-OS project-owned branch; no Origins release authorization granted"
+  },
+  "health": "SOURCE_AND_MODEL_VERIFIED_NATIVE_AND_REVIEW_PENDING",
+  "movement": "MATERIAL_IMPLEMENTATION_SOURCE_HEAD_ADVANCED",
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_REVIEW_AND_NATIVE_QUALIFICATION_PENDING",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "oracle_runtime_touched": false,
+  "protected_main_touched": false,
+  "supervisor_schedules_changed": false,
+  "local_dispatch_and_attention": "QUEUED_FOR_KRATOS_RECONCILIATION"
+}
