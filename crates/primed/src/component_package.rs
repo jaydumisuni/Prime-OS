@@ -1545,6 +1545,10 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // device stems). Reject the style block as path evidence,
                     // not arbitrary visible international filenames.
                     || (0x1D400..=0x1D7FF).contains(&(ch as u32))
+                    // Circled Latin letters NFKC-fold to plain ASCII A-Z/a-z.
+                    // Keep signed package path evidence unambiguous without
+                    // rejecting unrelated visible international characters.
+                    || (0x24B6..=0x24E9).contains(&(ch as u32))
                     // Letterlike Latin compatibility symbols and double-struck
                     // differential letters also fold to ordinary ASCII under
                     // NFKC. Reject only the single-letter folding scalars;
@@ -4145,6 +4149,63 @@ mod tests {
             validate_package_path(&child),
             Err(ComponentAdmissionError::UnsafePackagePath)
         ));
+        for name in ["東京.primepkg", "β-release.primepkg", "vendor-℞.primepkg"] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_path_rejects_circled_latin_compatibility_aliases_before_io() {
+        // All 52 circled Latin letters U+24B6..=U+24E9 NFKC-fold to
+        // ordinary ASCII letters. Reject their ambiguous package identities
+        // before filesystem lookup, hashing, or offline admission.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-circled-latin-path-custody";
+        let signed = manifest(bytes);
+        for name in [
+            "ⒸON.primepkg",
+            "ⓒOM1.primepkg",
+            "ⓃUL.primepkg",
+            "ⓅRN.primepkg",
+            "ⓁPT2.primepkg",
+            "vendor-ⓐ.primepkg",
+            "Ⓐpp.primepkg",
+            "ⓩeta.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path, &signed, &context(&[]), |_| true, |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
+        for name in ["ⒸON", "ⓒOM1"] {
+            let parent = dir.path().join(name);
+            fs::create_dir(&parent).unwrap();
+            let path = parent.join("component.primepkg");
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ));
+        }
         for name in ["東京.primepkg", "β-release.primepkg", "vendor-℞.primepkg"] {
             let path = dir.path().join(name);
             fs::write(&path, bytes).unwrap();
