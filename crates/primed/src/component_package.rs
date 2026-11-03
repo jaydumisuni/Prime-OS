@@ -4156,6 +4156,63 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn package_path_rejects_circled_latin_compatibility_aliases_before_io() {
+        // All 52 circled Latin letters U+24B6..=U+24E9 NFKC-fold to
+        // ordinary ASCII letters. Reject their ambiguous package identities
+        // before filesystem lookup, hashing, or offline admission.
+        let dir = tempdir().unwrap();
+        let bytes = b"prime-p2-circled-latin-path-custody";
+        let signed = manifest(bytes);
+        for name in [
+            "ⒸON.primepkg",
+            "ⓒOM1.primepkg",
+            "ⓃUL.primepkg",
+            "ⓅRN.primepkg",
+            "ⓁPT2.primepkg",
+            "vendor-ⓐ.primepkg",
+            "Ⓐpp.primepkg",
+            "ⓩeta.primepkg",
+        ] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                sha256_file(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+            assert!(matches!(
+                verify_offline_component_package(
+                    &path, &signed, &context(&[]), |_| true, |_, _| true,
+                ),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in ["ⒸON", "ⓒOM1"] {
+            let parent = dir.path().join(name);
+            fs::create_dir(&parent).unwrap();
+            let path = parent.join("component.primepkg");
+            fs::write(&path, bytes).unwrap();
+            assert!(!canonical_package_path_spelling(&path), "{name:?}");
+            assert!(matches!(
+                validate_package_path(&path),
+                Err(ComponentAdmissionError::UnsafePackagePath)
+            ), "{name:?}");
+        }
+        for name in ["東京.primepkg", "β-release.primepkg", "vendor-℞.primepkg"] {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(canonical_package_path_spelling(&path), "{name:?}");
+            assert!(validate_package_path(&path).is_ok(), "{name:?}");
+            assert_eq!(sha256_file(&path).unwrap(), signed.package_digest);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_path_rejects_fullwidth_windows_device_aliases_before_io() {
         // Fullwidth ASCII letters, digits and dollar signs can make a
         // Unix-only path look like a reserved DOS device in release evidence.
