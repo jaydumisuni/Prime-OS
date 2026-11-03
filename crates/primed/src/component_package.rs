@@ -1545,6 +1545,10 @@ fn canonical_package_path_spelling(path: &Path) -> bool {
                     // device stems). Reject the style block as path evidence,
                     // not arbitrary visible international filenames.
                     || (0x1D400..=0x1D7FF).contains(&(ch as u32))
+                    // Circled Latin letters NFKC-fold to plain ASCII A-Z/a-z.
+                    // Keep signed package path evidence unambiguous without
+                    // rejecting unrelated visible international characters.
+                    || (0x24B6..=0x24E9).contains(&(ch as u32))
                     // Letterlike Latin compatibility symbols and double-struck
                     // differential letters also fold to ordinary ASCII under
                     // NFKC. Reject only the single-letter folding scalars;
