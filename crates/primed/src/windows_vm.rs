@@ -621,7 +621,9 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let confusable_path_separator = value.chars().any(|character| {
         matches!(
             character,
-            '\u{ff0c}' // Fullwidth comma can counterfeit a QEMU option delimiter.
+            '\u{060c}' // Arabic comma can resemble a QEMU option separator.
+            | '\u{3001}' // Ideographic comma can counterfeit reviewed option boundaries.
+            | '\u{ff0c}' // Fullwidth comma can counterfeit a QEMU option delimiter.
                 | '\u{fe10}' // Vertical presentation comma resembles an option separator.
                 | '\u{fe50}' // Small comma resembles the QEMU parser delimiter.
                 | '\u{2024}' // One dot leader can counterfeit a current-directory segment.
