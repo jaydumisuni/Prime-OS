@@ -4183,17 +4183,17 @@ mod tests {
             assert!(matches!(
                 validate_package_path(&path),
                 Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
+            ));
             assert!(matches!(
                 sha256_file(&path),
                 Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
+            ));
             assert!(matches!(
                 verify_offline_component_package(
                     &path, &signed, &context(&[]), |_| true, |_, _| true,
                 ),
                 Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
+            ));
         }
         for name in ["ⒸON", "ⓒOM1"] {
             let parent = dir.path().join(name);
@@ -4204,7 +4204,7 @@ mod tests {
             assert!(matches!(
                 validate_package_path(&path),
                 Err(ComponentAdmissionError::UnsafePackagePath)
-            ), "{name:?}");
+            ));
         }
         for name in ["東京.primepkg", "β-release.primepkg", "vendor-℞.primepkg"] {
             let path = dir.path().join(name);
