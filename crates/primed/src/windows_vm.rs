@@ -600,6 +600,12 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
     let mathematical_alphanumeric_alias = value
         .chars()
         .any(|character| (0x1d400..=0x1d7ff).contains(&(character as u32)));
+    // Circled Latin letters U+24B6..=U+24E9 NFKC-fold to ASCII A-Z/a-z.
+    // Match the Prime P2 signed-package path boundary: W8 VM proof paths
+    // must not carry a distinct Linux spelling for the same reviewed name.
+    let circled_latin_alias = value
+        .chars()
+        .any(|character| (0x24b6..=0x24e9).contains(&(character as u32)));
     let bidi_control = value.chars().any(|character| {
         matches!(
             character,
@@ -721,6 +727,7 @@ fn runtime_path_has_unsafe_text(value: &str) -> bool {
         || windows_portability_alias
         || win32_compatibility_punctuation_alias
         || mathematical_alphanumeric_alias
+        || circled_latin_alias
         || confusable_path_separator
         || unicode_noncharacter
         || private_use_scalar
