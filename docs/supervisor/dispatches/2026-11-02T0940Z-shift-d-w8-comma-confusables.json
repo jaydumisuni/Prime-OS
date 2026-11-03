@@ -1,0 +1,36 @@
+{
+  "after_head": "92013a3cbb3a1c7a1a2a91de8da79ffb60ba0696",
+  "after_state": "Comma-like Unicode path identities denied before QEMU I/O; native 160 PASS; review/guest gates pending",
+  "before_head": "b8eb3902613a88678741cae7a799642bd9353019",
+  "before_state": "PR204 draft head b8eb390; U+FF0C reached missing QEMU executable I/O",
+  "candidate_branch": "supervisor/shift-d-w8-comma-confusables-20261102-1136",
+  "candidate_worktree": "/home/kratos/projects/Prime-OS/.workspace/worktrees/w8-comma-confusables-shift-d-20261102-1136",
+  "dependency_linkage": {
+    "control": "Cookpit PR102 guarded binding; no live rebound",
+    "downstream": "W8 Windows guest Gates 7-9 HOLD; W9 unauthorized",
+    "upstream": "Prime W8 PR204 source-only preparatory authority"
+  },
+  "disposition": "MATERIAL_SOURCE_COMMITTED_NATIVE_160_PASS_REVIEW_PENDING_GUEST_HOLD",
+  "frontier": "W8_QEMU_OPTION_COMMA_CONFUSABLE_PATH_CUSTODY",
+  "implementation_head": "92013a3cbb3a1c7a1a2a91de8da79ffb60ba0696",
+  "production_touched": false,
+  "project": "prime-windows",
+  "proof": {
+    "clippy": "PASS -D warnings",
+    "diff_check": "PASS",
+    "fmt": "PASS",
+    "focused": "1/1 PASS; nine adversarial combinations, two visible-Unicode positive controls",
+    "hosted": "UNVERIFIED",
+    "native": "160/160 PASS",
+    "patrol": "xvfb-run -a patrol workspace exit 0, no explicit ALLOW",
+    "physical_guest": "HOLD",
+    "review": "PENDING",
+    "test_first": "RED: U+FF0C in QEMU executable path returned ENOENT"
+  },
+  "schema": "ttg.prime.supervisor.dispatch.v1",
+  "shift": "D",
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "time_utc": "2026-11-02T09:40:00Z",
+  "worker_action": "Shift D isolated project-owned source/test implementation; Patrol headless exit 0 (no explicit ALLOW); test-first RED; corrected source; native proof; nonforce publication pending"
+}
