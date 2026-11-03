@@ -1,0 +1,75 @@
+{
+  "schema": "ttg.supervisor.project-dispatch.v1",
+  "shift": "C",
+  "observed_at_utc": "2026-11-03T00:30:41Z",
+  "project": "prime-windows",
+  "repository": "jaydumisuni/Prime-OS",
+  "frontier": "W8_CIRCLED_LATIN_VM_PROOF_PATH_IDENTITY",
+  "canonical_authority": {
+    "cookpit_origin_main": "aa49182ce91c5261ac49d04d9d297fea6fe39b8d",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "profile": "profiles/prime-windows.json",
+    "roadmap": "docs/PRIME_OS_ROADMAP.md",
+    "handoff": "docs/AI_HANDOFF.md",
+    "enabled_projects": 8,
+    "oracle_phase27_enabled": false
+  },
+  "fairness": {
+    "selection": "oldest recovered eligible cloud-visible implementation candidate among eight canonical enabled projects; W8 last published 2026-11-02T22:39Z, preceding Formula G0 23:06Z and Data Fabric 23:14Z",
+    "kratos_worker_lease": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "kratos_dispatch_ledger": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "patrol": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE"
+  },
+  "before": {
+    "branch": "supervisor/shift-d-w8-math-alnum-path-20261103-0036",
+    "head": "b6ce5379b3eeb65d3d7562bd9c070cc655297392",
+    "state": "W8 pre-I/O VM proof path predicate rejects mathematical styled aliases but admits 52 circled Latin compatibility letters that NFKC-fold to ASCII A-Z/a-z; upstream Prime P2 already rejects these in signed package paths",
+    "review": "PR #218 open draft; no submitted reviews or review threads returned"
+  },
+  "action": {
+    "transport": "authenticated GitHub cloud fallback, project-owned branch; no KRATOS or device command",
+    "branch": "supervisor/shift-c-w8-circled-latin-path-20261103-0224",
+    "test_first_commit": "92c9b8fce2e9b1c94faba79292069418d23ad798",
+    "implementation_commit": "5d49be368cfab2d33c313ddc7c0931432c7b4b9c",
+    "change": "Reject U+24B6..=U+24E9 in W8 QEMU launch/proof path lexical preflight before filesystem I/O, aligned with upstream Prime P2 package-path policy",
+    "test_matrix": "52 Unicode scalars x qemu/overlay/runtime = 156 negative field cases, 6 representative device aliases, 4 visible-name positive controls"
+  },
+  "after": {
+    "implementation_head": "5d49be368cfab2d33c313ddc7c0931432c7b4b9c",
+    "source_blob": "ea7feb44ed7ed4399ddc019a80985e95bc6982ce",
+    "test_blob": "614f47c4e4fe072de2b06c25c24b61187e998e7c",
+    "compare": "2 ahead / 0 behind exact predecessor, only windows_vm.rs source/test",
+    "state": "Circled Latin compatibility aliases fail lexical VM proof path preflight before QEMU I/O; unrelated visible international names preserved by the added predicate"
+  },
+  "proof": {
+    "github_exact_source_test_readback": "PASS",
+    "github_predecessor_ancestry": "PASS_2_AHEAD_0_BEHIND",
+    "isolated_unicode_nfkc_model": "PASS_52_OF_52_LATIN_SCALARS_AND_6_DEVICE_ALIAS_EXAMPLES",
+    "native_cargo_tests": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "clippy": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED_ORACLE_TRANSPORT_FAILURE",
+    "hosted_exact_head_ci": "PENDING",
+    "independent_review": "PENDING",
+    "windows_guest": "NOT_PROVEN",
+    "nodie_cloud_roster": "UNVERIFIED_INTERNAL_FAILURE"
+  },
+  "movement": {
+    "implementation": "TEST_FIRST_AND_SOURCE_HEAD_ADVANCED",
+    "health": "GITHUB_SOURCE_READBACK_AND_ISOLATED_UNICODE_MODEL_ONLY",
+    "worker_lease": "UNVERIFIED_KRATOS_TRANSPORT"
+  },
+  "dependency_linkage": {
+    "upstream": "Prime P2 circled Latin signed package path custody draft PR #220",
+    "downstream": "Prime W8 Windows VM fallback proof and W9 TTG workload certification",
+    "blocked_gate": "authorized digest-bound Windows guest; no W8 freeze/W9 admission",
+    "admission_granted": false
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_REMOTE_VERIFIED_NATIVE_UNVERIFIED_REVIEW_PENDING",
+  "local_dispatch_attention": "QUEUED_FOR_KRATOS_RECONCILIATION",
+  "production_touched": false,
+  "oracle_runtime_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}
