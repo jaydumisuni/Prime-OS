@@ -1831,6 +1831,74 @@ fn w8_mathematical_alphanumeric_path_aliases_fail_before_qemu_io() {
 }
 
 #[test]
+fn w8_circled_latin_path_aliases_fail_before_qemu_io() {
+    use primed::windows_vm::WindowsVmError;
+
+    // Prime P2 rejects all 52 circled Latin compatibility letters in signed
+    // package paths. W8 must reject the same ambiguous proof-path identities
+    // before any QEMU filesystem access, including non-device-name aliases.
+    for codepoint in 0x24b6..=0x24e9 {
+        let character = char::from_u32(codepoint).unwrap();
+        let component = format!("proof-{character}");
+        for field in ["qemu", "overlay", "runtime"] {
+            let mut request = VmPlanRequest {
+                qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+                overlay_image: "/tmp/prime-w8-missing/overlay.qcow2".into(),
+                runtime_dir: "/tmp/prime-w8-missing".into(),
+                memory_mib: 2048,
+                vcpus: 2,
+                usb_nodes: vec![],
+            };
+            let alias = format!("/tmp/{component}");
+            match field {
+                "qemu" => request.qemu_binary = format!("{alias}/qemu").into(),
+                "overlay" => request.overlay_image = format!("{alias}/overlay.qcow2").into(),
+                "runtime" => request.runtime_dir = alias.into(),
+                _ => unreachable!(),
+            }
+            let error = build_qemu_plan(&request).unwrap_err();
+            assert!(
+                matches!(error, WindowsVmError::InvalidPlan(_)),
+                "field {field} admitted circled Latin U+{codepoint:04X}: {error}"
+            );
+        }
+    }
+
+    // Representative NFKC device-name aliases must fail in the same way.
+    for component in ["ⒸON", "ⓒOM1", "ⓃUL", "ⓅRN", "ⓁPT2", "ⒶUX.txt"] {
+        let request = VmPlanRequest {
+            qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+            overlay_image: format!("/tmp/{component}/overlay.qcow2").into(),
+            runtime_dir: "/tmp/prime-w8-missing".into(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        };
+        assert!(
+            matches!(build_qemu_plan(&request), Err(WindowsVmError::InvalidPlan(_))),
+            "admitted circled Latin Windows device alias {component:?}"
+        );
+    }
+
+    // Unrelated visible international names remain valid lexical inputs;
+    // the deliberately missing QEMU binary must still yield the I/O error.
+    for component in ["東京", "β-release", "vendor-℞", "CONSOLE"] {
+        let request = VmPlanRequest {
+            qemu_binary: "/definitely/missing/qemu-system-x86_64".into(),
+            overlay_image: format!("/tmp/{component}/overlay.qcow2").into(),
+            runtime_dir: "/tmp/prime-w8-missing".into(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        };
+        assert!(
+            matches!(build_qemu_plan(&request), Err(WindowsVmError::Io(_))),
+            "portable component {component:?} must pass lexical preflight"
+        );
+    }
+}
+
+#[test]
 fn w8_win32_compatibility_punctuation_aliases_fail_before_qemu_io() {
     use primed::windows_vm::WindowsVmError;
 
