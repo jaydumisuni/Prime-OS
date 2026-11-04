@@ -350,3 +350,17 @@ def test_local_git_replace_ref_cannot_reinterpret_committed_review_bytes(tmp_pat
         (root / relative).read_bytes()
     ).hexdigest()
     assert module.git(root, "show", f"{head}:{relative}") == (root / relative).read_bytes()
+
+
+def test_rejects_executable_mode_drift_with_core_filemode_disabled(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[-1]
+    (root / relative).chmod(0o755)
+    git(root, "config", "core.filemode", "false")
+    assert not git(root, "status", "--porcelain", "--", relative)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "executable mode differs" in str(error)
+    else:
+        raise AssertionError("uncommitted executable mode drift admitted")
