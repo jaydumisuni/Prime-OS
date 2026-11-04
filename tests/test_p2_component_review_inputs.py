@@ -331,3 +331,22 @@ def test_repository_fsmonitor_is_never_executed_by_review_git(tmp_path: Path) ->
     result = module.build_manifest(root, head)
     assert result["candidate_head"] == head
     assert not marker.exists(), "review inspection executed repository-configured fsmonitor"
+
+
+def test_local_git_replace_ref_cannot_reinterpret_committed_review_bytes(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    original = git(root, "rev-parse", f"{head}:{relative}")
+    alternate = subprocess.check_output(
+        ["git", "-C", str(root), "hash-object", "-w", "--stdin"],
+        input=b"untrusted replacement object\n",
+    ).decode().strip()
+    git(root, "replace", original, alternate)
+    assert subprocess.check_output(
+        ["git", "-C", str(root), "show", f"{head}:{relative}"]
+    ) == b"untrusted replacement object\n"
+    result = module.build_manifest(root, head)
+    assert result["inputs"][0]["sha256"] == module.hashlib.sha256(
+        (root / relative).read_bytes()
+    ).hexdigest()
+    assert module.git(root, "show", f"{head}:{relative}") == (root / relative).read_bytes()

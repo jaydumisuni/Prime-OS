@@ -34,6 +34,8 @@ def git(repo: Path, *args: str) -> bytes:
     # Trust only the repository resolved from the explicit -C path.
     trusted_env = {key: value for key, value in os.environ.items()
                    if not key.startswith("GIT_")}
+    # Local refs/replace must not reinterpret the object graph being reviewed.
+    trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
     result = subprocess.run(
