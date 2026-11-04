@@ -2043,6 +2043,8 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
         "runtime\nspoof",
         "runtime\tspoof",
         "runtime\u{202e}spoof",
+        "runtime\u{2066}spoof",
+        "runtime\u{2069}spoof",
     ] {
         let root = dir.path().join(unsafe_name);
         private_runtime_dir(&root);
