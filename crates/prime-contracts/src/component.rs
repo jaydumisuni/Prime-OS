@@ -391,6 +391,34 @@ mod tests {
     }
 
     #[test]
+    fn component_cryptographic_labels_reject_truncated_or_extended_hex() {
+        for length in [63, 65] {
+            let mut item = manifest();
+            item.package_digest = format!("sha256:{}", "a".repeat(length));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::PackageDigest)
+            );
+
+            let mut item = manifest();
+            item.publisher_key_id = format!("sha256:{}", "b".repeat(length));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::PublisherKeyId)
+            );
+        }
+
+        for length in [127, 129] {
+            let mut item = manifest();
+            item.signature = format!("ed25519:{}", "a".repeat(length));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Signature)
+            );
+        }
+    }
+
+    #[test]
     fn component_and_registration_ids_are_canonical_and_unique() {
         let mut item = manifest();
         item.services = vec!["originsd".to_owned(), "originsd".to_owned()];
