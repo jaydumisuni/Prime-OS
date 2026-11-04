@@ -2038,7 +2038,12 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
     use primed::windows_vm::vm_session_paths;
 
     let dir = private_tempdir();
-    for unsafe_name in ["runtime,alias", "runtime\nspoof", "runtime\tspoof"] {
+    for unsafe_name in [
+        "runtime,alias",
+        "runtime\nspoof",
+        "runtime\tspoof",
+        "runtime\u{202e}spoof",
+    ] {
         let root = dir.path().join(unsafe_name);
         private_runtime_dir(&root);
         assert!(
