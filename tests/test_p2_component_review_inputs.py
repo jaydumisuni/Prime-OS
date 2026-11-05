@@ -429,3 +429,20 @@ def test_ambient_git_dir_and_worktree_cannot_redirect_review(tmp_path: Path, mon
     assert manifest["inputs"][0]["sha256"] == module.hashlib.sha256(
         (root / module.INPUTS[0]).read_bytes()
     ).hexdigest()
+
+
+def test_ambient_git_object_and_index_redirects_cannot_replace_review(tmp_path: Path, monkeypatch) -> None:
+    """Untrusted alternate object stores and indexes cannot become review authority."""
+    root, head = sample_repo(tmp_path)
+    alternate_parent = tmp_path / "alternate-parent"
+    alternate_parent.mkdir()
+    alternate, _ = sample_repo(alternate_parent)
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(alternate / ".git" / "objects"))
+    monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", str(alternate / ".git" / "objects"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(alternate / ".git" / "index"))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
+    assert manifest["inputs"][0]["sha256"] == module.hashlib.sha256(
+        (root / module.INPUTS[0]).read_bytes()
+    ).hexdigest()
