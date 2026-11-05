@@ -378,3 +378,17 @@ def test_ambient_git_config_count_cannot_invoke_fsmonitor(tmp_path: Path, monkey
     result = module.build_manifest(root, head)
     assert result["candidate_head"] == head
     assert not marker.exists(), "ambient Git config executed a review-time hook"
+
+
+def test_global_git_fsmonitor_cannot_execute_during_review(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "global-fsmonitor-executed"
+    hook = tmp_path / "global-fsmonitor.sh"
+    hook.write_text("#!/bin/sh\nprintf invoked > " + shlex.quote(str(marker)) + "\n", encoding="utf-8")
+    hook.chmod(0o700)
+    global_config = tmp_path / "global.gitconfig"
+    global_config.write_text("[core]\n\tfsmonitor = " + str(hook) + "\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    result = module.build_manifest(root, head)
+    assert result["candidate_head"] == head
+    assert not marker.exists(), "global Git config executed a review-time hook"
