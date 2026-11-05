@@ -565,6 +565,49 @@ fn qemu_plan_rejects_unsupported_qcow2_crypto_and_incompatible_features() {
 }
 
 #[test]
+fn qemu_plan_rejects_unadmitted_qcow2_v3_compatible_and_autoclear_features() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    let request = VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay.clone(),
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec![],
+    };
+
+    // The W8 header-only contract has no admission for lazy refcounts,
+    // persistent bitmaps, or unknown compatible/autoclear metadata. Each
+    // field must fail closed independently, including unknown high bits.
+    for (compatible, autoclear) in [
+        (1u64, 0u64),
+        (0, 1),
+        (1u64 << 63, 0),
+        (0, 1u64 << 63),
+        (1, 1),
+    ] {
+        private_overlay(&overlay);
+        let mut header = fs::read(&overlay).unwrap();
+        header[80..88].copy_from_slice(&compatible.to_be_bytes());
+        header[88..96].copy_from_slice(&autoclear.to_be_bytes());
+        fs::write(&overlay, header).unwrap();
+        let error = build_qemu_plan(&request).unwrap_err();
+        assert!(
+            error.to_string().contains("qcow2"),
+            "compatible {compatible:#x}, autoclear {autoclear:#x}: {error}"
+        );
+    }
+
+    // A zero-feature header remains admissible to this bounded preflight;
+    // this is not a bootable guest or physical Windows qualification.
+    private_overlay(&overlay);
+    assert!(build_qemu_plan(&request).is_ok());
+}
+
+#[test]
 fn qemu_plan_rejects_empty_overlay_image() {
     let dir = private_tempdir();
     let runtime = dir.path().join("runtime");
