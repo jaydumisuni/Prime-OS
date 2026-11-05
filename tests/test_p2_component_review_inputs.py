@@ -392,3 +392,12 @@ def test_global_git_fsmonitor_cannot_execute_during_review(tmp_path: Path, monke
     result = module.build_manifest(root, head)
     assert result["candidate_head"] == head
     assert not marker.exists(), "global Git config executed a review-time hook"
+
+
+def test_global_core_bare_cannot_redirect_review_repository(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    config = tmp_path / "hostile-global-config"
+    config.write_text("[core]\n\tbare = true\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    result = module.build_manifest(root, head)
+    assert result["candidate_head"] == head
