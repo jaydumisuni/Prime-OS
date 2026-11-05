@@ -401,3 +401,15 @@ def test_global_core_bare_cannot_redirect_review_repository(tmp_path: Path, monk
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     result = module.build_manifest(root, head)
     assert result["candidate_head"] == head
+
+
+
+def test_ambient_git_config_count_cannot_redirect_review(tmp_path: Path, monkeypatch) -> None:
+    """Caller-supplied Git config parameters cannot override exact-head inspection."""
+    root, head = sample_repo(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.bare")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
