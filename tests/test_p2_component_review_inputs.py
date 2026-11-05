@@ -339,3 +339,22 @@ def test_git_replace_refs_cannot_substitute_pinned_commit_inputs(
         assert "local changes" in str(error) or "differs from HEAD" in str(error)
     else:
         raise AssertionError("Git replace ref substituted exact-head review authority")
+
+
+def test_rejects_executable_input_downgrade_with_core_filemode_disabled(tmp_path: Path) -> None:
+    root, _ = sample_repo(tmp_path)
+    relative = module.INPUTS[-1]
+    target = root / relative
+    target.chmod(0o755)
+    git(root, "add", "--", relative)
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture: commit executable review input")
+    head = git(root, "rev-parse", "HEAD").strip()
+    target.chmod(0o644)
+    git(root, "config", "core.filemode", "false")
+    assert not git(root, "status", "--porcelain", "--", relative)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "executable mode differs" in str(error)
+    else:
+        raise AssertionError("uncommitted executable-mode downgrade admitted")

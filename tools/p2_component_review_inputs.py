@@ -104,7 +104,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if git(root, "status", "--porcelain", "--", relative).strip():
             raise ReviewInputError(f"review input has local changes: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
+        tree_record = git(root, "ls-tree", head, "--", relative).decode().strip()
+        expected_mode = tree_record.split(None, 1)[0] if tree_record else ""
+        if expected_mode not in ("100644", "100755"):
+            raise ReviewInputError(f"unexpected committed review input mode: {relative}")
         before = file.lstat()
+        if bool(before.st_mode & 0o111) != (expected_mode == "100755"):
+            raise ReviewInputError(f"review input executable mode differs from HEAD: {relative}")
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
