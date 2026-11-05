@@ -2145,8 +2145,15 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
     for name in [
         "guest,if=none.qcow2",
         "guest\nimage.qcow2",
+        "guest\u{202a}image.qcow2",
+        "guest\u{202b}image.qcow2",
+        "guest\u{202c}image.qcow2",
+        "guest\u{202d}image.qcow2",
         "guest\u{202e}image.qcow2",
         "guest\u{2066}image.qcow2",
+        "guest\u{2067}image.qcow2",
+        "guest\u{2068}image.qcow2",
+        "guest\u{2069}image.qcow2",
     ] {
         let image = dir.path().join(name);
         private_guest_image(&image, bytes);
