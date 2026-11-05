@@ -2158,6 +2158,8 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
         "guest\nimage.qcow2",
         "guest\timage.qcow2",
         "guest\rimage.qcow2",
+        "guest\u{000b}image.qcow2",
+        "guest\u{000c}image.qcow2",
         "guest\u{202a}image.qcow2",
         "guest\u{202b}image.qcow2",
         "guest\u{202c}image.qcow2",
