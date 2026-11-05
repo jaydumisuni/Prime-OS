@@ -339,3 +339,30 @@ def test_git_replace_refs_cannot_substitute_pinned_commit_inputs(
         assert "local changes" in str(error) or "differs from HEAD" in str(error)
     else:
         raise AssertionError("Git replace ref substituted exact-head review authority")
+
+
+def test_ambient_git_config_parameters_cannot_override_review_git(tmp_path: Path) -> None:
+    """Caller-injected Git config must not execute a repository fsmonitor."""
+    import os
+
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "ambient-fsmonitor-invoked"
+    hook = tmp_path / "ambient-fsmonitor.sh"
+    hook.write_text(
+        "#!/bin/sh\nprintf invoked > " + shlex.quote(str(marker)) + "\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o700)
+    env = os.environ.copy()
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "core.fsmonitor"
+    env["GIT_CONFIG_VALUE_0"] = str(hook)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(root), "--expected-head", head],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    manifest = json.loads(result.stdout)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
