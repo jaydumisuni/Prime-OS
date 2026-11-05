@@ -894,6 +894,10 @@ pub fn validate_guest_definition(
         .base_image
         .bytes()
         .any(|byte| byte == b',' || byte.is_ascii_control())
+        || definition
+            .base_image
+            .chars()
+            .any(|ch| matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
     {
         return Err(WindowsVmError::InvalidGuest(
             "base image path contains QEMU option delimiters",

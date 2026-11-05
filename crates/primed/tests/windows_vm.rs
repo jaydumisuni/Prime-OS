@@ -2099,7 +2099,12 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
     // or control-character ambiguity into later guest preparation.
     let dir = private_tempdir();
     let bytes = b"prime-w8-guest-path-negative";
-    for name in ["guest,if=none.qcow2", "guest\nimage.qcow2"] {
+    for name in [
+        "guest,if=none.qcow2",
+        "guest\nimage.qcow2",
+        "guest\u{202e}image.qcow2",
+        "guest\u{2066}image.qcow2",
+    ] {
         let image = dir.path().join(name);
         private_guest_image(&image, bytes);
         let error = validate_guest_definition(&definition(&image, bytes)).unwrap_err();
