@@ -2099,8 +2099,14 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
         "runtime\rspoof",
         "runtime\u{000b}spoof",
         "runtime\u{000c}spoof",
+        "runtime\u{202a}spoof",
+        "runtime\u{202b}spoof",
+        "runtime\u{202c}spoof",
+        "runtime\u{202d}spoof",
         "runtime\u{202e}spoof",
         "runtime\u{2066}spoof",
+        "runtime\u{2067}spoof",
+        "runtime\u{2068}spoof",
         "runtime\u{2069}spoof",
     ] {
         let root = dir.path().join(unsafe_name);
