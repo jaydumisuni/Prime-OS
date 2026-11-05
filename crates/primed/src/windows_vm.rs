@@ -234,7 +234,7 @@ pub fn vm_session_paths(
             .any(|byte| byte == b',' || byte.is_ascii_control())
             || value
                 .chars()
-                .any(|ch| matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+                .any(|ch| matches!(ch, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
     }) {
         return Err(WindowsVmError::InvalidPlan(
             "session root contains QEMU option delimiters",
