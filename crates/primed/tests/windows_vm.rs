@@ -2156,6 +2156,8 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
     for name in [
         "guest,if=none.qcow2",
         "guest\nimage.qcow2",
+        "guest\timage.qcow2",
+        "guest\rimage.qcow2",
         "guest\u{202a}image.qcow2",
         "guest\u{202b}image.qcow2",
         "guest\u{202c}image.qcow2",
