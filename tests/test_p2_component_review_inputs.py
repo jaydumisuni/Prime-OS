@@ -364,3 +364,17 @@ def test_rejects_executable_mode_drift_with_core_filemode_disabled(tmp_path: Pat
         assert "executable mode differs" in str(error)
     else:
         raise AssertionError("uncommitted executable mode drift admitted")
+
+
+def test_ambient_git_config_count_cannot_invoke_fsmonitor(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "ambient-fsmonitor-executed"
+    hook = tmp_path / "ambient-fsmonitor.sh"
+    hook.write_text("#!/bin/sh\nprintf invoked > " + shlex.quote(str(marker)) + "\n", encoding="utf-8")
+    hook.chmod(0o700)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.fsmonitor")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hook))
+    result = module.build_manifest(root, head)
+    assert result["candidate_head"] == head
+    assert not marker.exists(), "ambient Git config executed a review-time hook"
