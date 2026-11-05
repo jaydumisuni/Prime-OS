@@ -198,6 +198,17 @@ fn guest_definition_rejects_noncanonical_guest_identity() {
         assert!(validate_guest_definition(&guest).is_err());
     }
 
+    // Identity admission must reject every Unicode bidi formatting control,
+    // not only the representative override character above.
+    for control in (0x202A..=0x202E).chain(0x2066..=0x2069) {
+        let mut guest = definition(&image, bytes);
+        guest.guest_id = format!("guest{}alias", char::from_u32(control).unwrap());
+        assert!(
+            validate_guest_definition(&guest).is_err(),
+            "bidi control U+{control:04X} admitted as guest identity"
+        );
+    }
+
     let mut oversized = definition(&image, bytes);
     oversized.guest_id = "g".repeat(129);
     assert!(validate_guest_definition(&oversized).is_err());
