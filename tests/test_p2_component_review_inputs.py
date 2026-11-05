@@ -413,3 +413,19 @@ def test_ambient_git_config_count_cannot_redirect_review(tmp_path: Path, monkeyp
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert manifest["authority"] == "REVIEW_INPUT_ONLY"
+
+
+def test_ambient_git_dir_and_worktree_cannot_redirect_review(tmp_path: Path, monkeypatch) -> None:
+    """A caller's alternate repository cannot become exact-head authority."""
+    root, head = sample_repo(tmp_path)
+    alternate_parent = tmp_path / "alternate-parent"
+    alternate_parent.mkdir()
+    alternate, _ = sample_repo(alternate_parent)
+    monkeypatch.setenv("GIT_DIR", str(alternate / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(alternate))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
+    assert manifest["inputs"][0]["sha256"] == module.hashlib.sha256(
+        (root / module.INPUTS[0]).read_bytes()
+    ).hexdigest()
