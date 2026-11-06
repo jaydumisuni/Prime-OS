@@ -2303,6 +2303,10 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
             .is_err(),
         "forged guest revision must not inherit the admitted proof plan"
     );
+    // Unknown case tags cannot be deserialized as admitted runtime evidence.
+    let mut forged_case = serde_json::to_value(&envelope).unwrap();
+    forged_case["case"] = serde_json::json!("unplanned-runtime-case");
+    assert!(serde_json::from_value::<VmRuntimeEvidenceEnvelope>(forged_case).is_err());
     // A foreign evidence schema cannot borrow this plan's authority.
     let mut forged_schema = envelope.clone();
     forged_schema.schema = "prime.windows.vm.runtime-evidence.v999".to_owned();
