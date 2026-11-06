@@ -499,3 +499,27 @@ def test_ambient_git_ref_and_pack_traces_cannot_write_outside_review(tmp_path: P
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert not any(destination.exists() for destination in destinations.values())
+
+
+def test_ambient_git_setup_and_packet_traces_cannot_write_outside_review(tmp_path: Path) -> None:
+    import os
+
+    root, head = sample_repo(tmp_path)
+    trace_names = ("GIT_TRACE_SETUP", "GIT_TRACE_PACKET", "GIT_TRACE_CURL")
+    env = os.environ.copy()
+    sinks = []
+    for name in trace_names:
+        sink = tmp_path / (name.lower() + ".log")
+        env[name] = str(sink)
+        sinks.append(sink)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(root), "--expected-head", head],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(result.stdout)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
+    assert all(not sink.exists() for sink in sinks), (
+        "ambient Git tracing escaped the exact-head review boundary"
+    )
