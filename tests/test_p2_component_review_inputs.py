@@ -471,3 +471,17 @@ def test_ambient_git_trace_and_performance_cannot_write_outside_review(tmp_path:
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert not any(destination.exists() for destination in traces.values())
+
+
+def test_ambient_git_trace2_normal_and_perf_cannot_write_outside_review(tmp_path: Path, monkeypatch) -> None:
+    """Other Trace2 sinks must not escape the exact-head review boundary."""
+    root, head = sample_repo(tmp_path)
+    destinations = {
+        "GIT_TRACE2": tmp_path / "ambient-trace2-normal.log",
+        "GIT_TRACE2_PERF": tmp_path / "ambient-trace2-performance.log",
+    }
+    for variable, destination in destinations.items():
+        monkeypatch.setenv(variable, str(destination))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert not any(destination.exists() for destination in destinations.values())
