@@ -446,3 +446,13 @@ def test_ambient_git_object_and_index_redirects_cannot_replace_review(tmp_path: 
     assert manifest["inputs"][0]["sha256"] == module.hashlib.sha256(
         (root / module.INPUTS[0]).read_bytes()
     ).hexdigest()
+
+
+def test_ambient_git_trace2_cannot_write_outside_review(tmp_path: Path, monkeypatch) -> None:
+    """Exact-head review must not inherit Git tracing side effects from callers."""
+    root, head = sample_repo(tmp_path)
+    trace = tmp_path / "untrusted-trace.json"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert not trace.exists(), "ambient Git tracing wrote outside the review workspace"
