@@ -41,10 +41,13 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
-    result = subprocess.run(
-        ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
-        capture_output=True, check=False, env=trusted_env,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
+            capture_output=True, check=False, env=trusted_env, timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ReviewInputError("Git verification timed out") from exc
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout

@@ -523,3 +523,23 @@ def test_ambient_git_setup_and_packet_traces_cannot_write_outside_review(tmp_pat
     assert all(not sink.exists() for sink in sinks), (
         "ambient Git tracing escaped the exact-head review boundary"
     )
+
+
+def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """An unresponsive Git subprocess cannot hang exact-head evidence generation."""
+    root, head = sample_repo(tmp_path)
+    original_run = module.subprocess.run
+
+    def timed_out_run(argv, *args, **kwargs):
+        if argv[0] == "git":
+            assert kwargs["timeout"] == 15
+            raise subprocess.TimeoutExpired(argv, 15)
+        return original_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", timed_out_run)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "timed out" in str(error)
+    else:
+        raise AssertionError("unresponsive Git subprocess was admitted")
