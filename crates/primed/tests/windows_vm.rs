@@ -2295,6 +2295,14 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     serialized["guest_attested"] = serde_json::json!(true);
     assert!(serde_json::from_value::<VmRuntimeEvidenceEnvelope>(serialized).is_err());
 
+    // Guest revision is as authoritative as the string identifiers.
+    let mut forged_revision = envelope.clone();
+    forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
+    assert!(
+        create_runtime_proof_observation_from_envelope(&plan, &forged_revision, true, true)
+            .is_err(),
+        "forged guest revision must not inherit the admitted proof plan"
+    );
     for field in [
         "proof_id",
         "guest_id",
