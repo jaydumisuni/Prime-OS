@@ -485,3 +485,17 @@ def test_ambient_git_trace2_normal_and_perf_cannot_write_outside_review(tmp_path
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert not any(destination.exists() for destination in destinations.values())
+
+
+def test_ambient_git_ref_and_pack_traces_cannot_write_outside_review(tmp_path: Path, monkeypatch) -> None:
+    """Inherited Git ref and pack-access trace sinks cannot write review side effects."""
+    root, head = sample_repo(tmp_path)
+    destinations = {
+        "GIT_TRACE_REFS": tmp_path / "ambient-refs.log",
+        "GIT_TRACE_PACK_ACCESS": tmp_path / "ambient-pack-access.log",
+    }
+    for variable, destination in destinations.items():
+        monkeypatch.setenv(variable, str(destination))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert not any(destination.exists() for destination in destinations.values())
