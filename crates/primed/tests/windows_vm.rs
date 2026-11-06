@@ -2303,6 +2303,14 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
             .is_err(),
         "forged guest revision must not inherit the admitted proof plan"
     );
+    // A foreign evidence schema cannot borrow this plan's authority.
+    let mut forged_schema = envelope.clone();
+    forged_schema.schema = "prime.windows.vm.runtime-evidence.v999".to_owned();
+    assert!(
+        create_runtime_proof_observation_from_envelope(&plan, &forged_schema, true, true)
+            .is_err(),
+        "foreign runtime evidence schema must be rejected"
+    );
     for field in [
         "proof_id",
         "guest_id",
