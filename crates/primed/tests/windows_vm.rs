@@ -2111,6 +2111,8 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
         "runtime\u{2067}spoof",
         "runtime\u{2068}spoof",
         "runtime\u{2069}spoof",
+        "runtime\u{fe0f}spoof",
+        "runtime\u{e0100}spoof",
     ] {
         let root = dir.path().join(unsafe_name);
         private_runtime_dir(&root);
@@ -2184,6 +2186,8 @@ fn guest_definition_rejects_qemu_option_delimiters_in_image_path() {
         "guest\u{2067}image.qcow2",
         "guest\u{2068}image.qcow2",
         "guest\u{2069}image.qcow2",
+        "guest\u{fe0f}image.qcow2",
+        "guest\u{e0100}image.qcow2",
     ] {
         let image = dir.path().join(name);
         private_guest_image(&image, bytes);
