@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         manifest = build_manifest(args.repo, args.expected_head)
-    except (ReviewInputError, OSError) as exc:
+    except (ReviewInputError, OSError, UnicodeError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(manifest, indent=2, sort_keys=True))

@@ -559,3 +559,21 @@ def test_git_spawn_failure_fails_closed(tmp_path: Path, monkeypatch) -> None:
         assert "could not start" in str(error)
     else:
         raise AssertionError("missing Git executable was admitted")
+
+
+def test_invalid_git_output_encoding_fails_closed_without_manifest(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Invalid Git metadata must produce a bounded failure, not a traceback or manifest."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def corrupt_head(repo: Path, *args: str) -> bytes:
+        if args == ("rev-parse", "HEAD"):
+            return b"\xff\xfe\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", corrupt_head)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("FAIL:")
+    assert "Traceback" not in captured.err
