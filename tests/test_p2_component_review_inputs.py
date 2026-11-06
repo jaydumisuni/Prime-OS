@@ -456,3 +456,18 @@ def test_ambient_git_trace2_cannot_write_outside_review(tmp_path: Path, monkeypa
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert not trace.exists(), "ambient Git tracing wrote outside the review workspace"
+
+
+def test_ambient_git_trace_and_performance_cannot_write_outside_review(tmp_path: Path, monkeypatch) -> None:
+    """Inherited Git trace destinations must not leak review execution evidence."""
+    root, head = sample_repo(tmp_path)
+    traces = {
+        "GIT_TRACE": tmp_path / "ambient-git-trace.log",
+        "GIT_TRACE_PERFORMANCE": tmp_path / "ambient-git-performance.log",
+        "GIT_TRACE_SETUP": tmp_path / "ambient-git-setup.log",
+    }
+    for variable, destination in traces.items():
+        monkeypatch.setenv(variable, str(destination))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert not any(destination.exists() for destination in traces.values())
