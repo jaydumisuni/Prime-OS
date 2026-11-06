@@ -2264,6 +2264,55 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
 }
 
 #[test]
+fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
+    use primed::windows_vm::{
+        create_runtime_proof_observation_from_envelope, prepare_runtime_proof_plan,
+        VmRuntimeEvidenceEnvelope, WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA,
+    };
+
+    let dir = private_tempdir();
+    let image = dir.path().join("windows.qcow2");
+    let bytes = b"prime-w8-envelope-authority-negative";
+    private_guest_image(&image, bytes);
+    let guest = validate_guest_definition(&definition(&image, bytes)).unwrap();
+    let root = dir.path().join("runtime");
+    private_runtime_dir(&root);
+    let plan = prepare_runtime_proof_plan(&guest, &root, "app-001", "session-a").unwrap();
+    let envelope = VmRuntimeEvidenceEnvelope {
+        schema: WINDOWS_VM_RUNTIME_EVIDENCE_SCHEMA.to_owned(),
+        proof_id: plan.proof_id.clone(),
+        case: plan.required_cases[0].clone(),
+        guest_id: plan.guest_id.clone(),
+        guest_revision: plan.guest_revision,
+        guest_sha256: plan.guest_sha256.clone(),
+        application_id: plan.application_id.clone(),
+        session_id: plan.session_id.clone(),
+        evidence: b"bounded-host-evidence".to_vec(),
+    };
+    assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_ok());
+
+    let mut serialized = serde_json::to_value(&envelope).unwrap();
+    serialized["guest_attested"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<VmRuntimeEvidenceEnvelope>(serialized).is_err());
+
+    for field in [
+        "proof_id",
+        "guest_id",
+        "guest_sha256",
+        "application_id",
+        "session_id",
+    ] {
+        let mut forged = serde_json::to_value(&envelope).unwrap();
+        forged[field] = serde_json::json!("forged-identity");
+        let forged: VmRuntimeEvidenceEnvelope = serde_json::from_value(forged).unwrap();
+        assert!(
+            create_runtime_proof_observation_from_envelope(&plan, &forged, true, true).is_err(),
+            "forged {field} must not inherit the admitted proof plan"
+        );
+    }
+}
+
+#[test]
 fn runtime_observation_rejects_unrecognized_authority_fields() {
     use primed::windows_vm::{
         create_runtime_proof_observation_from_evidence, prepare_runtime_proof_plan,
