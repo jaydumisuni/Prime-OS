@@ -577,3 +577,21 @@ def test_invalid_git_output_encoding_fails_closed_without_manifest(tmp_path: Pat
     assert captured.out == ""
     assert captured.err.startswith("FAIL:")
     assert "Traceback" not in captured.err
+
+
+def test_git_nonzero_exit_fails_closed_without_manifest(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Failed Git verification cannot produce partial review authority."""
+    root, head = sample_repo(tmp_path)
+    original_run = module.subprocess.run
+
+    def failed_git(argv, *args, **kwargs):
+        if argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 128, stdout=b"partial", stderr=b"secret detail")
+        return original_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", failed_git)
+    assert module.main(["--repo", str(root), "--expected-head", head]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Git verification failed" in captured.err
+    assert "secret detail" not in captured.err
