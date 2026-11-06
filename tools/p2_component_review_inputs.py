@@ -48,6 +48,8 @@ def git(repo: Path, *args: str) -> bytes:
         )
     except subprocess.TimeoutExpired as exc:
         raise ReviewInputError("Git verification timed out") from exc
+    except OSError as exc:
+        raise ReviewInputError("Git verification could not start") from exc
     if result.returncode:
         raise ReviewInputError(f"Git verification failed: {' '.join(args)}")
     return result.stdout

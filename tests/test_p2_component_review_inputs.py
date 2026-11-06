@@ -543,3 +543,19 @@ def test_git_verification_timeout_fails_closed(tmp_path: Path, monkeypatch) -> N
         assert "timed out" in str(error)
     else:
         raise AssertionError("unresponsive Git subprocess was admitted")
+
+
+def test_git_spawn_failure_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """Missing or inaccessible Git must not generate review authority."""
+    root, head = sample_repo(tmp_path)
+
+    def cannot_spawn(*args, **kwargs):
+        raise FileNotFoundError("git executable unavailable")
+
+    monkeypatch.setattr(module.subprocess, "run", cannot_spawn)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "could not start" in str(error)
+    else:
+        raise AssertionError("missing Git executable was admitted")
