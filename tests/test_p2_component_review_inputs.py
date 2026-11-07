@@ -595,3 +595,22 @@ def test_git_nonzero_exit_fails_closed_without_manifest(tmp_path: Path, monkeypa
     assert captured.out == ""
     assert "Git verification failed" in captured.err
     assert "secret detail" not in captured.err
+
+
+def test_rejects_committed_symlink_review_input_even_when_head_is_clean(tmp_path: Path) -> None:
+    root, _ = sample_repo(tmp_path)
+    relative = module.INPUTS[-1]
+    file = root / relative
+    file.unlink()
+    file.symlink_to(module.INPUTS[0])
+    git(root, "add", "--", relative)
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "test: committed symlink must not become review authority")
+    head = git(root, "rev-parse", "HEAD")
+    assert not git(root, "status", "--porcelain")
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "noncanonical" in str(error)
+    else:
+        raise AssertionError("committed symlink admitted as P2 review input")
