@@ -2295,6 +2295,20 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     serialized["guest_attested"] = serde_json::json!(true);
     assert!(serde_json::from_value::<VmRuntimeEvidenceEnvelope>(serialized).is_err());
 
+    // Reject additional claims rather than silently accepting forged guest authority.
+    for (field, value) in [
+        ("guest_attestation", serde_json::json!("verified")),
+        ("physical_proof", serde_json::json!(true)),
+        ("release_authorized", serde_json::json!(true)),
+    ] {
+        let mut forged = serde_json::to_value(&envelope).unwrap();
+        forged[field] = value;
+        assert!(
+            serde_json::from_value::<VmRuntimeEvidenceEnvelope>(forged).is_err(),
+            "unexpected authority field {field} must fail closed"
+        );
+    }
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
