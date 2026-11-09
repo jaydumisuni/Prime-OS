@@ -2261,6 +2261,14 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_ok());
     envelope.evidence.push(b'x');
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err());
+    // Whitespace-only log payloads are not substantive host observations.
+    for whitespace in [b" ".as_slice(), b"\n\t\r ".as_slice()] {
+        envelope.evidence = whitespace.to_vec();
+        assert!(
+            create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err(),
+            "whitespace-only evidence must fail closed"
+        );
+    }
     // An empty envelope must not manufacture a proof from a missing observation.
     envelope.evidence.clear();
     assert!(

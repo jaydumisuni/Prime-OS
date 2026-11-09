@@ -459,9 +459,11 @@ pub fn create_runtime_proof_observation_from_envelope(
             "runtime proof evidence envelope does not match plan",
         ));
     }
-    if envelope.evidence.is_empty() {
+    if envelope.evidence.is_empty()
+        || envelope.evidence.iter().all(u8::is_ascii_whitespace)
+    {
         return Err(WindowsVmError::InvalidPlan(
-            "runtime proof evidence is empty",
+            "runtime proof evidence has no substantive bytes",
         ));
     }
     if envelope.evidence.len() > WINDOWS_VM_RUNTIME_EVIDENCE_MAX_BYTES {
