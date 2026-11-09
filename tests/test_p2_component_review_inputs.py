@@ -633,3 +633,17 @@ def test_invalid_committed_blob_identity_fails_closed(tmp_path: Path, monkeypatc
         assert "invalid committed blob identity" in str(error)
     else:
         raise AssertionError("malformed committed blob identity admitted")
+
+
+def test_rejects_symlinked_component_parent_with_unchanged_bytes(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = root / "crates/primed/src"
+    moved = root / "actual-primed-src"
+    parent.rename(moved)
+    parent.symlink_to(moved, target_is_directory=True)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "non-directory" in str(error) or "noncanonical" in str(error)
+    else:
+        raise AssertionError("symlinked component parent admitted as review authority")
