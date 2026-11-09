@@ -656,4 +656,3 @@ def test_uppercase_commit_identity_fails_closed_without_manifest(tmp_path: Path,
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "full lowercase commit SHA" in captured.err
-
