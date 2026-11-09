@@ -656,3 +656,15 @@ def test_uppercase_commit_identity_fails_closed_without_manifest(tmp_path: Path,
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "full lowercase commit SHA" in captured.err
+
+
+def test_rejects_world_writable_review_root(tmp_path: Path) -> None:
+    """A world-writable exact-head checkout cannot establish review custody."""
+    root, head = sample_repo(tmp_path)
+    root.chmod(root.stat().st_mode | 0o002)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "shared-writable" in str(error)
+    else:
+        raise AssertionError("world-writable review root admitted")
