@@ -2261,6 +2261,12 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_ok());
     envelope.evidence.push(b'x');
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err());
+    // An empty envelope must not manufacture a proof from a missing observation.
+    envelope.evidence.clear();
+    assert!(
+        create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err(),
+        "empty host evidence must fail closed"
+    );
 }
 
 #[test]
