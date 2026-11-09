@@ -647,3 +647,13 @@ def test_rejects_symlinked_component_parent_with_unchanged_bytes(tmp_path: Path)
         assert "non-directory" in str(error) or "noncanonical" in str(error)
     else:
         raise AssertionError("symlinked component parent admitted as review authority")
+
+
+def test_uppercase_commit_identity_fails_closed_without_manifest(tmp_path: Path, capsys) -> None:
+    """Review authority requires canonical lowercase exact-commit identities."""
+    root, head = sample_repo(tmp_path)
+    assert module.main(["--repo", str(root), "--expected-head", head.upper()]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "full lowercase commit SHA" in captured.err
+
