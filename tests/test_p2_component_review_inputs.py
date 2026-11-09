@@ -668,3 +668,16 @@ def test_rejects_world_writable_review_root(tmp_path: Path) -> None:
         assert "shared-writable" in str(error)
     else:
         raise AssertionError("world-writable review root admitted")
+
+
+def test_rejects_special_permission_bits_on_committed_review_input(tmp_path: Path) -> None:
+    """Setuid/setgid/sticky metadata cannot masquerade as an ordinary committed input."""
+    root, head = sample_repo(tmp_path)
+    file = root / module.INPUTS[-1]
+    file.chmod(file.stat().st_mode | 0o2000)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "special permission bits" in str(error)
+    else:
+        raise AssertionError("special permission bits admitted as exact-head review input")

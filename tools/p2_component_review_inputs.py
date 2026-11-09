@@ -118,6 +118,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if expected_mode not in ("100644", "100755"):
             raise ReviewInputError(f"unexpected committed review input mode: {relative}")
         before = file.lstat()
+        if before.st_mode & 0o7000:
+            raise ReviewInputError(f"special permission bits on review input: {relative}")
         if bool(before.st_mode & 0o111) != (expected_mode == "100755"):
             raise ReviewInputError(f"review input executable mode differs from HEAD: {relative}")
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
