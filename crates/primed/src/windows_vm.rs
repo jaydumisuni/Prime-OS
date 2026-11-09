@@ -461,6 +461,8 @@ pub fn create_runtime_proof_observation_from_envelope(
     }
     if envelope.evidence.is_empty()
         || envelope.evidence.iter().all(u8::is_ascii_whitespace)
+        || std::str::from_utf8(&envelope.evidence)
+            .is_ok_and(|text| text.chars().all(char::is_whitespace))
     {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence has no substantive bytes",

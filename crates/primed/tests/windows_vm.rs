@@ -2262,7 +2262,11 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
     envelope.evidence.push(b'x');
     assert!(create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err());
     // Whitespace-only log payloads are not substantive host observations.
-    for whitespace in [b" ".as_slice(), b"\n\t\r ".as_slice()] {
+    for whitespace in [
+        b" ".as_slice(),
+        b"\n\t\r ".as_slice(),
+        "\u{00a0}\u{2003}\u{202f}".as_bytes(),
+    ] {
         envelope.evidence = whitespace.to_vec();
         assert!(
             create_runtime_proof_observation_from_envelope(&plan, &envelope, true, true).is_err(),
@@ -2339,8 +2343,7 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     let mut forged_schema = envelope.clone();
     forged_schema.schema = "prime.windows.vm.runtime-evidence.v999".to_owned();
     assert!(
-        create_runtime_proof_observation_from_envelope(&plan, &forged_schema, true, true)
-            .is_err(),
+        create_runtime_proof_observation_from_envelope(&plan, &forged_schema, true, true).is_err(),
         "foreign runtime evidence schema must be rejected"
     );
     for field in [
