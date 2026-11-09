@@ -614,3 +614,22 @@ def test_rejects_committed_symlink_review_input_even_when_head_is_clean(tmp_path
         assert "noncanonical" in str(error)
     else:
         raise AssertionError("committed symlink admitted as P2 review input")
+
+
+def test_invalid_committed_blob_identity_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """A malformed Git blob identity cannot enter an exact-head review manifest."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+
+    def malformed_blob(repo: Path, *args: str) -> bytes:
+        if len(args) == 2 and args[0] == "rev-parse" and args[1] == f"{head}:{module.INPUTS[0]}":
+            return b"not-a-blob-id\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", malformed_blob)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "invalid committed blob identity" in str(error)
+    else:
+        raise AssertionError("malformed committed blob identity admitted")

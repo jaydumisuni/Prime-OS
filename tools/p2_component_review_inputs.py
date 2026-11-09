@@ -147,6 +147,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if committed != working:
             raise ReviewInputError(f"review input differs from HEAD: {relative}")
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", blob):
+            raise ReviewInputError(f"invalid committed blob identity: {relative}")
         entries.append({
             "path": relative,
             "git_blob": blob,
