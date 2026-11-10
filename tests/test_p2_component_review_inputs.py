@@ -681,3 +681,16 @@ def test_rejects_special_permission_bits_on_committed_review_input(tmp_path: Pat
         assert "special permission bits" in str(error)
     else:
         raise AssertionError("special permission bits admitted as exact-head review input")
+
+
+def test_rejects_group_writable_review_input_parent(tmp_path: Path) -> None:
+    """Group-writable source parents cannot hold exact-head review inputs."""
+    root, head = sample_repo(tmp_path)
+    parent = root / "crates/primed/src"
+    parent.chmod(parent.stat().st_mode | 0o020)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "shared-writable" in str(error)
+    else:
+        raise AssertionError("group-writable review input parent admitted")
