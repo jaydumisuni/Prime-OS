@@ -2266,7 +2266,7 @@ fn runtime_evidence_rejects_oversized_bytes_and_envelope() {
         b" ".as_slice(),
         b"\n\t\r ".as_slice(),
         "\u{00a0}\u{2003}\u{202f}".as_bytes(),
-        "\u{200b}\u{200c}\u{200d}\u{2060}\u{feff}".as_bytes(),
+        "\u{200b}\u{200c}\u{200d}\u{2060}\u{2063}\u{feff}".as_bytes(),
     ] {
         envelope.evidence = whitespace.to_vec();
         assert!(
