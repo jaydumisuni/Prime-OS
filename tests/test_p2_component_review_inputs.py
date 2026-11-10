@@ -206,6 +206,21 @@ def test_rejects_group_writable_review_root(tmp_path: Path) -> None:
         raise AssertionError("group-writable review root admitted")
 
 
+def test_rejects_special_permission_bits_on_input_parent(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = root / "crates/primed/src"
+    for bit in (0o1000, 0o2000, 0o4000):
+        parent.chmod(0o755 | bit)
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "special permission bits" in str(error)
+        else:
+            raise AssertionError(f"special directory mode {bit:o} admitted")
+        finally:
+            parent.chmod(0o755)
+
+
 def test_rejects_world_writable_input_parent(tmp_path: Path) -> None:
     root, head = sample_repo(tmp_path)
     parent = root / "crates/primed/src"

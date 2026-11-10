@@ -60,6 +60,8 @@ def require_private_directory(directory: Path) -> None:
     state = directory.lstat()
     if not stat.S_ISDIR(state.st_mode) or state.st_mode & 0o022:
         raise ReviewInputError(f"non-directory or shared-writable review path: {directory}")
+    if state.st_mode & 0o7000:
+        raise ReviewInputError(f"special permission bits on review directory: {directory}")
     if state.st_uid not in (0, os.geteuid()):
         raise ReviewInputError(f"untrusted review directory owner: {directory}")
 
