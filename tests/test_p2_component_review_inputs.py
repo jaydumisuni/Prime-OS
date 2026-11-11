@@ -777,3 +777,22 @@ def test_ambient_git_object_directory_cannot_redirect_review_identity(
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert len(manifest["inputs"]) == len(module.INPUTS)
+
+
+def test_repository_fsmonitor_hook_is_not_executed(tmp_path: Path) -> None:
+    """Repository-local fsmonitor commands must not execute during review custody."""
+    root, head = sample_repo(tmp_path)
+    marker = tmp_path / "fsmonitor-executed"
+    hook = tmp_path / "fsmonitor-hook.py"
+    hook.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o700)
+    git(root, "config", "core.fsmonitor", str(hook))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert manifest["authority"] == "REVIEW_INPUT_ONLY"
+    assert not marker.exists(), "repository fsmonitor escaped review-input custody"
