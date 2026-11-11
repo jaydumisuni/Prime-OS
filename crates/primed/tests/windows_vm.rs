@@ -2391,7 +2391,19 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         b"host-observed-case",
     )
     .unwrap();
-    let mut serialized = serde_json::to_value(&observation).unwrap();
-    serialized["authority"] = serde_json::json!("guest-attested");
-    assert!(serde_json::from_value::<VmRuntimeProofObservation>(serialized).is_err());
+    let serialized = serde_json::to_value(&observation).unwrap();
+    // Unknown fields must never upgrade a host observation into guest or release authority.
+    for (field, value) in [
+        ("authority", serde_json::json!("guest-attested")),
+        ("guest_attested", serde_json::json!(true)),
+        ("release_authorized", serde_json::json!(true)),
+        ("physical_proof", serde_json::json!(true)),
+    ] {
+        let mut forged = serialized.clone();
+        forged[field] = value;
+        assert!(
+            serde_json::from_value::<VmRuntimeProofObservation>(forged).is_err(),
+            "unexpected observation authority field {field} must fail closed"
+        );
+    }
 }
