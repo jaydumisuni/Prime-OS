@@ -2409,6 +2409,19 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     )
     .unwrap();
     let serialized = serde_json::to_value(&observation).unwrap();
+    // Duplicate observation identity keys must not admit ambiguous host evidence.
+    let serialized_json = serde_json::to_string(&observation).unwrap();
+    let duplicate = serialized_json.replacen(
+        "\"proof_id\":",
+        "\"proof_id\":\"forged-proof\",\"proof_id\":",
+        1,
+    );
+    assert_ne!(duplicate, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+        "duplicate observation proof identity must fail closed"
+    );
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
