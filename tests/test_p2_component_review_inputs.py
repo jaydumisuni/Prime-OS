@@ -709,3 +709,22 @@ def test_rejects_group_writable_review_input_parent(tmp_path: Path) -> None:
         assert "shared-writable" in str(error)
     else:
         raise AssertionError("group-writable review input parent admitted")
+
+
+def test_rejects_setid_review_ancestor(tmp_path: Path) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = tmp_path / "setid-parent"
+    parent.mkdir()
+    moved = parent / "p2"
+    root.rename(moved)
+    try:
+        for bit in (0o2000, 0o4000):
+            parent.chmod(0o755 | bit)
+            try:
+                module.build_manifest(moved, head)
+            except module.ReviewInputError as error:
+                assert "special permission bits on review ancestor" in str(error)
+            else:
+                raise AssertionError(f"setid ancestor {bit:o} admitted")
+    finally:
+        parent.chmod(0o755)

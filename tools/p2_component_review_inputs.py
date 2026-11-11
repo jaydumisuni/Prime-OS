@@ -77,6 +77,8 @@ def require_protected_ancestors(repo: Path) -> None:
             raise ReviewInputError(f"non-directory review ancestor: {parent}")
         if parent_mode.st_uid not in (0, os.geteuid()):
             raise ReviewInputError(f"untrusted review ancestor owner: {parent}")
+        if parent_mode.st_mode & (stat.S_ISUID | stat.S_ISGID):
+            raise ReviewInputError(f"special permission bits on review ancestor: {parent}")
         if parent_mode.st_mode & 0o022:
             sticky = bool(parent_mode.st_mode & stat.S_ISVTX)
             trusted_parent = parent_mode.st_uid in (0, os.geteuid())
