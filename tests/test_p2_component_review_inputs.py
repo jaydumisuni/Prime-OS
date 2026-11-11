@@ -830,3 +830,21 @@ def test_review_git_disables_terminal_prompts_and_inherited_stdin(tmp_path: Path
     assert module.build_manifest(root, head)["candidate_head"] == head
     assert observed and all(prompt == "0" and stdin == subprocess.DEVNULL
                             for prompt, stdin in observed)
+
+
+def test_rejects_special_permission_bits_on_review_input_parent(tmp_path: Path) -> None:
+    """Setid/sticky source directories cannot establish exact-head input custody."""
+    root, head = sample_repo(tmp_path)
+    parent = root / "crates/primed/src"
+    original_mode = parent.stat().st_mode & 0o7777
+    try:
+        for bit in (0o1000, 0o2000, 0o4000):
+            parent.chmod(original_mode | bit)
+            try:
+                module.build_manifest(root, head)
+            except module.ReviewInputError as error:
+                assert "special permission bits" in str(error)
+            else:
+                raise AssertionError(f"special source parent bit {bit:o} admitted")
+    finally:
+        parent.chmod(original_mode)
