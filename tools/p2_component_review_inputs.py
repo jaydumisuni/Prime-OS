@@ -41,12 +41,15 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
     # Exact-head review is read-only: status must not refresh the index on disk.
     trusted_env["GIT_OPTIONAL_LOCKS"] = "0"
+    # A local evidence probe must not wait for credentials or read caller stdin.
+    trusted_env["GIT_TERMINAL_PROMPT"] = "0"
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
     try:
         result = subprocess.run(
             ["git", "-c", "core.fsmonitor=false", "-C", str(repo), *args],
-            capture_output=True, check=False, env=trusted_env, timeout=15,
+            capture_output=True, check=False, env=trusted_env,
+            stdin=subprocess.DEVNULL, timeout=15,
         )
     except subprocess.TimeoutExpired as exc:
         raise ReviewInputError("Git verification timed out") from exc

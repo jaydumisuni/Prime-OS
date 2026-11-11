@@ -814,3 +814,19 @@ def test_review_git_disables_optional_index_writes(tmp_path: Path, monkeypatch) 
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert observed and set(observed) == {"0"}
+
+
+def test_review_git_disables_terminal_prompts_and_inherited_stdin(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    original_run = module.subprocess.run
+    observed = []
+
+    def checked_run(*args, **kwargs):
+        observed.append((kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT"), kwargs.get("stdin")))
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    monkeypatch.setattr(module.subprocess, "run", checked_run)
+    assert module.build_manifest(root, head)["candidate_head"] == head
+    assert observed and all(prompt == "0" and stdin == subprocess.DEVNULL
+                            for prompt, stdin in observed)
