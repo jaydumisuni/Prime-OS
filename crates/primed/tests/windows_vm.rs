@@ -2398,6 +2398,11 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("guest_attested", serde_json::json!(true)),
         ("release_authorized", serde_json::json!(true)),
         ("physical_proof", serde_json::json!(true)),
+        // A false/null claim is still an unrecognized authority field, not a safe opt-out.
+        ("guest_attestation", serde_json::Value::Null),
+        ("release_authorized", serde_json::json!(false)),
+        // Nested authority payloads must not be silently accepted either.
+        ("release_authority", serde_json::json!({"approved": true})),
     ] {
         let mut forged = serialized.clone();
         forged[field] = value;
