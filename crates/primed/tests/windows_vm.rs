@@ -2349,6 +2349,20 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         "duplicate proof identity keys must fail closed"
     );
 
+    // Duplicate guest/session identities are ambiguous even when the first value is valid.
+    for field in ["guest_id", "guest_sha256", "application_id", "session_id"] {
+        let duplicate = serialized.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":\"forged\",\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized);
+        assert!(
+            serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate).is_err(),
+            "duplicate envelope {field} must fail closed"
+        );
+    }
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
@@ -2421,6 +2435,20 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
         "duplicate observation proof identity must fail closed"
     );
+
+    // Ambiguous observation identity must not be resolved by JSON key order.
+    for field in ["guest_id", "guest_sha256", "application_id", "session_id"] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":\"forged\",\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "duplicate observation {field} must fail closed"
+        );
+    }
 
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
