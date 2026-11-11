@@ -2323,6 +2323,10 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         ("guest_attestation", serde_json::json!("verified")),
         ("physical_proof", serde_json::json!(true)),
         ("release_authorized", serde_json::json!(true)),
+        // Structured or inert authority claims remain unauthorized evidence fields.
+        ("release_authority", serde_json::json!({"approved": true})),
+        ("guest_attestation", serde_json::Value::Null),
+        ("physical_proof", serde_json::json!(false)),
     ] {
         let mut forged = serde_json::to_value(&envelope).unwrap();
         forged[field] = value;
