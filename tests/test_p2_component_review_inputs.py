@@ -728,3 +728,27 @@ def test_rejects_setid_review_ancestor(tmp_path: Path) -> None:
                 raise AssertionError(f"setid ancestor {bit:o} admitted")
     finally:
         parent.chmod(0o755)
+
+
+def test_ambient_git_index_override_cannot_substitute_review_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A caller-controlled alternate index must not change exact-head evidence."""
+    root, head = sample_repo(tmp_path)
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "missing-index"))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert len(manifest["inputs"]) == len(module.INPUTS)
+
+
+def test_ambient_git_worktree_override_cannot_redirect_review_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An inherited worktree override must not redirect committed input custody."""
+    root, head = sample_repo(tmp_path)
+    alternate = tmp_path / "alternate"
+    alternate.mkdir()
+    monkeypatch.setenv("GIT_WORK_TREE", str(alternate))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert len(manifest["inputs"]) == len(module.INPUTS)
