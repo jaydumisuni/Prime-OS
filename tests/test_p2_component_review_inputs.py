@@ -752,3 +752,28 @@ def test_ambient_git_worktree_override_cannot_redirect_review_identity(
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
     assert len(manifest["inputs"]) == len(module.INPUTS)
+
+
+def test_ambient_git_config_injection_cannot_redirect_review_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Inherited command-scope Git config must not rewrite review object custody."""
+    root, head = sample_repo(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.worktree")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(tmp_path / "nonexistent-worktree"))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert len(manifest["inputs"]) == len(module.INPUTS)
+
+
+def test_ambient_git_object_directory_cannot_redirect_review_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An inherited alternate object store must not replace committed review inputs."""
+    root, head = sample_repo(tmp_path)
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(tmp_path / "missing-objects"))
+    monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", str(tmp_path / "missing-alternates"))
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert len(manifest["inputs"]) == len(module.INPUTS)
