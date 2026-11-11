@@ -2336,6 +2336,19 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         );
     }
 
+    // Duplicate JSON identity keys must not let a parser choose conflicting authority.
+    let serialized = serde_json::to_string(&envelope).unwrap();
+    let duplicate = serialized.replacen(
+        "\"proof_id\":",
+        "\"proof_id\":\"forged-proof\",\"proof_id\":",
+        1,
+    );
+    assert_ne!(duplicate, serialized);
+    assert!(
+        serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate).is_err(),
+        "duplicate proof identity keys must fail closed"
+    );
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
