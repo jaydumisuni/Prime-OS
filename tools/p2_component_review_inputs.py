@@ -39,6 +39,8 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env["GIT_CONFIG_NOSYSTEM"] = "1"
     trusted_env["GIT_CONFIG_GLOBAL"] = os.devnull
     trusted_env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    # Exact-head review is read-only: status must not refresh the index on disk.
+    trusted_env["GIT_OPTIONAL_LOCKS"] = "0"
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
     try:

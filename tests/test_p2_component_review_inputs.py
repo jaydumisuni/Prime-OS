@@ -796,3 +796,21 @@ def test_repository_fsmonitor_hook_is_not_executed(tmp_path: Path) -> None:
     assert manifest["candidate_head"] == head
     assert manifest["authority"] == "REVIEW_INPUT_ONLY"
     assert not marker.exists(), "repository fsmonitor escaped review-input custody"
+
+
+def test_review_git_disables_optional_index_writes(tmp_path: Path, monkeypatch) -> None:
+    """Exact-head inspection must not acquire optional index locks or refresh the index."""
+    root, head = sample_repo(tmp_path)
+    original_run = module.subprocess.run
+    observed = []
+
+    def inspect_run(argv, *args, **kwargs):
+        if argv[0] == "git":
+            observed.append(kwargs["env"].get("GIT_OPTIONAL_LOCKS"))
+        return original_run(argv, *args, **kwargs)
+
+    monkeypatch.setenv("GIT_OPTIONAL_LOCKS", "1")
+    monkeypatch.setattr(module.subprocess, "run", inspect_run)
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
+    assert observed and set(observed) == {"0"}
