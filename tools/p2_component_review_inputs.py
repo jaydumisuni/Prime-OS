@@ -43,6 +43,8 @@ def git(repo: Path, *args: str) -> bytes:
     trusted_env["GIT_OPTIONAL_LOCKS"] = "0"
     # A local evidence probe must not wait for credentials or read caller stdin.
     trusted_env["GIT_TERMINAL_PROMPT"] = "0"
+    # Partial-clone object reads must not trigger an implicit network fetch.
+    trusted_env["GIT_NO_LAZY_FETCH"] = "1"
     # Repository or inherited Git config may name an executable fsmonitor.
     # `git status` must never invoke it while constructing review evidence.
     try:

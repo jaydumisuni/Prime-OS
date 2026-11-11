@@ -848,3 +848,18 @@ def test_rejects_special_permission_bits_on_review_input_parent(tmp_path: Path) 
                 raise AssertionError(f"special source parent bit {bit:o} admitted")
     finally:
         parent.chmod(original_mode)
+
+
+def test_review_git_disables_partial_clone_lazy_fetch(tmp_path: Path, monkeypatch) -> None:
+    """Read-only exact-head review must never fetch missing promisor objects."""
+    root, _ = sample_repo(tmp_path)
+    original_run = module.subprocess.run
+    observed = []
+
+    def inspected_run(*args, **kwargs):
+        observed.append(kwargs.get("env", {}).get("GIT_NO_LAZY_FETCH"))
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", inspected_run)
+    module.git(root, "rev-parse", "HEAD")
+    assert observed == ["1"]
