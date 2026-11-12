@@ -2409,6 +2409,15 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         "duplicate envelope guest revision must fail closed"
     );
 
+    // Identical repeated revision keys are still ambiguous guest authority.
+    let same_revision = serialized.replacen(
+        "\"guest_revision\":",
+        &format!("\"guest_revision\":{},\"guest_revision\":", envelope.guest_revision),
+        1,
+    );
+    assert_ne!(same_revision, serialized);
+    assert!(serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&same_revision).is_err());
+
     // A duplicated evidence payload is ambiguous even if both byte arrays are valid.
     let duplicate_evidence = serialized.replacen(
         "\"evidence\":",
@@ -2529,6 +2538,15 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         serde_json::from_str::<VmRuntimeProofObservation>(&duplicate_revision).is_err(),
         "duplicate observation guest revision must fail closed"
     );
+
+    // A repeated identical observation revision must also be rejected.
+    let same_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        &format!("\"guest_revision\":{},\"guest_revision\":", observation.guest_revision),
+        1,
+    );
+    assert_ne!(same_revision, serialized_json);
+    assert!(serde_json::from_str::<VmRuntimeProofObservation>(&same_revision).is_err());
 
     // Duplicate evidence-schema and case keys are ambiguous proof classifications, even
     // when both values happen to be syntactically valid.
