@@ -111,6 +111,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if head != expected_head:
         raise ReviewInputError("review candidate HEAD changed")
     entries = []
+    executable_modes = {}
     for relative in INPUTS:
         directory = root
         for component in Path(relative).parts[:-1]:
@@ -162,6 +163,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
         if not re.fullmatch(r"[0-9a-f]{40}", blob):
             raise ReviewInputError(f"invalid committed blob identity: {relative}")
+        executable_modes[relative] = expected_mode == "100755"
         entries.append({
             "path": relative,
             "git_blob": blob,
@@ -186,6 +188,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if (not stat.S_ISREG(state.st_mode) or state.st_nlink != 1
                 or state.st_uid not in (0, os.geteuid())
                 or state.st_mode & (0o022 | 0o7000)
+                or bool(state.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed: {entry['path']}")
         final_bytes = file.read_bytes()

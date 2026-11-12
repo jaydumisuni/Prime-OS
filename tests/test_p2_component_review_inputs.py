@@ -964,3 +964,31 @@ def test_rejects_final_read_permission_change(tmp_path: Path, monkeypatch) -> No
         assert "custody changed during final read" in str(error)
     else:
         raise AssertionError("late permission mutation was admitted")
+
+
+def test_rejects_earlier_input_executable_bit_drift_after_inspection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Final custody must retain committed file mode even when Git ignores mode changes."""
+    root, head = sample_repo(tmp_path)
+    git(root, "config", "core.filemode", "false")
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    changed = False
+
+    def change_mode_late(file: Path) -> bytes:
+        nonlocal changed
+        content = original_read(file)
+        if file == last and not changed:
+            changed = True
+            earlier.chmod(earlier.stat().st_mode | 0o100)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", change_mode_late)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "custody changed" in str(error)
+    else:
+        raise AssertionError("late executable-bit drift admitted")
