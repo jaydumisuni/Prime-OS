@@ -1137,3 +1137,28 @@ def test_rejects_root_permission_drift_during_final_head_query(
             raise AssertionError("final HEAD query admitted shared-writable root")
     finally:
         root.chmod(0o755)
+
+
+def test_rejects_source_rewrite_during_final_head_query(tmp_path: Path, monkeypatch) -> None:
+    """Final Git identity inspection must not admit a source rewrite."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    head_reads = 0
+
+    def mutate_on_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                source.write_bytes(source.read_bytes() + b"late rewrite\n")
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_final_head)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "after final HEAD query" in str(error)
+    else:
+        raise AssertionError("source rewrite during final HEAD query was admitted")

@@ -240,6 +240,23 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # permission change during that query must not leave a trusted root behind.
     require_private_directory(root)
     require_protected_ancestors(root)
+    # The last Git identity query can also race a source rewrite. Rebind each
+    # input to its recorded digest after that query before returning evidence.
+    for entry in entries:
+        file = root / entry["path"]
+        require_private_directory(file.parent)
+        before = file.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_uid not in (0, os.geteuid())
+                or before.st_mode & (0o022 | 0o7000)
+                or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
+                or file.is_symlink() or file.resolve() != file):
+            raise ReviewInputError(f"review input changed after final HEAD query: {entry['path']}")
+        content = file.read_bytes()
+        after = file.lstat()
+        if (identity(before) != identity(after)
+                or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+            raise ReviewInputError(f"review input changed after final HEAD query: {entry['path']}")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
