@@ -2398,6 +2398,19 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     assert_ne!(duplicate_evidence, serialized);
     assert!(serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate_evidence).is_err());
 
+    // Even an empty first evidence payload cannot precede a second authority key.
+    // A consumer must not silently accept them based on parser precedence.
+    let identical_evidence = serialized.replacen(
+        "\"evidence\":",
+        "\"evidence\":[],\"evidence\":",
+        1,
+    );
+    assert_ne!(identical_evidence, serialized);
+    assert!(
+        serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&identical_evidence).is_err(),
+        "duplicate evidence keys must be rejected regardless of first payload"
+    );
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
