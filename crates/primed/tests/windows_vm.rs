@@ -2527,6 +2527,27 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Identical repeated identity keys are ambiguous even when their values agree.
+    // Do not let JSON parser precedence determine host observation custody.
+    for (field, value) in [
+        ("proof_id", &observation.proof_id),
+        ("guest_id", &observation.guest_id),
+        ("guest_sha256", &observation.guest_sha256),
+        ("application_id", &observation.application_id),
+        ("session_id", &observation.session_id),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{},\"{field}\":", serde_json::to_string(value).unwrap()),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "identical duplicate observation {field} must fail closed"
+        );
+    }
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
