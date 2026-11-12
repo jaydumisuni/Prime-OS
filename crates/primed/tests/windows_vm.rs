@@ -2474,6 +2474,24 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         "duplicate observation guest revision must fail closed"
     );
 
+    // Duplicate evidence-schema and case keys are ambiguous proof classifications, even
+    // when both values happen to be syntactically valid.
+    for (field, forged_value) in [
+        ("evidence_schema", "forged-schema"),
+        ("case", "forged-case"),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":\"{forged_value}\",\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "duplicate observation {field} classification must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
