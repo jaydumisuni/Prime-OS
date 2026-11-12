@@ -225,6 +225,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or identity(state) != identity(file.lstat())
                 or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed during final verification: {entry['path']}")
+    # The last digest pass may itself change a previously checked parent.
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
     # Ancestor custody can change while committed inputs are being inspected.
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
