@@ -2585,6 +2585,26 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Repeated identical classifications and boolean outcomes are still ambiguous
+    // serialized custody; accepting them would depend on parser precedence.
+    for (field, value) in [
+        ("evidence_schema", serde_json::to_string(&observation.evidence_schema).unwrap()),
+        ("case", serde_json::to_string(&observation.case).unwrap()),
+        ("passed", serde_json::to_string(&observation.passed).unwrap()),
+        ("zero_residual_state", serde_json::to_string(&observation.zero_residual_state).unwrap()),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "identical duplicate observation {field} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
