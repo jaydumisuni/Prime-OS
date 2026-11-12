@@ -2462,6 +2462,18 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Duplicate numeric guest revisions are ambiguous observation authority too.
+    let duplicate_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        "\"guest_revision\":999999,\"guest_revision\":",
+        1,
+    );
+    assert_ne!(duplicate_revision, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&duplicate_revision).is_err(),
+        "duplicate observation guest revision must fail closed"
+    );
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
