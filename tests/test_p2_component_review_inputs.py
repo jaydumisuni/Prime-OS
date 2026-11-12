@@ -939,3 +939,28 @@ def test_rejects_earlier_input_mutated_during_later_read(tmp_path: Path, monkeyp
         assert "changed after inspection" in str(error)
     else:
         raise AssertionError("late mutation of earlier source was admitted")
+
+
+def test_rejects_final_read_permission_change(tmp_path: Path, monkeypatch) -> None:
+    """A late chmod during final digest verification must fail closed."""
+    root, head = sample_repo(tmp_path)
+    target = root / module.INPUTS[0]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def mutate_on_final_read(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == target:
+            reads += 1
+            if reads == 2:
+                target.chmod(0o666)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_on_final_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "custody changed during final read" in str(error)
+    else:
+        raise AssertionError("late permission mutation was admitted")

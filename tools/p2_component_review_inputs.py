@@ -188,7 +188,15 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or state.st_mode & (0o022 | 0o7000)
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed: {entry['path']}")
-        if hashlib.sha256(file.read_bytes()).hexdigest() != entry["sha256"]:
+        final_bytes = file.read_bytes()
+        final_state = file.lstat()
+        if (not stat.S_ISREG(final_state.st_mode) or final_state.st_nlink != 1
+                or final_state.st_uid not in (0, os.geteuid())
+                or final_state.st_mode & (0o022 | 0o7000)
+                or file.is_symlink() or file.resolve() != file
+                or identity(state) != identity(final_state)):
+            raise ReviewInputError(f"review input custody changed during final read: {entry['path']}")
+        if hashlib.sha256(final_bytes).hexdigest() != entry["sha256"]:
             raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
         if git(root, "status", "--porcelain", "--", entry["path"]).strip():
             raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
