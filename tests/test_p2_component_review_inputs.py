@@ -992,3 +992,34 @@ def test_rejects_earlier_input_executable_bit_drift_after_inspection(
         assert "custody changed" in str(error)
     else:
         raise AssertionError("late executable-bit drift admitted")
+
+
+def test_rejects_earlier_source_parent_mutated_during_final_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Final reads must not allow a previously checked source directory to drift."""
+    root, head = sample_repo(tmp_path)
+    earlier_parent = root / "crates/prime-contracts/src"
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def mutate_during_final(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == last:
+            reads += 1
+            if reads == 2:
+                earlier_parent.chmod(0o777)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_during_final)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "shared-writable review path" in str(error)
+        else:
+            raise AssertionError("late source-parent mutation admitted")
+    finally:
+        earlier_parent.chmod(0o755)

@@ -203,6 +203,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
         if git(root, "status", "--porcelain", "--", entry["path"]).strip():
             raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
+    # Final digest reads can also mutate an earlier source directory.
+    # Recheck every parent after the final read phase, not only before it.
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
     # Ancestor custody can change while committed inputs are being inspected.
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
