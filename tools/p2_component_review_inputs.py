@@ -168,6 +168,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             "sha256": hashlib.sha256(committed).hexdigest(),
             "bytes": len(committed),
         })
+    # Earlier input directories may be replaced after their own read.
+    # Recheck all source parents before emitting a complete review manifest.
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
     # Ancestor custody can change while committed inputs are being inspected.
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:

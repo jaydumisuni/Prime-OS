@@ -890,3 +890,27 @@ def test_rejects_ancestor_permission_change_during_input_read(tmp_path: Path, mo
             raise AssertionError("ancestor custody lost during inspection was admitted")
     finally:
         parent.chmod(0o755)
+
+
+def test_rejects_earlier_source_parent_changed_after_its_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    earlier = root / "crates/prime-contracts/src"
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+
+    def change_earlier_parent(file: Path) -> bytes:
+        content = original_read(file)
+        if file == last:
+            earlier.chmod(0o777)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", change_earlier_parent)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "shared-writable review path" in str(error)
+        else:
+            raise AssertionError("earlier source parent changed after read was admitted")
+    finally:
+        earlier.chmod(0o755)
