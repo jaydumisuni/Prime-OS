@@ -168,6 +168,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             "sha256": hashlib.sha256(committed).hexdigest(),
             "bytes": len(committed),
         })
+    # Ancestor custody can change while committed inputs are being inspected.
+    require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
     return {

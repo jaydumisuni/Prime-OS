@@ -863,3 +863,30 @@ def test_review_git_disables_partial_clone_lazy_fetch(tmp_path: Path, monkeypatc
     monkeypatch.setattr(module.subprocess, "run", inspected_run)
     module.git(root, "rev-parse", "HEAD")
     assert observed == ["1"]
+
+
+def test_rejects_ancestor_permission_change_during_input_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    parent = tmp_path / "ancestor-custody"
+    parent.mkdir()
+    moved = parent / "p2"
+    root.rename(moved)
+    target = moved / module.INPUTS[-1]
+    original_read = Path.read_bytes
+
+    def change_ancestor(file: Path) -> bytes:
+        content = original_read(file)
+        if file == target:
+            parent.chmod(0o777)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", change_ancestor)
+    try:
+        try:
+            module.build_manifest(moved, head)
+        except module.ReviewInputError as error:
+            assert "shared-writable review ancestor" in str(error)
+        else:
+            raise AssertionError("ancestor custody lost during inspection was admitted")
+    finally:
+        parent.chmod(0o755)
