@@ -2389,6 +2389,15 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         "duplicate envelope guest revision must fail closed"
     );
 
+    // A duplicated evidence payload is ambiguous even if both byte arrays are valid.
+    let duplicate_evidence = serialized.replacen(
+        "\"evidence\":",
+        "\"evidence\":[1,2,3],\"evidence\":",
+        1,
+    );
+    assert_ne!(duplicate_evidence, serialized);
+    assert!(serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate_evidence).is_err());
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
@@ -2503,6 +2512,25 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         assert!(
             serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
             "duplicate observation {field} classification must fail closed"
+        );
+    }
+
+    // Proof outcomes and evidence custody cannot be selected by duplicate-key order.
+    for (field, forged_value) in [
+        ("passed", "false"),
+        ("zero_residual_state", "false"),
+        ("evidence_sha256", "\"forged-digest\""),
+        ("observation_id", "\"forged-observation\""),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{forged_value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "duplicate observation {field} must fail closed"
         );
     }
 
