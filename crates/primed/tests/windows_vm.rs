@@ -2605,6 +2605,24 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Identical repeated digest and observation identifiers remain ambiguous custody.
+    // No downstream parser may choose which occurrence establishes proof identity.
+    for (field, value) in [
+        ("evidence_sha256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
+        ("observation_id", serde_json::to_string(&observation.observation_id).unwrap()),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "identical duplicate observation {field} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
