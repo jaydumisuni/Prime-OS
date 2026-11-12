@@ -215,8 +215,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # Bind the complete set again before releasing aggregate review evidence.
     for entry in entries:
         file = root / entry["path"]
-        if (file.is_symlink() or not file.is_file() or file.resolve() != file
+        state = file.lstat()
+        if (not stat.S_ISREG(state.st_mode) or state.st_nlink != 1
+                or state.st_uid not in (0, os.geteuid())
+                or state.st_mode & (0o022 | 0o7000)
+                or bool(state.st_mode & 0o111) != executable_modes[entry["path"]]
+                or file.is_symlink() or file.resolve() != file
                 or hashlib.sha256(file.read_bytes()).hexdigest() != entry["sha256"]
+                or identity(state) != identity(file.lstat())
                 or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed during final verification: {entry['path']}")
     # Ancestor custody can change while committed inputs are being inspected.

@@ -1049,3 +1049,31 @@ def test_rejects_earlier_input_mutated_during_final_read(tmp_path: Path, monkeyp
         assert "changed" in str(error) or "custody" in str(error)
     else:
         raise AssertionError("final-pass source rewrite admitted")
+
+
+def test_rejects_final_pass_executable_drift_with_filemode_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Last-pass digest alone cannot admit a chmod hidden by core.filemode=false."""
+    root, head = sample_repo(tmp_path)
+    git(root, "config", "core.filemode", "false")
+    first = root / module.INPUTS[0]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def drift_on_last_pass(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == first:
+            reads += 1
+            if reads == 3:
+                first.chmod(first.stat().st_mode | 0o100)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", drift_on_last_pass)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "final verification" in str(error)
+    else:
+        raise AssertionError("last-pass executable-bit drift was admitted")
