@@ -2363,6 +2363,18 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         );
     }
 
+    // A duplicate numeric revision must not let JSON key order select guest authority.
+    let duplicate_revision = serialized.replacen(
+        "\"guest_revision\":",
+        "\"guest_revision\":999999,\"guest_revision\":",
+        1,
+    );
+    assert_ne!(duplicate_revision, serialized);
+    assert!(
+        serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate_revision).is_err(),
+        "duplicate envelope guest revision must fail closed"
+    );
+
     // Guest revision is as authoritative as the string identifiers.
     let mut forged_revision = envelope.clone();
     forged_revision.guest_revision = forged_revision.guest_revision.saturating_add(1);
