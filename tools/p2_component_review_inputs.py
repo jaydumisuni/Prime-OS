@@ -236,6 +236,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed during inspection")
+    # The final Git identity query is also an observation boundary: a concurrent
+    # permission change during that query must not leave a trusted root behind.
+    require_private_directory(root)
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

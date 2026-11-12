@@ -1108,3 +1108,32 @@ def test_rejects_source_parent_mutated_during_last_digest_pass(
             raise AssertionError("last-pass parent permission mutation admitted")
     finally:
         earlier_parent.chmod(0o755)
+
+
+def test_rejects_root_permission_drift_during_final_head_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Final Git identity inspection cannot admit a shared-writable root."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    head_reads = 0
+
+    def mutate_on_final_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_reads
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_reads += 1
+            if head_reads == 2:
+                root.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_final_head)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "shared-writable review path" in str(error)
+        else:
+            raise AssertionError("final HEAD query admitted shared-writable root")
+    finally:
+        root.chmod(0o755)
