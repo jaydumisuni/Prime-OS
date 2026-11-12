@@ -914,3 +914,28 @@ def test_rejects_earlier_source_parent_changed_after_its_read(tmp_path: Path, mo
             raise AssertionError("earlier source parent changed after read was admitted")
     finally:
         earlier.chmod(0o755)
+
+
+def test_rejects_earlier_input_mutated_during_later_read(tmp_path: Path, monkeypatch) -> None:
+    """A late mutation of an already inspected input cannot enter the manifest."""
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    changed = False
+
+    def mutate_earlier(file: Path) -> bytes:
+        nonlocal changed
+        content = original_read(file)
+        if file == last and not changed:
+            changed = True
+            earlier.write_bytes(original_read(earlier) + b"late mutation\n")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_earlier)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed after inspection" in str(error)
+    else:
+        raise AssertionError("late mutation of earlier source was admitted")

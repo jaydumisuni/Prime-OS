@@ -176,6 +176,22 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         for component in Path(relative).parts[:-1]:
             directory /= component
             require_private_directory(directory)
+    # A previously inspected source can change while later inputs are read.
+    # Revalidate every source against its recorded committed digest before
+    # publishing the aggregate manifest.
+    for entry in entries:
+        file = root / entry["path"]
+        require_private_directory(file.parent)
+        state = file.lstat()
+        if (not stat.S_ISREG(state.st_mode) or state.st_nlink != 1
+                or state.st_uid not in (0, os.geteuid())
+                or state.st_mode & (0o022 | 0o7000)
+                or file.is_symlink() or file.resolve() != file):
+            raise ReviewInputError(f"review input custody changed: {entry['path']}")
+        if hashlib.sha256(file.read_bytes()).hexdigest() != entry["sha256"]:
+            raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
+        if git(root, "status", "--porcelain", "--", entry["path"]).strip():
+            raise ReviewInputError(f"review input changed after inspection: {entry['path']}")
     # Ancestor custody can change while committed inputs are being inspected.
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
