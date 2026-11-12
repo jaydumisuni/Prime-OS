@@ -1023,3 +1023,29 @@ def test_rejects_earlier_source_parent_mutated_during_final_read(
             raise AssertionError("late source-parent mutation admitted")
     finally:
         earlier_parent.chmod(0o755)
+
+
+def test_rejects_earlier_input_mutated_during_final_read(tmp_path: Path, monkeypatch) -> None:
+    """A late source rewrite during final verification cannot publish stale custody."""
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def mutate_during_final(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == last:
+            reads += 1
+            if reads == 2:
+                earlier.write_bytes(original_read(earlier) + b"final-pass mutation\n")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_during_final)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed" in str(error) or "custody" in str(error)
+    else:
+        raise AssertionError("final-pass source rewrite admitted")

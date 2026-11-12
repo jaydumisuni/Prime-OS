@@ -211,6 +211,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         for component in Path(relative).parts[:-1]:
             directory /= component
             require_private_directory(directory)
+    # A later final read may mutate an earlier input after its digest check.
+    # Bind the complete set again before releasing aggregate review evidence.
+    for entry in entries:
+        file = root / entry["path"]
+        if (file.is_symlink() or not file.is_file() or file.resolve() != file
+                or hashlib.sha256(file.read_bytes()).hexdigest() != entry["sha256"]
+                or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
+            raise ReviewInputError(f"review input changed during final verification: {entry['path']}")
     # Ancestor custody can change while committed inputs are being inspected.
     require_protected_ancestors(root)
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
