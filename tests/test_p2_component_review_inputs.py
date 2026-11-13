@@ -1398,3 +1398,29 @@ def test_missing_review_ancestor_is_controlled_error(tmp_path: Path, monkeypatch
         assert "review ancestor cannot be inspected" in str(error)
     else:
         raise AssertionError("missing ancestor escaped controlled failure")
+
+
+def test_missing_source_after_publication_head_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """A disappearing final source is rejected as review evidence, not an OS traceback."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    head_queries = 0
+
+    def remove_after_last_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                source.unlink()
+        return result
+
+    monkeypatch.setattr(module, "git", remove_after_last_head)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "vanished after publication HEAD" in str(error)
+    else:
+        raise AssertionError("missing final source was admitted")
+    assert head_queries == 3

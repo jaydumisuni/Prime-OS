@@ -300,7 +300,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     for entry in entries:
         file = root / entry["path"]
         require_private_directory(file.parent)
-        before = file.lstat()
+        try:
+            before = file.lstat()
+        except OSError as exc:
+            raise ReviewInputError(f"review input vanished after publication HEAD: {entry['path']}") from exc
         if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
                 or before.st_uid not in (0, os.geteuid())
                 or before.st_mode & (0o022 | 0o7000)
