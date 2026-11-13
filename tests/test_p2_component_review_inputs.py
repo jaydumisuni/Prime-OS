@@ -1312,3 +1312,29 @@ def test_rejects_ancestor_permission_change_during_publication_head_query(
             raise AssertionError("publication HEAD query relaxed ancestor custody")
     finally:
         ancestor.chmod(original_mode)
+
+
+def test_rejects_source_rewrite_during_publication_head_query(tmp_path: Path, monkeypatch) -> None:
+    """The final HEAD query cannot silently admit a late source rewrite."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    head_queries = 0
+
+    def mutate_on_last_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                source.write_bytes(source.read_bytes() + b"late rewrite\n")
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_last_head)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "after publication HEAD" in str(error)
+    else:
+        raise AssertionError("publication HEAD query source rewrite admitted")
+    assert head_queries == 3

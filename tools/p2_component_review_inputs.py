@@ -289,6 +289,29 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # The last identity query must not silently relax root/ancestor custody.
     require_private_directory(root)
     require_protected_ancestors(root)
+    # The publication HEAD query can race a source rewrite just as earlier
+    # identity queries can. Rebind source bytes after that final query.
+    for entry in entries:
+        file = root / entry["path"]
+        require_private_directory(file.parent)
+        before = file.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_uid not in (0, os.geteuid())
+                or before.st_mode & (0o022 | 0o7000)
+                or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
+                or file.is_symlink() or file.resolve() != file):
+            raise ReviewInputError(f"review input custody changed after publication HEAD: {entry['path']}")
+        content = file.read_bytes()
+        if (identity(before) != identity(file.lstat())
+                or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+            raise ReviewInputError(f"review input changed after publication HEAD: {entry['path']}")
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
