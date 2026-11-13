@@ -81,8 +81,11 @@ def require_protected_ancestors(repo: Path) -> None:
     """Reject replaceable worktree ancestors; permit owner-protected sticky /tmp."""
     child = repo
     for parent in repo.parents:
-        child_mode = child.lstat()
-        parent_mode = parent.lstat()
+        try:
+            child_mode = child.lstat()
+            parent_mode = parent.lstat()
+        except OSError as exc:
+            raise ReviewInputError(f"review ancestor cannot be inspected: {parent}") from exc
         if not stat.S_ISDIR(parent_mode.st_mode):
             raise ReviewInputError(f"non-directory review ancestor: {parent}")
         if parent_mode.st_uid not in (0, os.geteuid()):

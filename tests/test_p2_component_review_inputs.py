@@ -1381,3 +1381,20 @@ def test_missing_review_directory_is_fail_closed(tmp_path: Path) -> None:
         assert "review directory cannot be inspected" in str(error)
     else:
         raise AssertionError("missing review directory was admitted")
+
+
+def test_missing_review_ancestor_is_controlled_error(tmp_path: Path, monkeypatch) -> None:
+    import importlib.util
+    import sys
+    module_path = Path(__file__).resolve().parents[1] / "tools/p2_component_review_inputs.py"
+    spec = importlib.util.spec_from_file_location("p2_ancestor_probe", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    missing = tmp_path / "vanished" / "review"
+    try:
+        module.require_protected_ancestors(missing)
+    except module.ReviewInputError as error:
+        assert "review ancestor cannot be inspected" in str(error)
+    else:
+        raise AssertionError("missing ancestor escaped controlled failure")
