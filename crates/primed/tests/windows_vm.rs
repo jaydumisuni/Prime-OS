@@ -2679,6 +2679,26 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Identical escaped digest/observation identifiers remain duplicate custody keys.
+    // Escaping must not allow a second identical proof identity to be admitted.
+    for (field, value) in [
+        ("proof_id", serde_json::to_string(&observation.proof_id).unwrap()),
+        ("observation_id", serde_json::to_string(&observation.observation_id).unwrap()),
+        ("evidence_sha256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
+    ] {
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "identical escaped proof identity {field} must fail closed"
+        );
+    }
+
     // An escaped numeric revision key is still the same decoded custody member.
     // Reject it even when the forged revision equals the admitted revision.
     let escaped_revision = serialized_json.replacen(
