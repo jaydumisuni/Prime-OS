@@ -64,7 +64,10 @@ def git(repo: Path, *args: str) -> bytes:
 
 def require_private_directory(directory: Path) -> None:
     """A review input cannot derive authority through a shared-writable parent."""
-    state = directory.lstat()
+    try:
+        state = directory.lstat()
+    except OSError as exc:
+        raise ReviewInputError(f"review directory cannot be inspected: {directory}") from exc
     if not stat.S_ISDIR(state.st_mode) or state.st_mode & 0o022:
         raise ReviewInputError(f"non-directory or shared-writable review path: {directory}")
     if state.st_mode & 0o7000:

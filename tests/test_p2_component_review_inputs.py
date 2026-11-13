@@ -1370,3 +1370,14 @@ def test_rejects_staged_index_swap_during_publication_head_query(
     else:
         raise AssertionError("late staged index substitution admitted")
     assert head_queries == 3
+
+
+def test_missing_review_directory_is_fail_closed(tmp_path: Path) -> None:
+    """Disappearing source directories produce a bounded review rejection."""
+    missing = tmp_path / "vanished"
+    try:
+        module.require_private_directory(missing)
+    except module.ReviewInputError as error:
+        assert "review directory cannot be inspected" in str(error)
+    else:
+        raise AssertionError("missing review directory was admitted")
