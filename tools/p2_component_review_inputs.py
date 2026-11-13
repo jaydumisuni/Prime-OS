@@ -310,8 +310,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed after publication HEAD: {entry['path']}")
-        content = file.read_bytes()
-        if (identity(before) != identity(file.lstat())
+        try:
+            content = file.read_bytes()
+            after = file.lstat()
+        except OSError as exc:
+            raise ReviewInputError(
+                f"review input vanished during post-publication read: {entry['path']}"
+            ) from exc
+        if (identity(before) != identity(after)
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]
                 or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed after publication HEAD: {entry['path']}")

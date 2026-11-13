@@ -1424,3 +1424,36 @@ def test_missing_source_after_publication_head_is_controlled(tmp_path: Path, mon
     else:
         raise AssertionError("missing final source was admitted")
     assert head_queries == 3
+
+
+def test_missing_source_during_post_publication_read_is_controlled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A source disappearing after lstat must fail as bounded review evidence."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_read = Path.read_bytes
+    original_git = module.git
+    head_queries = 0
+
+    def count_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+        return result
+
+    def vanish_during_read(file: Path) -> bytes:
+        if file == source and head_queries >= 3:
+            source.unlink()
+            raise FileNotFoundError(source)
+        return original_read(file)
+
+    monkeypatch.setattr(module, "git", count_head)
+    monkeypatch.setattr(Path, "read_bytes", vanish_during_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "vanished during post-publication read" in str(error)
+    else:
+        raise AssertionError("post-publication read failure escaped fail-closed boundary")
