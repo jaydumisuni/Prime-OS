@@ -1193,3 +1193,31 @@ def test_rejects_parent_permission_drift_during_post_head_digest(
             raise AssertionError("post-HEAD parent permission drift admitted")
     finally:
         earlier_parent.chmod(0o755)
+
+
+def test_rejects_earlier_source_rewrite_during_post_head_digest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Later post-HEAD reads must not invalidate earlier committed bytes."""
+    root, head = sample_repo(tmp_path)
+    earlier = root / module.INPUTS[0]
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def rewrite_on_post_head_read(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == last:
+            reads += 1
+            if reads == 4:
+                earlier.write_bytes(original_read(earlier) + b"late rewrite\n")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", rewrite_on_post_head_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "changed at publication" in str(error)
+    else:
+        raise AssertionError("post-HEAD earlier source rewrite admitted")

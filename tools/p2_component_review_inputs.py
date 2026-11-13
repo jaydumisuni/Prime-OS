@@ -266,6 +266,22 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             directory /= component
             require_private_directory(directory)
     require_protected_ancestors(root)
+    # A later post-HEAD read can rewrite an earlier source after its own check.
+    # Rebind all recorded digests at the final publication boundary.
+    for entry in entries:
+        file = root / entry["path"]
+        before = file.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_uid not in (0, os.geteuid())
+                or before.st_mode & (0o022 | 0o7000)
+                or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
+                or file.is_symlink() or file.resolve() != file):
+            raise ReviewInputError(f"review input custody changed at publication: {entry['path']}")
+        content = file.read_bytes()
+        if (identity(before) != identity(file.lstat())
+                or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+            raise ReviewInputError(f"review input changed at publication: {entry['path']}")
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
