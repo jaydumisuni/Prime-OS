@@ -2363,6 +2363,30 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
         );
     }
 
+    // Identical repeated identity keys are also ambiguous custody: no downstream
+    // JSON consumer may resolve an envelope identity by key precedence.
+    for (field, value) in [
+        ("proof_id", &envelope.proof_id),
+        ("guest_id", &envelope.guest_id),
+        ("guest_sha256", &envelope.guest_sha256),
+        ("application_id", &envelope.application_id),
+        ("session_id", &envelope.session_id),
+    ] {
+        let duplicate = serialized.replacen(
+            &format!("\"{field}\":"),
+            &format!(
+                "\"{field}\":{},\"{field}\":",
+                serde_json::to_string(value).unwrap()
+            ),
+            1,
+        );
+        assert_ne!(duplicate, serialized);
+        assert!(
+            serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate).is_err(),
+            "identical duplicate envelope {field} must fail closed"
+        );
+    }
+
     // Schema and case classifications must not be selected by duplicate-key order.
     for (field, forged_value) in [("schema", "forged-schema"), ("case", "forged-case")] {
         let duplicate = serialized.replacen(
