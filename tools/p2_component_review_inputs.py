@@ -282,6 +282,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
             raise ReviewInputError(f"review input changed at publication: {entry['path']}")
     require_protected_ancestors(root)
+    # Final source reads can race a worktree HEAD switch; never publish
+    # a manifest under a candidate identity no longer checked out.
+    if git(root, "rev-parse", "HEAD").decode().strip() != head:
+        raise ReviewInputError("review candidate HEAD changed at publication")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

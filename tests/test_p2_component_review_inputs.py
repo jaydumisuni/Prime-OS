@@ -1221,3 +1221,37 @@ def test_rejects_earlier_source_rewrite_during_post_head_digest(
         assert "changed at publication" in str(error)
     else:
         raise AssertionError("post-HEAD earlier source rewrite admitted")
+
+
+def test_rejects_head_switch_during_publication_digest(tmp_path: Path, monkeypatch) -> None:
+    """The final digest pass must not publish a stale candidate identity."""
+    root, head = sample_repo(tmp_path)
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    original_git = module.git
+    reads = 0
+    switched = False
+
+    def switch_on_publication_read(file: Path) -> bytes:
+        nonlocal reads, switched
+        content = original_read(file)
+        if file == last:
+            reads += 1
+            if reads == 5:
+                switched = True
+        return content
+
+    def observe_switched_head(repo: Path, *args: str) -> bytes:
+        if switched and args == ("rev-parse", "HEAD"):
+            return b"0" * 40 + b"\n"
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(Path, "read_bytes", switch_on_publication_read)
+    monkeypatch.setattr(module, "git", observe_switched_head)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "HEAD changed at publication" in str(error)
+    else:
+        raise AssertionError("publication admitted a changed candidate HEAD")
+    assert switched
