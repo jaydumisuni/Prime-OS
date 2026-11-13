@@ -2587,6 +2587,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // JSON escape spelling cannot create a second, apparently distinct custody key.
+    // The decoder must compare decoded member names rather than raw source bytes.
+    for field in ["proof_id", "observation_id", "evidence_sha256"] {
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":\"forged\",\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "escaped duplicate observation {field} must fail closed"
+        );
+    }
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
