@@ -2603,6 +2603,28 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Escaped JSON member names must not bypass identity or outcome uniqueness.
+    for (field, value) in [
+        ("guest_id", "\"forged\""),
+        ("guest_sha256", "\"forged\""),
+        ("application_id", "\"forged\""),
+        ("session_id", "\"forged\""),
+        ("passed", "false"),
+        ("zero_residual_state", "false"),
+    ] {
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "escaped duplicate observation {field} must fail closed"
+        );
+    }
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
