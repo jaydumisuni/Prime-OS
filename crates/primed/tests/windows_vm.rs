@@ -2641,6 +2641,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // An escaped numeric revision key is still the same decoded custody member.
+    // Reject it even when the forged revision equals the admitted revision.
+    let escaped_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        &format!(
+            "\"\\u0067uest_revision\":{},\"guest_revision\":",
+            observation.guest_revision
+        ),
+        1,
+    );
+    assert_ne!(escaped_revision, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&escaped_revision).is_err(),
+        "escaped duplicate numeric revision must fail closed"
+    );
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
