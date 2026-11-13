@@ -1338,3 +1338,35 @@ def test_rejects_source_rewrite_during_publication_head_query(tmp_path: Path, mo
     else:
         raise AssertionError("publication HEAD query source rewrite admitted")
     assert head_queries == 3
+
+
+def test_rejects_staged_index_swap_during_publication_head_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Matching worktree bytes cannot conceal a late staged index substitution."""
+    root, head = sample_repo(tmp_path)
+    relative = module.INPUTS[0]
+    source = root / relative
+    committed = source.read_bytes()
+    original_git = module.git
+    head_queries = 0
+
+    def stage_on_last_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                source.write_bytes(b"alternate staged source\n")
+                git(root, "add", "--", relative)
+                source.write_bytes(committed)
+        return result
+
+    monkeypatch.setattr(module, "git", stage_on_last_head)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "after publication HEAD" in str(error)
+    else:
+        raise AssertionError("late staged index substitution admitted")
+    assert head_queries == 3

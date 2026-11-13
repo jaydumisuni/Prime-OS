@@ -303,7 +303,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"review input custody changed after publication HEAD: {entry['path']}")
         content = file.read_bytes()
         if (identity(before) != identity(file.lstat())
-                or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+                or hashlib.sha256(content).hexdigest() != entry["sha256"]
+                or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed after publication HEAD: {entry['path']}")
     for relative in INPUTS:
         directory = root
