@@ -101,6 +101,26 @@ fn guest_definition_rejects_unrecognized_json_fields() {
 }
 
 #[test]
+fn guest_definition_rejects_escaped_duplicate_identity_and_digest_keys() {
+    let guest = definition(std::path::Path::new("/tmp/guest.qcow2"), b"fixture");
+    let encoded = serde_json::to_string(&guest).unwrap();
+    for field in ["schema", "guest_id", "base_sha256", "base_image"] {
+        let value = serde_json::to_value(&guest).unwrap()[field].to_string();
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let forged = encoded.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(forged, encoded);
+        assert!(
+            serde_json::from_str::<VmGuestDefinition>(&forged).is_err(),
+            "escaped duplicate guest custody field {field} must fail closed"
+        );
+    }
+}
+
+#[test]
 fn guest_definition_requires_exact_digest_bound_regular_image() {
     let dir = private_tempdir();
     let image = dir.path().join("windows.qcow2");
