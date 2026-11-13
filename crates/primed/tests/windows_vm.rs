@@ -2660,6 +2660,25 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Escaped classification keys decode to the same schema/case custody fields.
+    // A second spelling cannot silently replace the admitted classification.
+    for (field, value) in [
+        ("evidence_schema", serde_json::to_string(&observation.evidence_schema).unwrap()),
+        ("case", serde_json::to_string(&observation.case).unwrap()),
+    ] {
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "escaped duplicate classification {field} must fail closed"
+        );
+    }
+
     // An escaped numeric revision key is still the same decoded custody member.
     // Reject it even when the forged revision equals the admitted revision.
     let escaped_revision = serialized_json.replacen(
