@@ -2625,6 +2625,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Escaped classification keys must be rejected after JSON member-name decoding.
+    // Neither evidence schema nor case selection may depend on source escape spelling.
+    for field in ["evidence_schema", "case"] {
+        let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":\"forged\",\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "escaped duplicate observation {field} classification must fail closed"
+        );
+    }
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
