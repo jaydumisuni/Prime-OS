@@ -1255,3 +1255,29 @@ def test_rejects_head_switch_during_publication_digest(tmp_path: Path, monkeypat
     else:
         raise AssertionError("publication admitted a changed candidate HEAD")
     assert switched
+
+
+def test_rejects_root_permission_change_during_publication_head_query(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    head_queries = 0
+
+    def mutate_on_last_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                root.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_last_head)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "writable" in str(error)
+        else:
+            raise AssertionError("publication HEAD query relaxed root custody")
+    finally:
+        root.chmod(0o755)

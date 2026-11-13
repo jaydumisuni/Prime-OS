@@ -286,6 +286,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # a manifest under a candidate identity no longer checked out.
     if git(root, "rev-parse", "HEAD").decode().strip() != head:
         raise ReviewInputError("review candidate HEAD changed at publication")
+    # The last identity query must not silently relax root/ancestor custody.
+    require_private_directory(root)
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
