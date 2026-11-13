@@ -62,6 +62,14 @@ def git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def read_review_bytes(file: Path) -> bytes:
+    """Convert source disappearance/read failures into bounded review rejection."""
+    try:
+        return file.read_bytes()
+    except OSError as exc:
+        raise ReviewInputError(f"review input cannot be read: {file}") from exc
+
+
 def require_private_directory(directory: Path) -> None:
     """A review input cannot derive authority through a shared-writable parent."""
     try:
@@ -144,7 +152,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"hardlinked or nonregular review input: {relative}")
         if before.st_uid not in (0, os.geteuid()) or before.st_mode & 0o022:
             raise ReviewInputError(f"untrusted owner or shared-writable review input: {relative}")
-        working = file.read_bytes()
+        working = read_review_bytes(file)
         directory = root
         require_private_directory(directory)
         for component in Path(relative).parts[:-1]:
@@ -197,7 +205,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or bool(state.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed: {entry['path']}")
-        final_bytes = file.read_bytes()
+        final_bytes = read_review_bytes(file)
         final_state = file.lstat()
         if (not stat.S_ISREG(final_state.st_mode) or final_state.st_nlink != 1
                 or final_state.st_uid not in (0, os.geteuid())
@@ -227,7 +235,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or state.st_mode & (0o022 | 0o7000)
                 or bool(state.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file
-                or hashlib.sha256(file.read_bytes()).hexdigest() != entry["sha256"]
+                or hashlib.sha256(read_review_bytes(file)).hexdigest() != entry["sha256"]
                 or identity(state) != identity(file.lstat())
                 or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed during final verification: {entry['path']}")
@@ -258,7 +266,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input changed after final HEAD query: {entry['path']}")
-        content = file.read_bytes()
+        content = read_review_bytes(file)
         after = file.lstat()
         if (identity(before) != identity(after)
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
@@ -283,7 +291,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed at publication: {entry['path']}")
-        content = file.read_bytes()
+        content = read_review_bytes(file)
         if (identity(before) != identity(file.lstat())
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
             raise ReviewInputError(f"review input changed at publication: {entry['path']}")

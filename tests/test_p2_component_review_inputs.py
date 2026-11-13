@@ -1457,3 +1457,14 @@ def test_missing_source_during_post_publication_read_is_controlled(
         assert "vanished during post-publication read" in str(error)
     else:
         raise AssertionError("post-publication read failure escaped fail-closed boundary")
+
+
+def test_source_read_failure_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """A read failure must never escape as a raw filesystem exception."""
+    missing = tmp_path / "missing-source"
+    try:
+        module.read_review_bytes(missing)
+    except module.ReviewInputError as error:
+        assert "review input cannot be read" in str(error)
+    else:
+        raise AssertionError("missing source escaped review boundary")
