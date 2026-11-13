@@ -1162,3 +1162,34 @@ def test_rejects_source_rewrite_during_final_head_query(tmp_path: Path, monkeypa
         assert "after final HEAD query" in str(error)
     else:
         raise AssertionError("source rewrite during final HEAD query was admitted")
+
+
+def test_rejects_parent_permission_drift_during_post_head_digest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A final source read must not invalidate a previously checked parent."""
+    root, head = sample_repo(tmp_path)
+    earlier_parent = root / "crates/prime-contracts/src"
+    last = root / module.INPUTS[-1]
+    original_read = Path.read_bytes
+    reads = 0
+
+    def drift_on_post_head_read(file: Path) -> bytes:
+        nonlocal reads
+        content = original_read(file)
+        if file == last:
+            reads += 1
+            if reads == 4:
+                earlier_parent.chmod(0o777)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", drift_on_post_head_read)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "shared-writable review path" in str(error)
+        else:
+            raise AssertionError("post-HEAD parent permission drift admitted")
+    finally:
+        earlier_parent.chmod(0o755)

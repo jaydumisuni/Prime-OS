@@ -257,6 +257,15 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if (identity(before) != identity(after)
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
             raise ReviewInputError(f"review input changed after final HEAD query: {entry['path']}")
+    # The post-HEAD digest reads can themselves change a previously checked
+    # parent. Revalidate all source directories at the publication boundary.
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
