@@ -2448,6 +2448,21 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
             .is_err(),
         "forged guest revision must not inherit the admitted proof plan"
     );
+    // An envelope cannot smuggle release or physical authority in extra fields.
+    // This is a serialization boundary, independent of later plan matching.
+    for (field, value) in [
+        ("release_authority", serde_json::json!({"approved": true})),
+        ("physical_proof", serde_json::json!(true)),
+        ("guest_attestation_chain", serde_json::json!([{"verified": true}])),
+        ("release_authorized", serde_json::Value::Null),
+    ] {
+        let mut forged = serde_json::to_value(&envelope).unwrap();
+        forged[field] = value;
+        assert!(
+            serde_json::from_value::<VmRuntimeEvidenceEnvelope>(forged).is_err(),
+            "unexpected envelope authority field {field} must fail closed"
+        );
+    }
     // Unknown case tags cannot be deserialized as admitted runtime evidence.
     let mut forged_case = serde_json::to_value(&envelope).unwrap();
     forged_case["case"] = serde_json::json!("unplanned-runtime-case");
