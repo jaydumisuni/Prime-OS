@@ -2655,6 +2655,9 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("release_authorized", serde_json::json!(false)),
         // Nested authority payloads must not be silently accepted either.
         ("release_authority", serde_json::json!({"approved": true})),
+        // Collection-shaped claims cannot be silently treated as auxiliary metadata.
+        ("guest_attestation_chain", serde_json::json!([{"verified": true}])),
+        ("release_signatures", serde_json::json!(["operator-approved"])),
     ] {
         let mut forged = serialized.clone();
         forged[field] = value;
