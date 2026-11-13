@@ -2735,6 +2735,19 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         "escaped duplicate numeric revision must fail closed"
     );
 
+    // A decoded escaped revision key must also reject a conflicting value.
+    // Neither the raw spelling nor the value's disagreement grants precedence.
+    let conflicting_escaped_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        "\"\\u0067uest_revision\":999999,\"guest_revision\":",
+        1,
+    );
+    assert_ne!(conflicting_escaped_revision, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&conflicting_escaped_revision).is_err(),
+        "conflicting escaped numeric revision must fail closed"
+    );
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
