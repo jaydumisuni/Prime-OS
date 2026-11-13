@@ -1281,3 +1281,34 @@ def test_rejects_root_permission_change_during_publication_head_query(tmp_path: 
             raise AssertionError("publication HEAD query relaxed root custody")
     finally:
         root.chmod(0o755)
+
+
+def test_rejects_ancestor_permission_change_during_publication_head_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The last Git identity read cannot relax a protected ancestor."""
+    root, head = sample_repo(tmp_path)
+    ancestor = root.parent
+    original_git = module.git
+    head_queries = 0
+
+    def mutate_on_last_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                ancestor.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_last_head)
+    original_mode = ancestor.stat().st_mode & 0o777
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "writable" in str(error)
+        else:
+            raise AssertionError("publication HEAD query relaxed ancestor custody")
+    finally:
+        ancestor.chmod(original_mode)
