@@ -2943,6 +2943,24 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Whitespace around an escaped unknown authority member cannot bypass the
+    // strict host-only envelope, including a nested authority-shaped payload.
+    for (escaped, value) in [
+        ("release_\\u0061uthorized", "true"),
+        ("guest_\\u0061ttestation", r#"{"verified":true}"#),
+    ] {
+        let forged = serialized_json.replacen(
+            "{",
+            &format!("{{ \"{escaped}\" : {value} , "),
+            1,
+        );
+        assert_ne!(forged, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&forged).is_err(),
+            "spaced escaped authority claim {escaped} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
