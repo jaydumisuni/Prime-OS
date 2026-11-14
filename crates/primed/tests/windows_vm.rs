@@ -2910,6 +2910,20 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // JSON whitespace around an escaped duplicate member does not create a
+    // distinct proof identity. Reject the decoded duplicate before admission.
+    let spaced_escaped_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        r#""guest_\u0072evision" : 999999,
+            "guest_revision":"#,
+        1,
+    );
+    assert_ne!(spaced_escaped_revision, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&spaced_escaped_revision).is_err(),
+        "whitespace-separated escaped revision duplicate must fail closed"
+    );
+
     // An escaped spelling of an unknown authority claim is still unknown after
     // JSON key decoding; it cannot silently enter the host-only proof envelope.
     for (escaped, value) in [
