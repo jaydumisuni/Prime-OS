@@ -2857,6 +2857,23 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Interior JSON escapes also decode into the same proof-custody member names.
+    // A duplicate must be rejected even when its value matches the original.
+    for (field, escaped, value) in [
+        ("proof_id", "pro\\u006ff_id", serde_json::to_string(&observation.proof_id).unwrap()),
+        ("observation_id", "observati\\u006fn_id", serde_json::to_string(&observation.observation_id).unwrap()),
+        ("evidence_sha256", "evidence_sha\\u003256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "interior-escaped duplicate custody {field} must fail closed");
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
