@@ -1468,3 +1468,33 @@ def test_source_read_failure_is_controlled(tmp_path: Path, monkeypatch) -> None:
         assert "review input cannot be read" in str(error)
     else:
         raise AssertionError("missing source escaped review boundary")
+
+
+def test_missing_source_after_final_head_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """A source removed immediately before the publication read fails closed."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_lstat = Path.lstat
+    original_git = module.git
+    head_queries = 0
+
+    def count_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+        return result
+
+    def disappear_at_publication(path: Path):
+        if path == source and head_queries >= 2:
+            raise FileNotFoundError(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(module, "git", count_head)
+    monkeypatch.setattr(Path, "lstat", disappear_at_publication)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "vanished after final HEAD query" in str(error)
+    else:
+        raise AssertionError("publication lstat failure escaped fail-closed boundary")
