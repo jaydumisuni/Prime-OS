@@ -2748,6 +2748,19 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         "conflicting escaped numeric revision must fail closed"
     );
 
+    // A non-leading escaped character also decodes to the same revision member.
+    // Reject mixed literal/escaped spelling before downstream proof classification.
+    let interior_escaped_revision = serialized_json.replacen(
+        "\"guest_revision\":",
+        "\"guest_\\u0072evision\":999999,\"guest_revision\":",
+        1,
+    );
+    assert_ne!(interior_escaped_revision, serialized_json);
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&interior_escaped_revision).is_err(),
+        "interior escaped duplicate revision must fail closed"
+    );
+
     // Duplicate numeric guest revisions are ambiguous observation authority too.
     let duplicate_revision = serialized_json.replacen(
         "\"guest_revision\":",
