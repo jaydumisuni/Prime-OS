@@ -2874,6 +2874,24 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
             "interior-escaped duplicate custody {field} must fail closed");
     }
 
+    // Escaping an interior letter of a boolean outcome key cannot select a
+    // second, conflicting host observation outcome by parser precedence.
+    for (field, escaped) in [
+        ("passed", "pa\\u0073sed"),
+        ("zero_residual_state", "zero_residual_\\u0073tate"),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":false,\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "interior-escaped duplicate outcome {field} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
