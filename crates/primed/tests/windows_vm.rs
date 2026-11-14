@@ -2910,6 +2910,25 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // An escaped spelling of an unknown authority claim is still unknown after
+    // JSON key decoding; it cannot silently enter the host-only proof envelope.
+    for (escaped, value) in [
+        ("guest_\\u0061ttested", "true"),
+        ("release_\\u0061uthorized", "true"),
+        ("physical_\\u0070roof", "true"),
+    ] {
+        let forged = serialized_json.replacen(
+            "{",
+            &format!("{{\"{escaped}\":{value},"),
+            1,
+        );
+        assert_ne!(forged, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&forged).is_err(),
+            "escaped unknown authority claim {escaped} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
