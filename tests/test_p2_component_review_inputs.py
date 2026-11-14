@@ -1649,3 +1649,25 @@ def test_missing_source_after_publication_read_is_controlled(tmp_path: Path, mon
         assert "review input cannot be inspected" in str(error)
     else:
         raise AssertionError("post-read disappearance admitted")
+
+
+def test_rejects_final_index_probe_failure(tmp_path: Path, monkeypatch) -> None:
+    """An unavailable final index custody probe cannot authorize a manifest."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    seen = []
+
+    def fail_final_index_probe(repo: Path, *args: str) -> bytes:
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            raise module.ReviewInputError("Git verification failed: final index probe")
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", fail_final_index_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "final index probe" in str(error)
+    else:
+        raise AssertionError("missing final index custody probe admitted")
+    assert len(seen) == 1
