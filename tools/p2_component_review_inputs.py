@@ -373,6 +373,24 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     # individual check. Compare the complete index against HEAD in one probe.
     if git(root, "diff", "--cached", "--name-only", head, "--", *INPUTS).strip():
         raise ReviewInputError("review input index changed at publication boundary")
+    # Git's final index probe is itself an observation boundary. Rebind source
+    # custody after it returns; a clean index cannot certify mutated worktree bytes.
+    for entry in entries:
+        file = root / entry["path"]
+        require_private_directory(file.parent)
+        before = read_review_stat(file)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_uid not in (0, os.geteuid())
+                or before.st_mode & (0o022 | 0o7000)
+                or bool(before.st_mode & 0o111) != executable_modes[entry["path"]]
+                or file.is_symlink() or file.resolve() != file):
+            raise ReviewInputError(f"review input custody changed after index probe: {entry['path']}")
+        content = read_review_bytes(file)
+        after = read_review_stat(file)
+        if (identity(before) != identity(after)
+                or hashlib.sha256(content).hexdigest() != entry["sha256"]):
+            raise ReviewInputError(f"review input changed after index probe: {entry['path']}")
+    require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

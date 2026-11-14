@@ -1671,3 +1671,27 @@ def test_rejects_final_index_probe_failure(tmp_path: Path, monkeypatch) -> None:
     else:
         raise AssertionError("missing final index custody probe admitted")
     assert len(seen) == 1
+
+
+def test_rejects_source_mutation_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """The final index probe cannot conceal a concurrent source rewrite."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def mutate_on_final_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.write_bytes(b"post-index-probe mutation\n")
+        return result
+
+    monkeypatch.setattr(module, "git", mutate_on_final_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("source mutation during final index probe admitted")
+    assert len(seen) == 1
