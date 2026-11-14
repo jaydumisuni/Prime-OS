@@ -2961,6 +2961,20 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // JSON surrogate-pair escapes must not smuggle an authority-shaped member
+    // through the host-only observation envelope, even with a nested payload.
+    for (field, value) in [
+        ("release_\\uD83D\\uDD12_authority", "true"),
+        ("guest_\\uD83D\\uDD12_attestation", r#"{"verified":true}"#),
+    ] {
+        let forged = serialized_json.replacen("{", &format!("{{\"{field}\":{value},"), 1);
+        assert_ne!(forged, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&forged).is_err(),
+            "surrogate-pair authority claim {field} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
