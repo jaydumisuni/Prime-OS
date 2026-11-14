@@ -1589,3 +1589,28 @@ def test_rejects_index_swap_on_last_status_query(tmp_path: Path, monkeypatch) ->
     else:
         raise AssertionError("final status index substitution admitted")
     assert last_status_count == 6
+
+
+def test_missing_source_during_final_verification_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """An input removed at the final digest sweep must fail closed."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_lstat = Path.lstat
+    calls = 0
+
+    def disappear_on_final_sweep(path: Path):
+        nonlocal calls
+        if path == source:
+            calls += 1
+            if calls == 5:
+                raise FileNotFoundError(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", disappear_on_final_sweep)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "vanished during final verification" in str(error)
+    else:
+        raise AssertionError("final verification disappearance escaped fail-closed boundary")
+    assert calls == 5
