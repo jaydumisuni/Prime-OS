@@ -1498,3 +1498,34 @@ def test_missing_source_after_final_head_is_controlled(tmp_path: Path, monkeypat
         assert "vanished after final HEAD query" in str(error)
     else:
         raise AssertionError("publication lstat failure escaped fail-closed boundary")
+
+
+def test_rejects_source_permission_change_during_publication_head_query(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A late mode relaxation cannot authorize review-input publication."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    head_queries = 0
+
+    def relax_on_publication_head(repo: Path, *args: str) -> bytes:
+        nonlocal head_queries
+        result = original_git(repo, *args)
+        if args == ("rev-parse", "HEAD"):
+            head_queries += 1
+            if head_queries == 3:
+                source.chmod(0o666)
+        return result
+
+    monkeypatch.setattr(module, "git", relax_on_publication_head)
+    try:
+        try:
+            module.build_manifest(root, head)
+        except module.ReviewInputError as error:
+            assert "custody changed after publication HEAD" in str(error)
+        else:
+            raise AssertionError("late permission relaxation admitted")
+    finally:
+        source.chmod(0o644)
+    assert head_queries == 3
