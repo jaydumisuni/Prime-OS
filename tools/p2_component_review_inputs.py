@@ -109,6 +109,13 @@ def require_protected_ancestors(repo: Path) -> None:
         child = parent
 
 
+def read_review_stat(file: Path) -> os.stat_result:
+    try:
+        return file.lstat()
+    except OSError as exc:
+        raise ReviewInputError(f"review input cannot be inspected: {file}") from exc
+
+
 def build_manifest(repo: Path, expected_head: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
         raise ReviewInputError("expected HEAD must be a full lowercase commit SHA")
@@ -241,7 +248,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or bool(state.st_mode & 0o111) != executable_modes[entry["path"]]
                 or file.is_symlink() or file.resolve() != file
                 or hashlib.sha256(read_review_bytes(file)).hexdigest() != entry["sha256"]
-                or identity(state) != identity(file.lstat())
+                or identity(state) != identity(read_review_stat(file))
                 or git(root, "status", "--porcelain", "--", entry["path"]).strip()):
             raise ReviewInputError(f"review input changed during final verification: {entry['path']}")
     # The last digest pass may itself change a previously checked parent.
@@ -307,7 +314,13 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed at publication: {entry['path']}")
         content = read_review_bytes(file)
-        if (identity(before) != identity(file.lstat())
+        try:
+            after = file.lstat()
+        except OSError as exc:
+            raise ReviewInputError(
+                f"review input vanished during publication read: {entry['path']}"
+            ) from exc
+        if (identity(before) != identity(after)
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
             raise ReviewInputError(f"review input changed at publication: {entry['path']}")
     require_protected_ancestors(root)

@@ -1614,3 +1614,38 @@ def test_missing_source_during_final_verification_is_controlled(tmp_path: Path, 
     else:
         raise AssertionError("final verification disappearance escaped fail-closed boundary")
     assert calls == 5
+
+
+def test_missing_source_after_publication_read_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """The post-read lstat must not leak an unhandled filesystem exception."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_lstat = Path.lstat
+    original_read = module.read_review_bytes
+    publication_read = False
+
+    def mark_publication_read(file: Path) -> bytes:
+        nonlocal publication_read
+        result = original_read(file)
+        if file == source:
+            # The last publication loop is reached after several source reads.
+            mark_publication_read.calls += 1
+            if mark_publication_read.calls == 3:
+                publication_read = True
+        return result
+
+    mark_publication_read.calls = 0
+
+    def vanish_after_read(file: Path):
+        if file == source and publication_read:
+            raise FileNotFoundError(file)
+        return original_lstat(file)
+
+    monkeypatch.setattr(module, "read_review_bytes", mark_publication_read)
+    monkeypatch.setattr(Path, "lstat", vanish_after_read)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "review input cannot be inspected" in str(error)
+    else:
+        raise AssertionError("post-read disappearance admitted")
