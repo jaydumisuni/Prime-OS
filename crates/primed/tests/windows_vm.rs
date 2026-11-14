@@ -2892,6 +2892,24 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Interior escapes in classification keys must not permit a second schema or
+    // case selector, even when the injected classification matches the original.
+    for (field, escaped, value) in [
+        ("evidence_schema", "evidence_\\u0073chema", serde_json::to_string(&observation.evidence_schema).unwrap()),
+        ("case", "ca\\u0073e", serde_json::to_string(&observation.case).unwrap()),
+    ] {
+        let duplicate = serialized_json.replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{escaped}\":{value},\"{field}\":"),
+            1,
+        );
+        assert_ne!(duplicate, serialized_json);
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "interior-escaped duplicate classification {field} must fail closed"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
