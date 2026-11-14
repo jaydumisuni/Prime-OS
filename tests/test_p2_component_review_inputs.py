@@ -1529,3 +1529,33 @@ def test_rejects_source_permission_change_during_publication_head_query(
     finally:
         source.chmod(0o644)
     assert head_queries == 3
+
+
+def test_rejects_late_index_swap_during_final_status_sweep(tmp_path: Path, monkeypatch) -> None:
+    """A later status query must not conceal a staged earlier source."""
+    root, head = sample_repo(tmp_path)
+    earlier = module.INPUTS[0]
+    later = module.INPUTS[-1]
+    source = root / earlier
+    committed = source.read_bytes()
+    original_git = module.git
+    status_reads = 0
+
+    def stage_during_last_status(repo: Path, *args: str) -> bytes:
+        nonlocal status_reads
+        if args == ("status", "--porcelain", "--", later):
+            status_reads += 1
+            if status_reads == 5:
+                source.write_bytes(b"alternate staged source\n")
+                git(root, "add", "--", earlier)
+                source.write_bytes(committed)
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", stage_during_last_status)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "index changed at publication" in str(error)
+    else:
+        raise AssertionError("late staged index substitution admitted")
+    assert status_reads >= 5

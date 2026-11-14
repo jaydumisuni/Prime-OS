@@ -346,6 +346,11 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             directory /= component
             require_private_directory(directory)
     require_protected_ancestors(root)
+    # A later status probe can stage an earlier source without changing bytes.
+    # Recheck the complete index custody set at the publication boundary.
+    for entry in entries:
+        if git(root, "status", "--porcelain", "--", entry["path"]).strip():
+            raise ReviewInputError(f"review input index changed at publication: {entry['path']}")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
