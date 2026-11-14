@@ -351,6 +351,10 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     for entry in entries:
         if git(root, "status", "--porcelain", "--", entry["path"]).strip():
             raise ReviewInputError(f"review input index changed at publication: {entry['path']}")
+    # The final per-path status query can stage an earlier source after its
+    # individual check. Compare the complete index against HEAD in one probe.
+    if git(root, "diff", "--cached", "--name-only", head, "--", *INPUTS).strip():
+        raise ReviewInputError("review input index changed at publication boundary")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,

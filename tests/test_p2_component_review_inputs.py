@@ -1559,3 +1559,33 @@ def test_rejects_late_index_swap_during_final_status_sweep(tmp_path: Path, monke
     else:
         raise AssertionError("late staged index substitution admitted")
     assert status_reads >= 5
+
+
+def test_rejects_index_swap_on_last_status_query(tmp_path: Path, monkeypatch) -> None:
+    """A final status query cannot stage an already checked input unnoticed."""
+    root, head = sample_repo(tmp_path)
+    earlier, later = module.INPUTS[0], module.INPUTS[-1]
+    source = root / earlier
+    committed = source.read_bytes()
+    original_git = module.git
+    last_status_count = 0
+
+    def stage_on_last_status(repo: Path, *args: str) -> bytes:
+        nonlocal last_status_count
+        result = original_git(repo, *args)
+        if args == ("status", "--porcelain", "--", later):
+            last_status_count += 1
+            if last_status_count == 6:
+                source.write_bytes(b"alternate staged source\n")
+                git(root, "add", "--", earlier)
+                source.write_bytes(committed)
+        return result
+
+    monkeypatch.setattr(module, "git", stage_on_last_status)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "index changed at publication boundary" in str(error)
+    else:
+        raise AssertionError("final status index substitution admitted")
+    assert last_status_count == 6
