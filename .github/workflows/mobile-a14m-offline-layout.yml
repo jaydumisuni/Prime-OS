@@ -1,0 +1,74 @@
+name: Prime Mobile A14m offline TWRP and PIT source audit
+on:
+  push:
+    branches: [work/mobile-mob0-phi-readonly-20261115]
+permissions:
+  contents: read
+concurrency:
+  group: mobile-a14m-layout-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  reference-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test source-only parser and existing MOB-0 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/tests -q
+          python3 -m unittest discover -s tests -q
+      - name: Download immutable historical reference files and verify Git blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/a14m-layout/source
+          BASE='https://raw.githubusercontent.com'
+          REC='forforksake/recovery_device_samsung_a14m/cdbc13945796b6863362ed041ce7177ce7cf3ca5'
+          DUMP='forforksake/a14m_dump/699855860e672eb5f3582ecf8e2144de0ed8b2d1'
+          curl --fail --location --silent --show-error --retry 2 "$BASE/$REC/BoardConfig.mk" -o dist/a14m-layout/source/BoardConfig.mk
+          curl --fail --location --silent --show-error --retry 2 "$BASE/$DUMP/boot/img_info" -o dist/a14m-layout/source/boot.img_info
+          curl --fail --location --silent --show-error --retry 2 "$BASE/$DUMP/recovery/img_info" -o dist/a14m-layout/source/recovery.img_info
+          curl --fail --location --silent --show-error --retry 2 "$BASE/$DUMP/pit/PIT_Analysis_001.txt" -o dist/a14m-layout/source/PIT_Analysis_001.txt
+          test "$(git hash-object dist/a14m-layout/source/BoardConfig.mk)" = 'a57fe4d664e94407771a47e60da6aaaa44578e7a'
+          test "$(git hash-object dist/a14m-layout/source/boot.img_info)" = '13c04b85f08d74e3fae7f27cc035feb3ba394d1b'
+          test "$(git hash-object dist/a14m-layout/source/recovery.img_info)" = '69dfdfb24722f7c6aa4763086ee058a4a1bd2c07'
+          test "$(git hash-object dist/a14m-layout/source/PIT_Analysis_001.txt)" = '05e2a2010e9d1cba27b0348ed75823be95715f91'
+          sha256sum dist/a14m-layout/source/* > dist/a14m-layout/source-input-sha256.txt
+      - name: Audit the reference boot geometry with no handset and no Android OS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 mobile/tools/a14m_offline_layout.py \
+            --boardconfig dist/a14m-layout/source/BoardConfig.mk \
+            --boot-info dist/a14m-layout/source/boot.img_info \
+            --recovery-info dist/a14m-layout/source/recovery.img_info \
+            --pit-analysis dist/a14m-layout/source/PIT_Analysis_001.txt \
+            --sources mobile/device-ports/samsung/a14m/offline-layout-reference.candidate.json \
+            --output dist/a14m-layout/reference-audit.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('dist/a14m-layout/reference-audit.json')
+          r=json.loads(p.read_text())
+          print('A14M_OFFLINE_LAYOUT',r['status'],'partitions',r['pit_partition_count'], 'blockers',r['blockers'])
+          assert r['status']=='REFERENCE_LAYOUT_RECONCILED_NOT_DEVICE_QUALIFIED',r
+          assert r['pit_partition_count']==57,r
+          assert r['recovery_prebuilt_blobs_match_dump'],r
+          assert r['reference_hazards'],r
+          assert not r['operating_system_required_for_this_audit'],r
+          assert not r['boot_image_ready'] and not r['device_flash_authorized'],r
+          print('A14M_TWRP_ONLY_OFFLINE_SOURCE_GATE_PASS_NOT_FLASHABLE')
+          PY
+          sha256sum dist/a14m-layout/reference-audit.json > dist/a14m-layout/output-sha256.txt
+      - name: Preserve bounded non-secret source proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a14m-offline-layout-${{ github.sha }}
+          path: dist/a14m-layout/
+          retention-days: 7
+          if-no-files-found: warn
