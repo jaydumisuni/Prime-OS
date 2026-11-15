@@ -57,3 +57,22 @@ Embedded Rust unit tests in `arm64.rs` cover:
 ## Contribution classification
 
 **New additive candidate Rust module + unexecuted test source + portability documentation.** Existing Core runtime, protected APIs, Desktop P1 and the physical lab phone remain unchanged. Source review does not substitute for compilation, runtime or hardware acceptance.
+
+## 2026-11-15 candidate hardening — sysfs domain qualification
+
+**Code correction on this same draft PR:** the original \`platform_devices()\` resolved a bus entry and considered it admissible whenever the target directory remained under the *observation root*. On live Linux the observation root can be \`/\`, making a syntactically forged bus-entry symlink to \`/tmp\` or another non-sysfs directory pass that insufficient check; similarly, a forged \`driver\` link to a directory under the observation root would be reported as "bound". The parent contract never authorizes promoting these path names to hardware/driver functionality.
+
+The candidate now requires all of the following before reporting a bound platform driver:
+- The platform-bus entry itself must be a **symlink**, not an arbitrary directory placed in a synthetic fixture.
+- The resolved device path must lie under the canonical **\`/sys/devices\`** kernel device tree, not merely under a fixture root or \`/\`.
+- The device's \`driver\` entry must itself be a **symlink**, not a plain directory.
+- The resolved driver must lie under canonical **\`/sys/bus/platform/drivers\`**, not a forged arbitrary in-root directory.
+- Missing kernel sysfs roots, invalid/unresolved entries and non-symlink entries produce explicit limitations. The original bounded 4 KiB reads, caller-architecture skepticism, private-ID omission, no Host ID enrollment and no writes are preserved.
+
+**Regression coverage authored:** three new Rust unit tests target an in-root non-kernel "device" symlink, an in-root non-kernel "driver" symlink and ordinary directories posing as bus/driver symlinks. The existing outside-root negative test now expects \`PLATFORM_DEVICE_OUTSIDE_KERNEL_TREE\`, the more precise failure state. Rust source now contains **15 unit tests written; 0 executed**. Cargo/rustc and an AArch64 guest remain unavailable in this workspace.
+
+**Executed narrow mechanical evidence, NOT Rust test results:** a temporary Python filesystem fixture established that an in-root \`tmp/forged\` directory passes the previous root-only path-prefix condition, but fails the new \`/sys/devices\` prefix condition; real \`/sys/devices/platform/real\` and \`/sys/bus/platform/drivers/real\` fixture directories pass their respective path-prefix conditions. This confirms the path-scope issue and intended boundary, **not** the compiled Rust branch behavior.
+
+**Exact-file verification:** source SHA-256 \`b3ce547cfeec5a8cc1348e12af0a372c629c32a7e8fb786d354a798e67a23912\`, Git blob \`ecf0a7fc4a54b8a6ee4d60b44afdf52b952f7ecc\`; GitHub readback matches the locally edited file byte-for-byte. The existing \`prime_hardware::probe()\` path, Desktop P1 acceptance, and frozen Hardware Graph v1 remain untouched by this correction.
+
+**Reviewer caveat:** bounded path resolution via \`canonicalize\` is appropriate for this read-only observational candidate but is **not** race-free openat2 containment or a security sandbox against a hostile privileged filesystem writer. A kernel sysfs binding and syntactically well-formed Device Tree content still cannot attest the board, firmware, driver functionality or handset support. Independent code review, actual Cargo tests, x86 regression and AArch64 guest proof remain mandatory. Do not merge or promote to Core readiness from this source review.
