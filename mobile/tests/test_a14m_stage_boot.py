@@ -10,7 +10,7 @@ import zipfile
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from a14m_stage_boot import (BOOT_HEADER_SIZE,MAX_IMAGE,align,boot_image,
                              inspect_boot_image,make_ramdisk,parse_boot_info,
-                             parse_newc,git_blob,safe_zip,stage)
+                             parse_newc,git_blob,safe_zip,stage,inspect_reference_dt_table)
 
 SAMPLE="""kernel=kernel
 ramdisk=ramdisk
@@ -39,6 +39,13 @@ def artificial_arm64_init()->bytes:
     b+=b'PRIME_A14M_FIRST_LIGHT|stage=ENTERED_UNQUALIFIED\x00'
     b+=b'NO_PRIME_CORE_NO_PHONE_QUALIFICATION\x00'
     return bytes(b)
+
+def sample_android_dt_table()->bytes:
+    # dt_table_header v0: one 32-byte entry pointing to 64-byte FDT at 64.
+    fdt=bytes.fromhex('d00dfeed')+struct.pack('>I',64)+b'\0'*56
+    head=struct.pack('<8I',0x1eabb7d7,128,32,32,1,32,2048,0)
+    entry=struct.pack('<8I',64,64,0,0,0,0,0,0)
+    return head+entry+fdt
 
 def simple_info()->dict:
     return parse_boot_info(SAMPLE)
@@ -85,9 +92,9 @@ class A14mBootV2StagingTests(unittest.TestCase):
 
     def test_boot_image_v2_header_and_independent_section_roundtrip(self):
         info=simple_info()
-        info['kernel_size']=1024;info['dtb_size']=48
+        info['kernel_size']=1024;info['dtb_size']=128
         kernel=b'kernel-awg1-boot-not-recovery'.ljust(1024,b'K')
-        dtb=bytes.fromhex('d00dfeed')+b'\0'*44
+        dtb=sample_android_dt_table()
         ramdisk,_=make_ramdisk(artificial_arm64_init())
         binary=boot_image(kernel,ramdisk,dtb,info)
         receipt=inspect_boot_image(binary,info,kernel,ramdisk,dtb)
@@ -99,17 +106,38 @@ class A14mBootV2StagingTests(unittest.TestCase):
         self.assertEqual(len(binary[:BOOT_HEADER_SIZE]),1660)
 
     def test_tampered_image_byte_fails_closed(self):
-        info=simple_info();info['kernel_size']=1024;info['dtb_size']=48
-        kernel=b'K'*1024;dtb=bytes.fromhex('d00dfeed')+b'\0'*44
+        info=simple_info();info['kernel_size']=1024;info['dtb_size']=128
+        kernel=b'K'*1024;dtb=sample_android_dt_table()
         rd,_=make_ramdisk(artificial_arm64_init())
         data=bytearray(boot_image(kernel,rd,dtb,info));data[2048]^=0xff
         with self.assertRaisesRegex(ValueError,'ROUNDTRIP'):
             inspect_boot_image(bytes(data),info,kernel,rd,dtb)
 
+    def test_actual_awg1_dt_table_layout_preserved(self):
+        packet=sample_android_dt_table()
+        found=inspect_reference_dt_table(packet)
+        self.assertEqual(found['format'],'ANDROID_DT_TABLE_V0_WITH_ONE_FDT')
+        self.assertEqual((found['fdt_offset'],found['fdt_bytes']),(64,64))
+        self.assertEqual(found['entry_count'],1)
+
+    def test_dt_table_fdt_size_and_count_fail_closed(self):
+        packet=bytearray(sample_android_dt_table())
+        packet[16]=2  # bogus entry count instead of the single observed FDT
+        with self.assertRaisesRegex(ValueError,'HEADER_UNEXPECTED'):
+            inspect_reference_dt_table(bytes(packet))
+        packet=bytearray(sample_android_dt_table())
+        packet[68:72]=struct.pack('>I',63) # FDT disagrees with table size
+        with self.assertRaisesRegex(ValueError,'SIZE_MISMATCH'):
+            inspect_reference_dt_table(bytes(packet))
+        packet=bytearray(sample_android_dt_table())
+        packet[36:40]=struct.pack('<I',32)  # FDT overlap with table
+        with self.assertRaisesRegex(ValueError,'ENTRY_INVALID'):
+            inspect_reference_dt_table(bytes(packet))
+
     def test_dtb_magic_required(self):
-        info=simple_info();info['kernel_size']=100;info['dtb_size']=48
-        with self.assertRaisesRegex(ValueError,'DTB_BAD_MAGIC'):
-            boot_image(b'K'*100,b'R',b'X'*48,info)
+        info=simple_info();info['kernel_size']=100;info['dtb_size']=128
+        with self.assertRaisesRegex(ValueError,'AWG1_DT_TABLE_HEADER_UNEXPECTED'):
+            boot_image(b'K'*100,b'R',b'X'*128,info)
 
     def test_stage_rejects_arbitrary_kernel_even_with_matching_size(self):
         with tempfile.TemporaryDirectory() as td:
