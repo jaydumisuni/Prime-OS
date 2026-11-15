@@ -43,8 +43,8 @@ def artificial_arm64_init()->bytes:
 def sample_android_dt_table()->bytes:
     # dt_table_header v0: one 32-byte entry pointing to 64-byte FDT at 64.
     fdt=bytes.fromhex('d00dfeed')+struct.pack('>I',64)+b'\0'*56
-    head=struct.pack('<8I',0x1eabb7d7,128,32,32,1,32,2048,0)
-    entry=struct.pack('<8I',64,64,0,0,0,0,0,0)
+    head=struct.pack('>8I',0xd7b7ab1e,128,32,32,1,32,2048,0)
+    entry=struct.pack('>8I',64,64,0,0,0,0,0,0)
     return head+entry+fdt
 
 def simple_info()->dict:
@@ -130,7 +130,7 @@ class A14mBootV2StagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'SIZE_MISMATCH'):
             inspect_reference_dt_table(bytes(packet))
         packet=bytearray(sample_android_dt_table())
-        packet[36:40]=struct.pack('<I',32)  # FDT overlap with table
+        packet[36:40]=struct.pack('>I',32)  # FDT overlap with table
         with self.assertRaisesRegex(ValueError,'ENTRY_INVALID'):
             inspect_reference_dt_table(bytes(packet))
 
