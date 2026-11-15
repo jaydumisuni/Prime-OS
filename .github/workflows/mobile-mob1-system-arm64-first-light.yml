@@ -149,6 +149,34 @@ jobs:
             | tee dist/core/output-sha256.txt
           echo PRIME_MOB1_ACTUAL_PRIMED_TRANSPORT_LAB_UNQUALIFIED_OBSERVED
 
+      - name: Package a portable ARM64 QEMU ZIP, then boot-test its extracted contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          INITRD="dist/core/primed-lab-initramfs.cpio.gz"
+          KIT_ZIP="dist/prime-mobile-arm64-qemu-lab.zip"
+          python3 mobile/first-light/package_qemu_bootkit.py \
+            --kernel "$KERNEL" --initrd "$INITRD" \
+            --verifier mobile/first-light/verify_primed_guest.py \
+            --output "$KIT_ZIP" --commit "$GITHUB_SHA" \
+            --kernel-package-sha256 "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292" \
+            > dist/qemu-zip-package-receipt.json
+          python3 -m zipfile -t "$KIT_ZIP"
+          sha256sum "$KIT_ZIP" | tee dist/qemu-zip-sha256.txt
+          EXTRACT="$RUNNER_TEMP/mob1-extracted-qemu-zip"
+          mkdir -p "$EXTRACT"
+          unzip -q "$KIT_ZIP" -d "$EXTRACT"
+          BUNDLE="$EXTRACT/prime-mobile-arm64-qemu-lab"
+          test -f "$BUNDLE/arm64-linux-Image"
+          test -f "$BUNDLE/prime-core-lab-initramfs.cpio.gz"
+          test -f "$BUNDLE/run-qemu.sh"
+          mkdir -p dist/qemu-zip-replay
+          bash "$BUNDLE/run-qemu.sh" "$PWD/dist/qemu-zip-replay" \
+            | tee dist/qemu-zip-replay.log
+          python3 -c 'import json,pathlib; r=json.loads(pathlib.Path("dist/qemu-zip-replay/core-transport-receipt.json").read_text()); assert r["status"]=="CORE_TRANSPORT_RESPONDED_UNQUALIFIED",r; assert r["blockers"]==[] and r["capability_count"]==7,r; assert not r["bootc_generation_bound"] and not r["flash_authorization"]; print("ZIP_BOOTED_ACTUAL_ARM64_LINUX_AND_PRIMED_SOCKET")'
+          echo "PRIME_MOBILE_ARM64_QEMU_ZIP_REPLAY_PASS"
+
       - name: Preserve bounded evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
