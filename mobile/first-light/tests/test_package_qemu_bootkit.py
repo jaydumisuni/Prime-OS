@@ -6,7 +6,9 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from package_qemu_bootkit import KIT_ROOT, create_zip
 
 def newc_entry(name: str, data: bytes, mode: int, inode: int) -> bytes:
