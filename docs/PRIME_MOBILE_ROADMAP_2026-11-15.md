@@ -249,6 +249,12 @@ With KRATOS unavailable, isolated development was completed entirely in the Chat
 
 **Open gate:** This workspace did not have `qemu-system-aarch64`, a qualified ARM64 Linux kernel Image, `cargo`, `rustc`, or the handset. Therefore **no ARM64 instructions executed**, no Linux guest or actual Prime Rust Core booted and no phone was modified. Use existing TTG-Virtual-Hardware-Lab G0.7 pinned QEMU and reviewed Linux Image for genuine guest proof later. The generated cpio is NOT an Android/Samsung image. This phase supplements, not promotes, earlier draft Prime MOB-0/PHI PR #223, TTG-Simulation D-XQT PR #1 and Virtual Hardware Lab PR #3. Independent review still required.
 
+## 2026-11-15 Prime PHI Rust ARM64 observation candidate — draft PR #225
+
+**[Prime-OS PR #225](https://github.com/jaydumisuni/Prime-OS/pull/225)** on `work/phi-arm64-board-discovery-20261115` adds `crates/prime-hardware/src/arm64.rs` and a single `pub mod arm64;` export to the *existing* Prime hardware crate. The module reads Device Tree model/compatible, kernel release, CPU present/online lists and Linux platform-bus device/driver bindings with bounded sources and explicit unknowns. It uses the pre-existing **candidate** schema from PR #223; it is not wired into `prime_hardware::probe()`, Host ID, `primed`, frozen `prime.hardware-graph.v1`, Workload Policy or KRATOS P1 health. Device binding is not functionality or physical proof.
+
+The module has **12 written Rust unit tests** (including symlink-escape, private-field omission, incomplete/out-of-range CPU topology and deterministic projection), but **none were executed** because this workspace has neither Cargo nor rustc; no Rust compiler, aarch64 cross-build or guest execution proof is claimed. GitHub readback of candidate source and docs matches local Git blobs. Full authority/gap/test document: [PHI ARM64 read-only Rust probe](https://github.com/jaydumisuni/Prime-OS/blob/work/phi-arm64-board-discovery-20261115/docs/PRIME_PHI_ARM64_READONLY_RUST_PROBE_2026-11-15.md). Before merge: independent review, `cargo test -p prime-hardware --lib` on reviewed toolchain, x86 regression, aarch64 target compilation and guest evidence. This is separate from PR #224's generic ARM64 pre-Core `/init` and PR #223's Python PHI observations.
+
 ## Recovery instructions for any new chat
 
 1. Read the current Prime-OS README, Master Plan, accepted supplements, Current Status, existing Desktop Roadmap, AI_HANDOFF and planning/state.json. These retain *shared OS* authority and Desktop proof.
