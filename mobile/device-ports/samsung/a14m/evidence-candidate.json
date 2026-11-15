@@ -1,0 +1,27 @@
+{
+  "schema": "prime.mobile.device-evidence.candidate.v0",
+  "status": "PROVISIONAL_NOT_A_DEVICE_SUPPORT_CERTIFICATE",
+  "subject": {
+    "alias": "owner-lab-rat-unverified",
+    "proposed_family": "Samsung Galaxy A14 4G",
+    "proposed_model": "SM-A145P",
+    "proposed_soc": "MediaTek Helio G80 / MT6769 family",
+    "qualifier": "These are Prime roadmap reference identifiers, not electronically confirmed against this photographed handset."
+  },
+  "observations": {
+    "recovery_interface": {
+      "state": "OBSERVED",
+      "source_kind": "PHOTO",
+      "description": "TWRP Advanced page, Copy Log, ADB Sideload, Terminal, File Manager and Swipe to Unlock screen overlay; this is a UI lock, not evidence of Android bootloader state.",
+      "evidence_ref": "owner-uploaded-image-in-2026-11-15-conversation",
+      "subject_alias": "owner-lab-rat-unverified"
+    },
+    "bootloader_lock_state": {
+      "state": "OBSERVED",
+      "source_kind": "OWNER_REPORTED",
+      "description": "Owner says unlocked; no device-side command output collected in this session.",
+      "subject_alias": "owner-lab-rat-unverified"
+    }
+  },
+  "action_boundary": "No flash, erase, bootloader operation or partition write is authorized or performed by this manifest."
+}
