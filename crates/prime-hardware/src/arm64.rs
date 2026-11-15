@@ -153,10 +153,18 @@ fn platform_devices(root: &Path, limitations: &mut Vec<String>) -> Vec<PlatformD
         limitations.push("PLATFORM_BUS_UNREADABLE".to_owned());
         return Vec::new();
     };
-    let root_base = match fs::canonicalize(root) {
-        Ok(path) => path,
-        Err(_) => return Vec::new(),
+    // A target beneath the observation root is not necessarily a kernel
+    // platform device (the root may be '/' on a live host). Qualify the
+    // specific kernel-owned sysfs trees as well as the observation root.
+    let device_root = match confined_path(root, "/sys/devices") {
+        Some(path) if path.is_dir() => path,
+        _ => {
+            limitations.push("PLATFORM_KERNEL_DEVICE_TREE_UNAVAILABLE".to_owned());
+            return Vec::new();
+        }
     };
+    let driver_root = confined_path(root, "/sys/bus/platform/drivers")
+        .filter(|path| path.is_dir());
     let mut names = entries.filter_map(Result::ok)
         .filter_map(|x| x.file_name().into_string().ok())
         .filter(|name| safe_kernel_name(name))
@@ -168,29 +176,49 @@ fn platform_devices(root: &Path, limitations: &mut Vec<String>) -> Vec<PlatformD
     }
     let mut devices = Vec::new();
     for name in names {
-        // sysfs bus entries often are symlinks to /sys/devices. Follow only
-        // targets that resolve within the explicitly selected observation root.
-        let Ok(real_device) = fs::canonicalize(base.join(&name)) else {
+        // Linux platform-bus entries are symlinks into /sys/devices.
+        // Reject a directory inserted into the bus path by a fixture: a
+        // directory's mere existence is not evidence of kernel enumeration.
+        let entry = base.join(&name);
+        match fs::symlink_metadata(&entry) {
+            Ok(meta) if meta.file_type().is_symlink() => {}
+            _ => {
+                limitations.push("PLATFORM_DEVICE_ENTRY_NOT_SYMLINK".to_owned());
+                continue;
+            }
+        }
+        let Ok(real_device) = fs::canonicalize(entry) else {
             limitations.push("PLATFORM_DEVICE_UNRESOLVED".to_owned());
             continue;
         };
-        if !real_device.starts_with(&root_base) || !real_device.is_dir() {
-            limitations.push("PLATFORM_DEVICE_OUTSIDE_ROOT".to_owned());
+        if !real_device.starts_with(&device_root) || !real_device.is_dir() {
+            limitations.push("PLATFORM_DEVICE_OUTSIDE_KERNEL_TREE".to_owned());
             continue;
         }
         let link = real_device.join("driver");
-        let driver = if fs::symlink_metadata(&link).is_ok() {
-            match fs::canonicalize(&link) {
-                Ok(target) if target.starts_with(&root_base) && target.is_dir() =>
-                    target.file_name().and_then(|s| s.to_str()).filter(|s| safe_kernel_name(s))
-                        .map(str::to_owned),
-                _ => {
-                    limitations.push("PLATFORM_DRIVER_LINK_UNQUALIFIED".to_owned());
-                    None
+        let driver = match fs::symlink_metadata(&link) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                match fs::canonicalize(&link) {
+                    Ok(target) if driver_root.as_ref().is_some_and(|tree| target.starts_with(tree))
+                        && target.is_dir() => {
+                        target.file_name().and_then(|s| s.to_str())
+                            .filter(|s| safe_kernel_name(s)).map(str::to_owned)
+                    }
+                    _ => {
+                        limitations.push("PLATFORM_DRIVER_LINK_UNQUALIFIED".to_owned());
+                        None
+                    }
                 }
             }
-        } else {
-            None
+            Ok(_) => {
+                limitations.push("PLATFORM_DRIVER_ENTRY_NOT_SYMLINK".to_owned());
+                None
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => {
+                limitations.push("PLATFORM_DRIVER_LINK_UNQUALIFIED".to_owned());
+                None
+            }
         };
         devices.push(PlatformDriverObservation { kernel_name: name, driver_bound: driver });
     }
@@ -436,7 +464,7 @@ mod tests {
         assert_eq!(observation.platform_devices.len(), 1);
         assert_eq!(observation.platform_devices[0].kernel_name, "owned");
         assert!(observation.platform_devices[0].driver_bound.is_none());
-        assert!(observation.limitations.contains(&"PLATFORM_DEVICE_OUTSIDE_ROOT".to_owned()));
+        assert!(observation.limitations.contains(&"PLATFORM_DEVICE_OUTSIDE_KERNEL_TREE".to_owned()));
         assert!(observation.limitations.contains(&"PLATFORM_DRIVER_LINK_UNQUALIFIED".to_owned()));
         assert!(!observation.any_device_functionality_proven);
     }
@@ -467,6 +495,68 @@ mod tests {
         let projection = candidate_json(&r, None);
         assert_eq!(projection["any_device_functionality_proven"], false);
         assert_eq!(projection["firmware_or_device_modified"], false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_root_non_kernel_directory_cannot_masquerade_as_platform_device() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().expect("fixture");
+        let root = temp.path();
+        let bus = root.join("sys/bus/platform/devices");
+        fs::create_dir_all(&bus).expect("bus");
+        fs::create_dir_all(root.join("sys/devices/platform")).expect("kernel device tree");
+        let forged = root.join("tmp/forged-device");
+        fs::create_dir_all(&forged).expect("forged directory");
+        symlink(&forged, bus.join("forged")).expect("in-root forged symlink");
+        let observation = observe(root, "aarch64");
+        assert!(observation.platform_devices.is_empty());
+        assert!(observation.limitations.contains(
+            &"PLATFORM_DEVICE_OUTSIDE_KERNEL_TREE".to_owned()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_root_non_kernel_driver_directory_is_not_a_bound_driver() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().expect("fixture");
+        let root = temp.path();
+        let bus = root.join("sys/bus/platform/devices");
+        let legitimate = root.join("sys/devices/platform/good");
+        fs::create_dir_all(&bus).expect("bus");
+        fs::create_dir_all(&legitimate).expect("kernel device");
+        let forged = root.join("tmp/forged-driver");
+        fs::create_dir_all(&forged).expect("non-driver directory");
+        symlink(&legitimate, bus.join("good")).expect("device link");
+        symlink(&forged, legitimate.join("driver")).expect("forged driver link");
+        let observation = observe(root, "aarch64");
+        assert_eq!(observation.platform_devices.len(), 1);
+        assert!(observation.platform_devices[0].driver_bound.is_none());
+        assert!(observation.limitations.contains(
+            &"PLATFORM_DRIVER_LINK_UNQUALIFIED".to_owned()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_directory_and_non_symlink_driver_are_not_evidence() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().expect("fixture");
+        let root = temp.path();
+        let bus = root.join("sys/bus/platform/devices");
+        let device = root.join("sys/devices/platform/legitimate");
+        fs::create_dir_all(&bus).expect("bus");
+        fs::create_dir_all(&device).expect("device");
+        fs::create_dir_all(bus.join("fake-directory")).expect("not a symlink");
+        fs::create_dir_all(device.join("driver")).expect("not a symlink");
+        symlink(&device, bus.join("legitimate")).expect("bus symlink");
+        let observation = observe(root, "aarch64");
+        assert_eq!(observation.platform_devices.len(), 1);
+        assert_eq!(observation.platform_devices[0].kernel_name, "legitimate");
+        assert!(observation.platform_devices[0].driver_bound.is_none());
+        assert!(observation.limitations.contains(
+            &"PLATFORM_DEVICE_ENTRY_NOT_SYMLINK".to_owned()));
+        assert!(observation.limitations.contains(
+            &"PLATFORM_DRIVER_ENTRY_NOT_SYMLINK".to_owned()));
     }
 
     #[test]
