@@ -46,23 +46,6 @@ jobs:
           test "$(git hash-object reference/kernel)" = 1d3968ea089f88deb19c0b8e1efe482b85ef7e65
           test "$(git hash-object reference/dtb.img)" = db8938c3219ff857dafbf59e0b476ecdb751582b
           test "$(git hash-object reference/img_info)" = 13c04b85f08d74e3fae7f27cc035feb3ba394d1b
-          python3 - <<'PY_DTB_INSPECT'
-          import json
-          from pathlib import Path
-          b=Path('reference/dtb.img').read_bytes()
-          fingerprints={
-            'size':len(b),
-            'head_hex':b[:80].hex(),
-            'fdt_magic_offset':b.find(bytes.fromhex('d00dfeed')),
-            'fdt_magic_count':b.count(bytes.fromhex('d00dfeed')),
-            'dt_table_magic_little_endian_offset':b.find(bytes.fromhex('d7b7ab1e')),
-            'dt_table_magic_big_endian_offset':b.find(bytes.fromhex('1eabb7d7')),
-            'gzip_magic_offset':b.find(bytes.fromhex('1f8b')),
-            'tail_hex':b[-32:].hex()
-          }
-          print('HISTORICAL_DTB_CONTAINER_DIAGNOSTIC',json.dumps(fingerprints,sort_keys=True))
-          Path('dist/reference-dtb-container.json').write_text(json.dumps(fingerprints,sort_keys=True,indent=2)+'\n')
-          PY_DTB_INSPECT
           file reference/kernel reference/dtb.img | tee dist/reference-file-types.txt
           sha256sum reference/kernel reference/dtb.img reference/img_info | tee dist/reference-input-sha256.txt
           echo PINNED_AWG1_BOOT_KERNEL_NOT_RECOVERY_KERNEL
@@ -121,6 +104,13 @@ jobs:
           ds=rs+((rsize+pages-1)//pages)*pages
           assert raw[ks:ks+ksize]==pathlib.Path('reference/kernel').read_bytes()
           assert raw[ds:ds+dtbsize]==pathlib.Path('reference/dtb.img').read_bytes()
+          table=raw[ds:ds+dtbsize]
+          magic,total,headsz,entsz,count,entryoff,pgsize,ver=struct.unpack_from('<8I',table,0)
+          assert (magic,total,headsz,entsz,count,entryoff,pgsize,ver)==(0x1eabb7d7,dtbsize,32,32,1,32,2048,0)
+          payloadsz,payloadoff,*_=struct.unpack_from('<8I',table,32)
+          assert payloadoff==64 and payloadsz==dtbsize-64
+          assert table[64:68]==bytes.fromhex('d00dfeed')
+          assert struct.unpack_from('>I',table,68)[0]==payloadsz
           assert raw[rs:rs+2]==b'\x1f\x8b'
           assert raw[576:596]!=bytes(20)
           manifest=json.loads((root/'manifest.json').read_text())
