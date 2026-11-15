@@ -21,7 +21,8 @@ Do not infer completion from branch existence, and do not begin work from conver
 5. [`docs/PRIME_CURRENT_STATUS.md`](docs/PRIME_CURRENT_STATUS.md) — exact current implementation branch/proof frontier.
 6. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
 7. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
-8. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
+8. [`docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md`](docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md) — cross-chat reference covering clean generic desktop capabilities, optional D-XQT/Colibri, Manager/Terminal and future mobile/remote-device paths. **Discussion recovery, not accepted implementation authority.**
+9. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
 
 Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md) and [`APFS.md`](docs/donors/APFS.md).
 
