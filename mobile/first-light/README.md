@@ -24,6 +24,12 @@ readelf -h .workspace/mobile-mob1-first-light/init-aarch64
 
 The output `initramfs.cpio.gz` is a candidate generic ARM64 Linux initramfs. **It is not a flashable phone image.** The receipt deliberately says `arm64_guest_boot_observed=false` and `prime_core_compiled=false`.
 
+## Candidate PHI read-only memory evidence (2026-11-15)
+
+The same cross-compiled AArch64 `/init` now emits kernel-reported `MemAvailable`, `SwapTotal`, `SwapFree`, PSI memory `some avg10`, and zswap enablement, each as an optional `PRIME_MOB1_V0|...` UART marker. Missing data is `UNKNOWN`, not zero. The serial parser verifies numeric consistency and rejects markers embedded in unrelated messages or outside the init stage window. It never claims actual PHI memory optimization, boot attestation, Core/Shell readiness or physical device support.
+
+See [the versioned source-and-proof receipt](../../docs/PRIME_MOBILE_MOB1_PHI_GUEST_PROBE_2026-11-15.md). Run `python3 -m unittest discover -s mobile/first-light/tests -q`; all **49** host tests pass. The AArch64 ELF and gzip initramfs digests have changed relative to the historical MOB-1 console correction. **Rebuild and re-pin before any guest execution.** No guest boot has occurred in this workspace.
+
 ## Future QEMU guest proof — existing lab owns the emulator
 
 Recover and use the [Virtual Hardware Lab G0.7 ARM64 QEMU path](https://github.com/jaydumisuni/TTG-Virtual-Hardware-Lab/blob/main/docs/G07_QEMU_GENERIC_ARM_EXECUTION.md), including its pinned emulator and isolated workspace. **This stage additionally needs an independently reviewed ARM64 Linux kernel Image** with initramfs support; the G0.7 bare-metal UART firmware is *not* a Linux kernel and cannot directly execute `/init`.
