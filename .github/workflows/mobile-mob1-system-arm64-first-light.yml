@@ -54,10 +54,16 @@ jobs:
           echo "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292  $KERNEL_DEB" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/ubuntu-arm64-kernel"
           dpkg-deb --extract "$KERNEL_DEB" "$RUNNER_TEMP/ubuntu-arm64-kernel"
-          KERNEL="$RUNNER_TEMP/ubuntu-arm64-kernel/boot/vmlinuz-6.8.0-31-generic"
+          PACKAGED_KERNEL="$RUNNER_TEMP/ubuntu-arm64-kernel/boot/vmlinuz-6.8.0-31-generic"
+          KERNEL="$RUNNER_TEMP/ubuntu-arm64-Image"
+          test -s "$PACKAGED_KERNEL"
+          file "$PACKAGED_KERNEL"
+          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[:2]==bytes.fromhex("1f8b"), "Verified Ubuntu package unexpectedly changed compressed-kernel format"' "$PACKAGED_KERNEL"
+          gzip -dc "$PACKAGED_KERNEL" > "$KERNEL"
           test -s "$KERNEL"
-          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[56:60]==bytes.fromhex("41524d64"), "Kernel is not a raw ARM64 Linux Image"' "$KERNEL"
-          sha256sum "$KERNEL_DEB" "$KERNEL" | tee dist/kernel-sha256.txt
+          file "$KERNEL"
+          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[56:60]==bytes.fromhex("41524d64"), "Decompressed kernel is not a raw ARM64 Linux Image"' "$KERNEL"
+          sha256sum "$KERNEL_DEB" "$PACKAGED_KERNEL" "$KERNEL" | tee dist/kernel-sha256.txt
           printf '%s\n' "$KERNEL" > "$RUNNER_TEMP/mob1-kernel-path.txt"
 
       - name: Execute Linux kernel and real AArch64 PID1 in QEMU system-mode
