@@ -9,7 +9,7 @@ The Prime Mobile roadmap requires a separate ARM64 virtual First Light before ph
 ## Contents
 
 - `src/early_init.c` — independently reviewed freestanding AArch64 Linux PID1 fixture. Uses direct Linux syscalls to print actual kernel-reported architecture, PID1 state, `/proc/meminfo` physical-memory total and Device Tree model if available. Unknowns stay unknown. Mounts only `/proc` and `/sys` inside a future guest. No host filesystem writes, USB, networking, firmware, bootloader or device access.
-- `build.py` — builds a true statically linked AArch64 ELF (machine=183, valid executable PT_LOAD entry, no PT_INTERP / PT_DYNAMIC) using Clang/LLD, then constructs reproducible cpio `newc` initramfs and `gzip` timestamp zero. Verifies ELF and marker integrity. No installation/download or emulation.
+- `build.py` — builds a true statically linked AArch64 ELF (machine=183, valid executable PT_LOAD entry, no PT_INTERP / PT_DYNAMIC) using Clang/LLD, then constructs reproducible cpio `newc` initramfs and `gzip` timestamp zero. The archive explicitly provides `/dev/console` (character 5:1) and `/dev/null` (character 1:3), with a fail-closed cpio verifier; otherwise guest PID 1 may have no usable stdout/stderr for proof. Verifies ELF and marker integrity. No installation/download or emulation.
 - `verify_serial.py` — bounded parser for a *future captured* QEMU guest UART log. Requires correct exact marker order, arm64 kernel machine, PID1, proc mount and nonzero memory. Produces only `GUEST_EARLY_INIT_OBSERVED_ONLY`; never `SHELL_READY`, `KNOWN_GOOD`, a phone acceptance or flash authority.
 - `tests/test_first_light.py` — deterministic source/build/replay and hostile input checks.
 
