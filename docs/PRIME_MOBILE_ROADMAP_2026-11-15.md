@@ -219,6 +219,20 @@ Source/evidence authority: [TTG-Simulation draft PR #1](https://github.com/jaydu
 
 The D-XQT bundled standalone WASM is a v6 bytecode runtime and did not support the newer v8 `compileModules` entry point. The host used valid compiled v6 bytecode and the real Rust VM rather than a duplicate interpreter. No D-XQT language feature change was needed. Use the TTG-Virtual-Hardware-Lab for later actual ARM64 guest proof, and maintain MOB-0 device boot-chain/restore/physical evidence gates unchanged.
 
+## 2026-11-15 offline implementation and fault-recovery checkpoint — DRAFT ONLY
+
+With KRATOS unavailable, isolated development was completed entirely in the ChatGPT workspace and published as **three draft review PRs**. These are implemented/tested *candidate* boundaries, **not** a real phone boot, an accepted simulator generation or a PHI production integration.
+
+**1. Prime-OS [PR #223](https://github.com/jaydumisuni/Prime-OS/pull/223)** — branch `work/mobile-mob0-phi-readonly-20261115` @ `5044ca3a822fbc6d0f6e91d313808b770ca78ce1`. Generic read-only Linux PHI memory/PSI/zRAM/zswap/swap probe; ARM64 Device Tree/board probe; iAM/X-Ray-inspired MOB-0 evidence intake; third-party device-port capability audit; two candidate schemas and provisional `a14m` manifests; checkpoint `docs/PRIME_MOBILE_OFFLINE_FIRST_LIGHT_CHECKPOINT_2026-11-15.md`. **29/29 Python tests passed** on exact source fetched back from GitHub; both JSON Schemas and their examples validated. No system daemon, Prime Core contract change, device write or hardware qualification.
+
+**2. [TTG-Simulation PR #1](https://github.com/jaydumisuni/TTG-Simulation/pull/1)** — branch `work/prime-mobile-dxqt-shadow-20261115` @ `ac4563c924ebf97dc9ee9cc9a626248c86a20f65`. Borrowed actual D-XQT Rust/WASM **v6 bytecode** engine (the standalone WASM does not expose the newer v8 source-compile action) and executed **19/19** deterministic Prime Mobile / PHI / iAM-currentness synthetic worlds with negative verifier/effect/step-limit checks. iAM's full runtime was not executed. No ARM64 instruction emulation.
+
+**3. [TTG Virtual Hardware Lab PR #3](https://github.com/jaydumisuni/TTG-Virtual-Hardware-Lab/pull/3)** — branch `work/prime-mobile-mob0-synthetic-recovery-20261115` @ `42b09d0d3c000d2e4eb48042bd03f858d73f7d96`. Reuses the actual lab's G0 **synthetic** flash/boot/fork/checkpoint engine: corrupt boot+recovery → `NO_BOOT_ROUTE` → simulate interrupted restore `VIRTUAL_POWER_CUT` → checkpoint restore recovery → `RECOVERY_ONLY` → restore boot → `NORMAL`. Parent unchanged and both receipt chains replay; **2/2 tests passed** on exact GitHub source and full report reproducible. This is **not a Samsung A14/Android kernel flash or physical restore path**.
+
+**Current MOB-0 actual-hardware limits remain unchanged:** the photo shows TWRP Advanced with UI lock; user separately reports bootloader unlocked; current exact physical model, electronic unlock state, vendor boot/partition topology, kernel/DTB, stock restore path and permitted image route have NOT been read/proved. No ownership approval to mutate the phone was acted on; no Apple/Android/MTK modem/GPU capability was inferred. KRATOS physical ARM64 guest/QEMU validation, Rust Prime Core cross-build, phone boot and essential-service testing remain open. These draft PRs require independent code/policy review and accepted contracts before merge.
+
+**Next offline work may continue from these exact PRs**, focusing on contract review, hostile cases, source integration and documented onboarding; do not start from scratch or create a second PHI/iAM/simulation runtime. **Next hardware work**, once KRATOS/phone access is restored, begins with read-only evidence and independently proven restoration, not an immediate flash.
+
 ## Recovery instructions for any new chat
 
 1. Read the current Prime-OS README, Master Plan, accepted supplements, Current Status, existing Desktop Roadmap, AI_HANDOFF and planning/state.json. These retain *shared OS* authority and Desktop proof.
