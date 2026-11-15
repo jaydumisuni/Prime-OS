@@ -1,0 +1,91 @@
+# Generic ARM64 Linux /init First Light proof. Does not qualify a Samsung phone or Prime Core.
+name: Mobile MOB-1 ARM64 Linux system boot candidate
+on:
+  push:
+    branches:
+      - work/mobile-mob1-arm64-initramfs-20261115
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-mob1-system-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-first-light:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Check out isolated MOB-1 candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install official Ubuntu emulator and compiler in temporary runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang lld qemu-system-arm
+          qemu-system-aarch64 --version
+          clang --version | head -n 1
+          git rev-parse HEAD
+
+      - name: Run host tests and build actual AArch64 early-init
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/first-light/tests -q
+          mkdir -p dist
+          python3 mobile/first-light/build.py --out "$RUNNER_TEMP/mob1-build" > dist/build-stdout.json
+          file "$RUNNER_TEMP/mob1-build/init-aarch64"
+          readelf -h "$RUNNER_TEMP/mob1-build/init-aarch64" | tee dist/elf-header.txt
+          readelf -h "$RUNNER_TEMP/mob1-build/init-aarch64" | grep -q 'Machine:.*AArch64'
+          cp "$RUNNER_TEMP/mob1-build/build-receipt.json" dist/
+
+      - name: Acquire exact Ubuntu arm64 Linux Image package and verify published SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL_DEB="$RUNNER_TEMP/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb"
+          KERNEL_URL="https://ports.ubuntu.com/ubuntu-ports/pool/main/l/linux-signed/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb"
+          curl --fail --show-error --silent --location --retry 2 --connect-timeout 15 --max-time 180 "$KERNEL_URL" -o "$KERNEL_DEB"
+          echo "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292  $KERNEL_DEB" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ubuntu-arm64-kernel"
+          dpkg-deb --extract "$KERNEL_DEB" "$RUNNER_TEMP/ubuntu-arm64-kernel"
+          KERNEL="$RUNNER_TEMP/ubuntu-arm64-kernel/boot/vmlinuz-6.8.0-31-generic"
+          test -s "$KERNEL"
+          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[56:60]==bytes.fromhex("41524d64"), "Kernel is not a raw ARM64 Linux Image"' "$KERNEL"
+          sha256sum "$KERNEL_DEB" "$KERNEL" | tee dist/kernel-sha256.txt
+          printf '%s\n' "$KERNEL" > "$RUNNER_TEMP/mob1-kernel-path.txt"
+
+      - name: Execute Linux kernel and real AArch64 PID1 in QEMU system-mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          QEMU="$(command -v qemu-system-aarch64)"
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          INITRD="$RUNNER_TEMP/mob1-build/initramfs.cpio.gz"
+          QEMU_SHA="$(sha256sum "$QEMU" | cut -d' ' -f1)"
+          KERNEL_SHA="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
+          INITRD_SHA="$(sha256sum "$INITRD" | cut -d' ' -f1)"
+          "$QEMU" --version | head -n 1 | tee dist/qemu-version.txt
+          sha256sum "$QEMU" "$KERNEL" "$INITRD" | tee dist/guest-input-sha256.txt
+          python3 mobile/first-light/run_qemu_guest.py \
+            --qemu "$QEMU" --qemu-sha256 "$QEMU_SHA" \
+            --kernel "$KERNEL" --kernel-sha256 "$KERNEL_SHA" \
+            --initramfs "$INITRD" --initramfs-sha256 "$INITRD_SHA" \
+            --output dist/guest --timeout 50 --run > dist/guest-launch-return.json
+          python3 -c 'import json,pathlib; r=json.loads(pathlib.Path("dist/guest/guest-receipt.json").read_text()); v=r["guest_verdict"]; print("GUEST_STATUS",r["status"]); print("GUEST_BLOCKERS",v["blockers"]); assert r["launched_process"]; assert r["host_timed_out"]; assert v["candidate_init_observed"] and not v["blockers"],r; assert r["status"]=="GUEST_EARLY_INIT_OBSERVED_ONLY"; assert v["observations"]["pid1"]=="true"; assert v["observations"]["kernel_machine"]=="aarch64"; assert not r["prime_core_ready"] and not r["physical_phone_qualified"]; assert b"Kernel panic" not in pathlib.Path("dist/guest/guest-uart.log").read_bytes()'
+          sha256sum dist/guest/* | tee dist/guest-output-sha256.txt
+          echo MOB1_REAL_ARM64_LINUX_GUEST_PID1_OBSERVED
+
+      - name: Preserve bounded evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mob1-system-arm64-first-light-${{ github.sha }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 7
