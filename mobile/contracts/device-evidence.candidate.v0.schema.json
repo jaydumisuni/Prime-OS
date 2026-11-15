@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jaydumisuni/Prime-OS/blob/main/mobile/contracts/device-evidence.candidate.v0.schema.json",
+  "title": "Prime Mobile device evidence (candidate only; not hardware certification)",
+  "type": "object",
+  "required": ["schema", "subject", "observations"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "prime.mobile.device-evidence.candidate.v0"},
+    "status": {"type": "string", "maxLength": 128},
+    "action_boundary": {"type": "string", "maxLength": 4096},
+    "subject": {
+      "type": "object",
+      "required": ["alias"],
+      "additionalProperties": false,
+      "properties": {
+        "alias": {"type": "string", "minLength": 1, "maxLength": 128},
+        "proposed_family": {"type": "string", "maxLength": 512},
+        "proposed_model": {"type": "string", "maxLength": 128},
+        "proposed_soc": {"type": "string", "maxLength": 256},
+        "qualifier": {"type": "string", "maxLength": 4096}
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "physical_device_identity": {"$ref": "#/$defs/evidence"},
+        "bootloader_lock_state": {"$ref": "#/$defs/evidence"},
+        "partition_topology": {"$ref": "#/$defs/evidence"},
+        "current_kernel_build": {"$ref": "#/$defs/evidence"},
+        "board_device_tree": {"$ref": "#/$defs/evidence"},
+        "stock_restoration_path": {"$ref": "#/$defs/evidence"},
+        "first_light_boot_route": {"$ref": "#/$defs/evidence"},
+        "boot_image_digest": {"$ref": "#/$defs/evidence"},
+        "driver_dependency_inventory": {"$ref": "#/$defs/evidence"},
+        "recovery_interface": {"$ref": "#/$defs/evidence"}
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["state", "source_kind"],
+      "additionalProperties": false,
+      "properties": {
+        "state": {"enum": ["OBSERVED", "UNKNOWN", "CONFLICTED", "UNSUPPORTED"]},
+        "source_kind": {"enum": ["LIVE_READ", "FILE_HASHED", "OWNER_REPORTED", "PHOTO", "THIRD_PARTY", "SIMULATED"]},
+        "observed_at": {"type": "string", "maxLength": 64},
+        "evidence_ref": {"type": "string", "maxLength": 2048},
+        "subject_alias": {"type": "string", "maxLength": 128},
+        "description": {"type": "string", "maxLength": 4096}
+      }
+    }
+  }
+}
