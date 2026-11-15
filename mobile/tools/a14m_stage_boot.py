@@ -146,7 +146,7 @@ def boot_image(kernel:bytes,ramdisk:bytes,dtb:bytes,info:dict)->bytes:
     # Android v2 BOOT_MAGIC, ten u32s, 16/512 fields, 32-byte id, 1024 extra,
     # v1 recovery_dtbo size/offset/header_size and v2 dtb size/address.
     base_header=struct.pack('<8s10I16s512s',b'ANDROID!',len(kernel),base+info['kernel_offset'],
-                            len(ramdisk),base+info['ramdisk_offset'],0,base+0x00f00000,
+                            len(ramdisk),base+info['ramdisk_offset'],0,0,
                             base+info['tags_offset'],page,2,0,name,cmdline)
     identity=hashlib.sha1()
     for part in (kernel,ramdisk,b'',b'',dtb):
@@ -162,8 +162,9 @@ def boot_image(kernel:bytes,ramdisk:bytes,dtb:bytes,info:dict)->bytes:
 def inspect_boot_image(raw:bytes,info:dict,expected_kernel:bytes,expected_rd:bytes,expected_dtb:bytes)->dict:
     if len(raw)<2048 or raw[:8]!=b'ANDROID!':raise ValueError('BOOT_MAGIC_MISSING')
     vals=struct.unpack_from('<10I',raw,8)
-    kernel_size,kaddr,rd_size,rdaddr,second_size,_,tags,page,ver,os_version=vals
+    kernel_size,kaddr,rd_size,rdaddr,second_size,second_addr,tags,page,ver,os_version=vals
     if (ver,page,second_size,os_version)!=(2,2048,0,0):raise ValueError('BOOT_HEADER_VERSION_INVALID')
+    if second_addr!=0:raise ValueError('ABSENT_SECOND_STAGE_ADDRESS_MUST_BE_ZERO')
     if (kernel_size,rd_size,kaddr,rdaddr,tags)!=(len(expected_kernel),len(expected_rd),info['base_addr']+info['kernel_offset'],info['base_addr']+info['ramdisk_offset'],info['base_addr']+info['tags_offset']):
         raise ValueError('BOOT_IMAGE_FIELDS_MISMATCH')
     dtbsize,dtbaddr=struct.unpack_from('<IQ',raw,BOOT_HEADER_SIZE-12)
