@@ -13,7 +13,9 @@ This file is the recovery entry point for any future chat, AI agent, engineer, o
 7. `docs/donors/WINDIRSTAT.md` — WinDirStat donor/licence/reference-oracle decision.
 8. `docs/donors/APFS.md` — APFS/Apple storage donor/reference decision.
 9. `planning/state.json` — machine-readable current state.
-10. [`docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md`](PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md) — full cross-chat discussion recovery of Prime Desktop's clean generic capability-native design, optional D-XQT/Colibri, Manager/Terminal, model-neutral remote device control, browser/SamFW correction, and future Mobile/portable Host considerations; **proposal/reference only, not a frozen architecture amendment or implementation gate**.
+10. [`docs/PRIME_MOBILE_ROADMAP_2026-11-15.md`](PRIME_MOBILE_ROADMAP_2026-11-15.md) — independent Prime OS Mobile roadmap and first device proof plan on shared Prime Core. PLANNING ONLY; distinct from P4B Android-app Personality and Desktop P1/P4A.
+11. [`docs/PRIME_HARDWARE_INTELLIGENCE_PROPOSAL_2026-11-15.md`](PRIME_HARDWARE_INTELLIGENCE_PROPOSAL_2026-11-15.md) — owner-named PHI shared hardware/memory/power adaptation proposal; Linux mechanisms and frozen Core contracts remain authoritative.
+12. [`docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md`](PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md) — full cross-chat discussion recovery of Prime Desktop's clean generic capability-native design, optional D-XQT/Colibri, Manager/Terminal, model-neutral remote device control, browser/SamFW correction, and future Mobile/portable Host considerations; **proposal/reference only, not a frozen architecture amendment or implementation gate**.
 
 If any summary conflicts with the Master Plan, the Master Plan wins unless a later explicitly accepted supplement/amendment supersedes the narrower topic.
 
