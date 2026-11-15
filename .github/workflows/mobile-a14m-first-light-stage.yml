@@ -105,9 +105,9 @@ jobs:
           assert raw[ks:ks+ksize]==pathlib.Path('reference/kernel').read_bytes()
           assert raw[ds:ds+dtbsize]==pathlib.Path('reference/dtb.img').read_bytes()
           table=raw[ds:ds+dtbsize]
-          magic,total,headsz,entsz,count,entryoff,pgsize,ver=struct.unpack_from('<8I',table,0)
-          assert (magic,total,headsz,entsz,count,entryoff,pgsize,ver)==(0x1eabb7d7,dtbsize,32,32,1,32,2048,0)
-          payloadsz,payloadoff,*_=struct.unpack_from('<8I',table,32)
+          magic,total,headsz,entsz,count,entryoff,pgsize,ver=struct.unpack_from('>8I',table,0)
+          assert (magic,total,headsz,entsz,count,entryoff,pgsize,ver)==(0xd7b7ab1e,dtbsize,32,32,1,32,2048,0)
+          payloadsz,payloadoff,*_=struct.unpack_from('>8I',table,32)
           assert payloadoff==64 and payloadsz==dtbsize-64
           assert table[64:68]==bytes.fromhex('d00dfeed')
           assert struct.unpack_from('>I',table,68)[0]==payloadsz
