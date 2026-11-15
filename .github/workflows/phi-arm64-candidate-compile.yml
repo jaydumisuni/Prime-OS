@@ -16,10 +16,11 @@ concurrency:
 jobs:
   rust-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 18
     env:
       CARGO_TERM_COLOR: never
       CARGO_NET_RETRY: 1
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
     steps:
       - name: Check out the exact candidate commit
         uses: actions/checkout@v4
@@ -43,3 +44,28 @@ jobs:
           set -euo pipefail
           rustup target add aarch64-unknown-linux-gnu
           cargo check --locked -p prime-hardware --all-targets --target aarch64-unknown-linux-gnu
+      - name: Link real ARM64 collector binary on isolated runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          fi
+          aarch64-linux-gnu-gcc --version | head -n 1
+          cargo build --locked --release -p prime-hardware --bin prime-phi-arm64-observe --target aarch64-unknown-linux-gnu
+          BIN=target/aarch64-unknown-linux-gnu/release/prime-phi-arm64-observe
+          test -s "$BIN"
+          file "$BIN"
+          readelf -h "$BIN" | grep -E 'Class:|Machine:|Entry point'
+          readelf -h "$BIN" | grep -q 'Machine:.*AArch64'
+          mkdir -p dist
+          cp "$BIN" dist/
+          sha256sum dist/prime-phi-arm64-observe | tee dist/SHA256SUMS.txt
+      - name: Save qualified cross-link artifact for later guest proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: prime-phi-arm64-candidate-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
