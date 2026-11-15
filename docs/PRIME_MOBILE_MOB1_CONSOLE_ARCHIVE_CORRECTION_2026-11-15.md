@@ -50,6 +50,19 @@ Independent format cross-check: the system GNU `cpio -itv` (not the Python archi
 
 All associated source files remain in the same PR #224 branch. The original `docs/PRIME_MOBILE_MOB1_OFFLINE_ARM64_CROSSBUILD_2026-11-15.md` is retained as a **historical** build receipt; its original archive hashes describe the earlier, incomplete initramfs and are superseded for new builds by this correction.
 
+## Bounded QEMU guest-proof adapter added — 2026-11-15
+
+The same MOB-1 draft branch also includes `mobile/first-light/run_qemu_guest.py` and `mobile/first-light/tests/test_qemu_admission.py`. This is a small host adapter to **borrow the existing Virtual Hardware Lab's QEMU**, not a new emulator or separate authority. It requires caller-supplied external SHA256 pins for the actual emulator, ARM64 Linux kernel and corrected initramfs, validates executable/image magic and exact cpio device nodes, then prepares an allowlisted no-network/no-USB/no-host-disk command. Without explicit `--run` it executes nothing. With `--run` it bounds subprocess lifetime (3–90 seconds), captures guest UART and stderr, and uses the existing `verify_serial.evaluate()` to return at most `GUEST_EARLY_INIT_OBSERVED_ONLY`. It always reports Prime Core/Shell/device/flash acceptance as FALSE.
+
+Kernel header validation uses the documented ARM64 raw `Image` magic `0x644d5241` at byte offset 56; this checks format, **not kernel provenance**: https://www.kernel.org/doc/html/latest/arch/arm64/booting.html . The QEMU executable and kernel must still be independently sourced and reviewed; a caller-provided checksum does not establish trust. The runner has no malicious-guest sandbox guarantee.
+
+The runner is **host-side implementation only**: synthetic negative fixtures cover mismatched hashes, wrong QEMU/kernel formats, missing emulator, bad gzip, oversized gzip expansion, missing console in the older archive, unsafe timeout and forbidden QEMU device flags. The expanded suite is **33/33 PASS** from local source. Three new/updated GitHub files were read back and independently Git-blob matched to their locally tested bytes:
+- `mobile/first-light/run_qemu_guest.py`: `3e61f7474838af222c23fe895666d91354aa0bb8`;
+- `mobile/first-light/tests/test_qemu_admission.py`: `aeccd74359642feaa98c28d7c58210790624bf0b`;
+- `mobile/first-light/README.md`: `c8bd2133b4836b3e846f6a03d1ab425515ddeba5`.
+
+**No actual QEMU guest was launched here.** Neither `qemu-system-aarch64` nor a trusted ARM64 Linux `Image` is in this workspace, and direct package downloads failed due blocked DNS. The runner is a reproducible acquisition/boot handoff, not the missing execution proof.
+
 ## What this does and does not prove
 
 **Proved locally:** reproducible genuine AArch64 executable compilation; correct and checked `newc` device nodes; build integrity and hostile-archive rejection; no host mutation.
