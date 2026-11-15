@@ -134,6 +134,49 @@ jobs:
           print('A14M_HISTORICAL_BOOT_V2_STRUCTURE_AND_NOT_FOR_FLASH_ZIP_PASS')
           PY
 
+      - name: Independently AOSP unpack, verify and bitwise rebuild historical boot image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/aosp-tools/gki dist/aosp-unpacked
+          BASE=https://raw.githubusercontent.com/jbeich/platform_system_tools_mkbootimg/d2bb0af5ba6d3198a3e99529c97eda1be0b5a093
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/unpack_bootimg.py" -o dist/aosp-tools/unpack_bootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/mkbootimg.py" -o dist/aosp-tools/mkbootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/gki/generate_gki_certificate.py" -o dist/aosp-tools/gki/generate_gki_certificate.py
+          test "$(git hash-object dist/aosp-tools/unpack_bootimg.py)" = a3f1a508796b5af54216397b05637f1f5e692a3d
+          test "$(git hash-object dist/aosp-tools/mkbootimg.py)" = ec2958179691a434df917cd1b6f196edaa80e31d
+          test "$(git hash-object dist/aosp-tools/gki/generate_gki_certificate.py)" = 739c61b04a9dbd95cafa5196533e3a472c31f2d9
+          IMAGE=dist/staged/a14m-first-light.reference-v2.boot.img
+          python3 dist/aosp-tools/unpack_bootimg.py --boot_img "$IMAGE" --out dist/aosp-unpacked > dist/aosp-unpack-header.txt
+          cmp -s reference/kernel dist/aosp-unpacked/kernel
+          cmp -s reference/dtb.img dist/aosp-unpacked/dtb
+          python3 - <<'PY_AOSP_INSPECT'
+          import gzip, hashlib, json
+          from pathlib import Path
+          r=Path('dist/aosp-unpacked')
+          rd=(r/'ramdisk').read_bytes()
+          raw=gzip.decompress(rd)
+          assert raw.startswith(b'070701') and b'PRIME_A14M_FIRST_LIGHT|stage=ENTERED_UNQUALIFIED' in raw
+          manifest=json.loads(Path('dist/staged/manifest.json').read_text())
+          assert hashlib.sha256(rd).hexdigest()==manifest['ramdisk_sha256']
+          assert manifest['flash_authorized'] is False
+          print('AOSP_INDEPENDENT_UNPACK_EXACT_SECTION_MATCH')
+          PY_AOSP_INSPECT
+          python3 dist/aosp-tools/mkbootimg.py \
+            --header_version 2 --pagesize 2048 \
+            --kernel dist/aosp-unpacked/kernel \
+            --ramdisk dist/aosp-unpacked/ramdisk \
+            --dtb dist/aosp-unpacked/dtb \
+            --base 0x40078000 --kernel_offset 0x8000 \
+            --ramdisk_offset 0x07c08000 --second_offset 0x00f00000 \
+            --tags_offset 0x0bc08000 --dtb_offset 0x07808000 \
+            --board SRPVJ12A002 \
+            --cmdline 'bootopt=64S3,32N2,64N2 loop.max_part=7' \
+            -o dist/aosp-rebuilt.boot.img
+          cmp "$IMAGE" dist/aosp-rebuilt.boot.img
+          sha256sum "$IMAGE" dist/aosp-rebuilt.boot.img | tee dist/aosp-roundtrip-sha256.txt
+          echo AOSP_PINNED_UNPACK_REPACK_BYTE_IDENTICAL_PASS
+
       - name: Retain historical-only evidence even if a gate fails
         if: always()
         uses: actions/upload-artifact@v4
