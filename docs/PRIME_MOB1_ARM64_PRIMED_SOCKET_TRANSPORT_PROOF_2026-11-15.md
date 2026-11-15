@@ -1,0 +1,40 @@
+# MOB-1 ARM64 Prime Core process and Unix-socket transport proof
+
+**Date:** 2026-11-15. **Branch:** `work/mobile-mob1-arm64-initramfs-20261115`, draft [Prime-OS PR #224](https://github.com/jaydumisuni/Prime-OS/pull/224).
+
+## Scope and admission
+
+This proof is for the **real existing Rust `primed` Core process and its real HTTP/1.1 Unix-socket server**, running under a **genuine ARM64 Linux kernel in QEMU system-mode**, rather than QEMU user-mode. It does **not** prove a production `bootc` deployment, secure generation binding, physical Samsung drivers, everyday mobile readiness, or Host identity enrollment.
+
+The production `primed` path remains unchanged when built without the new `mob1-guest-lab` Cargo feature. The lab variant requires **both** that feature and explicit `PRIME_MOB1_LAB=UNQUALIFIED`, the AArch64 target, a fixed RAM-only state directory `/run/prime-mob1-lab`, and a correctly shaped SHA-256 input digest. It constructs a `LAB`, `BOOT_TRY` generation with the explicit evidence reference `prime.mob1.generic-guest.unqualified.v0`, **not `bootc.status.v1`**, and no `KNOWN_GOOD` transition. The source is not an authorized alternative to the production `bootc` code path and must never be used to claim a verified system image. The kernel digest provided by the runner is an input identifier, **not cryptographic guest boot attestation**.
+
+The original `server::run`, request routes, `CoreState`, hardware inventory and version negotiation functions are reused. This is **not** a duplicate Core, simulated HTTP stack or fake `bootc status`. Missing `systemd-run`, local-physical storage and Host identity evidence are left unavailable/degraded, rather than granted. The guest clock can be uninitialized and is not attested. Production Desktop P1 remains frozen.
+
+## What was built
+
+- `crates/primed/src/mob1_lab.rs`: compile-gated, unqualified RAM-only generation for the explicit generic ARM64 QEMU transport proof. Adds two negative Rust tests. Default Core still enforces real `bootc`/generation seed.
+- `crates/primed/Cargo.toml`, `src/lib.rs`, `src/main.rs`: narrow feature gate. Existing main/default startup unchanged.
+- `mobile/first-light/primed_guest_init.c`: genuine freestanding AArch64 Linux PID 1. Mounts `/proc` and `/sys`, launches `/usr/bin/primed` through `clone` and `execve`, and makes four HTTP/1.1 requests via `AF_UNIX` using real Linux syscalls. No network, device or host disk passthrough.
+- `mobile/first-light/build_primed_guest.py`: refuses non-AArch64 ELFs, selects runtime-required **AArch64 glibc/linker files** (not host x86 libraries), constructs an explicit character-device cpio initramfs and generates input/output digests.
+- `mobile/first-light/verify_primed_guest.py`: validates the captured UART, exact response statuses, parsed version/capability JSON, observed unqualified generation ID and unavailable Host identity; it never grants `KNOWN_GOOD`/phone/flash acceptance.
+- Existing workflow `.github/workflows/mobile-mob1-system-arm64-first-light.yml` extends the previously passed ARM64 Linux First Light, Core crossbuild, and host tests to a bounded actual guest process/socket test. Workflow uses a published hash-verified Ubuntu arm64 kernel Image, Ubuntu QEMU system 8.2.2, no network, no physical passthrough, a 55s timeout, and artifacts saved even on failure.
+
+## Verified observations and engineering boundary
+
+[First system-guest Core run #43733161348](https://github.com/jaydumisuni/Prime-OS/actions/runs/43733161348) compiled and launched the *actual* Rust ARM64 `primed` binary. Its original CI result was marked failed because the Python proof parser omitted expected 400/409 rejection confirmation lines from its **ordered marker list**. The runner itself produced authentic UART evidence for `GET /v1/versions` HTTP 200, missing version HTTP 400, incompatible version HTTP 409, and valid `GET /v1/capabilities` HTTP 200. The collected capabilities include 7 descriptors, with Host identity not enrolled and execution backend unavailable.
+
+The artifact from that run was downloaded, and the corrected parser was re-applied independently to **raw captured UART**, returning `CORE_TRANSPORT_RESPONDED_UNQUALIFIED`, `blockers=[]`, exactly 7 descriptors, and generation ID `mob1-unqualified-d29e317d6651`. UART SHA-256 `307add050b3d0db5c0bd08a3d6685f71f8a311f366302ff59b05bd1f7ef05fcc`, QEMU stderr empty, actual ARM64 `primed` build SHA-256 `203351fd9e3549a1f3aa03bee1a572cc5ac2722ecaacec9c2c311e92284c6221`, guest initramfs SHA-256 `4dd337c849b7862f27268be5db384814232cebf8933b39c568be4c68c18bad37`. Linux guest PID 1 was run with a bounded 55-second host kill; this is neither a guest shutdown nor crash-proof.
+
+**Exact-head clean rerun PASSED:** [GitHub Actions run #43733637832](https://github.com/jaydumisuni/Prime-OS/actions/runs/43733637832) completed **successfully** on exact PR #224 head `dc009754fb23062f0a26e58fb5e36b74c9e4ea0b`. All baseline ARM64 First Light steps passed; real `primed` host library tests with lab feature **59/59 passed**; AArch64 Core rebuilt and ran in QEMU system-mode. The guest returned `HTTP 200` for `/v1/versions`, `HTTP 400` for missing version, `HTTP 409` for incompatible version 9.0, and `HTTP 200` for `/v1/capabilities` with `Prime-Interface-Accept: 1.0`. JSON contained **7 actual Core capability descriptors**. The real `primed` startup line in raw UART identifies a live Unix socket `/run/prime-mob1-lab/core.sock`.
+
+**Independent artifact verification:** [Workflow artifact #14169661275](https://github.com/jaydumisuni/Prime-OS/actions/runs/43733637832/artifacts/14169661275) ZIP SHA-256 `1f00ef326f4aa7448f96439b792e46d3ccf8cb69e31fb1dffa43996bc41189ee`, 25 members. It was downloaded and independently opened; ZIP CRC check passed; recorded `core-transport-receipt.json` **exactly matches a fresh evaluation of the raw UART**. Raw UART SHA256 `6d09edaee22fb44caaa0d6853de52626671c702ffc4c94a27dad757a1fca85a3`; independent status `CORE_TRANSPORT_RESPONDED_UNQUALIFIED`, `blockers=[]`, `capability_count=7`, generation ID `mob1-unqualified-d29e317d6651`; QEMU stderr empty. Lab core executable SHA256 `203351fd9e3549a1f3aa03bee1a572cc5ac2722ecaacec9c2c311e92284c6221`; lab initramfs SHA256 `4dd337c849b7862f27268be5db384814232cebf8933b39c568be4c68c18bad37`. The 55-second host kill is expected from deliberately persistent test PID1, not a guest shutdown demonstration.
+
+**Truthful capability results:** `prime.host.identity=DEGRADED`, `prime.hardware.inventory=DEGRADED`, `prime.storage.inventory=UNAVAILABLE`, `prime.generation.current=AVAILABLE` but `health=UNKNOWN` (state `HEALTH_PROVING`, **not** `KNOWN_GOOD`), `prime.exec.native=UNAVAILABLE`, `prime.system.status=AVAILABLE`, `prime.capability.interface=AVAILABLE`. That last set demonstrates **Core transport and interface operation only**. The guest clock starts near 1970 and is not trusted for recency or identity proof. No bootc/status output was fabricated or used to grant production image admission.
+
+## Acceptance boundary
+
+**Proved:** the existing Prime Rust Core **transport implementation executes** on Linux/AArch64, binds the Unix socket, returns versions + 7 capabilities, respects positive/missing/incompatible version negotiation and keeps obvious unavailable capabilities unavailable. Only an explicit, compile-gated, **unqualified lab generation** is used; no mocked bootc status is presented.
+
+**Not proved:** production `bootc`/OSTree image installation and generation attestation; secure Host enrollment; valid system clock; persistent rollback/recovery; Linux service manager; physical handset or modem/GPU/touch; Prime Shell readiness; any mutation/admission; or release/merge readiness. No real device was accessed or modified.
+
+**Next:** independent review of the compile-only feature, then real bootc-qualified ARM64 Core lifecycle and rollback/physical device gates where applicable. Keep this PR draft until those additional gates pass; do not relabel lab transport proof as complete MOB-1 production acceptance.
