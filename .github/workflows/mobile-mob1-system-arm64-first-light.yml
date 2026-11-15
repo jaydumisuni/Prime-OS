@@ -110,6 +110,45 @@ jobs:
           sha256sum dist/primed-aarch64-candidate | tee dist/primed-aarch64-sha256.txt
           echo PRIMED_AARCH64_CROSS_LINK_ONLY_NOT_GUEST_EXECUTED
 
+      - name: Execute actual primed Core server in ARM64 guest (unqualified LAB mode)
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euo pipefail
+          mkdir -p dist/core
+          cargo test --locked -p primed --lib --features mob1-guest-lab
+          cargo build --locked --release -p primed --target aarch64-unknown-linux-gnu --features mob1-guest-lab
+          CORE=target/aarch64-unknown-linux-gnu/release/primed
+          readelf -h "$CORE" | grep -q 'Machine:.*AArch64'
+          clang -target aarch64-linux-gnu -fuse-ld=lld -nostdlib -static -ffreestanding \
+            -fno-stack-protector -fno-builtin -Wall -Wextra -Werror -Wl,-e,_start -Wl,--build-id=none \
+            mobile/first-light/primed_guest_init.c -o dist/core/guest-init-aarch64
+          python3 mobile/first-light/build_primed_guest.py \
+            --core "$CORE" --init dist/core/guest-init-aarch64 \
+            --libroot /usr/aarch64-linux-gnu/lib --out dist/core \
+            > dist/core/build-log.json
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          QEMU="$(command -v qemu-system-aarch64)"
+          sha256sum "$CORE" "$KERNEL" "$QEMU" dist/core/primed-lab-initramfs.cpio.gz \
+            | tee dist/core/input-sha256.txt
+          set +e
+          timeout --signal=KILL 55s "$QEMU" -machine virt -cpu cortex-a57 \
+            -m 768M -display none -serial stdio -monitor none -no-reboot -net none -nodefaults \
+            -kernel "$KERNEL" -initrd dist/core/primed-lab-initramfs.cpio.gz \
+            -append 'console=ttyAMA0 rdinit=/init loglevel=4' \
+            > dist/core/guest-uart.log 2> dist/core/qemu-stderr.log
+          result=$?
+          set -e
+          echo "QEMU_EXIT_CODE=$result"
+          test "$result" -eq 137 -o "$result" -eq 124
+          python3 mobile/first-light/verify_primed_guest.py dist/core/guest-uart.log \
+            > dist/core/core-transport-receipt.json
+          python3 -c 'import json,pathlib; p=pathlib.Path("dist/core/core-transport-receipt.json"); r=json.loads(p.read_text()); print("CORE_TRANSPORT",r["status"],"blockers",r["blockers"],"descriptors",r["capability_count"]); assert r["transport_responded"],r; assert not r["bootc_generation_bound"] and not r["core_deployment_accepted"]; assert r["capability_count"]>=1'
+          sha256sum dist/core/guest-uart.log dist/core/core-transport-receipt.json dist/core/qemu-stderr.log \
+            | tee dist/core/output-sha256.txt
+          echo PRIME_MOB1_ACTUAL_PRIMED_TRANSPORT_LAB_UNQUALIFIED_OBSERVED
+
       - name: Preserve bounded evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
