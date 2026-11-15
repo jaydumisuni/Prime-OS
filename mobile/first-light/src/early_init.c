@@ -88,29 +88,76 @@ static isize kernel_read(const char *path, char *data, usize capacity) {
     return count;
 }
 
-static void probe_memory(void) {
-    char data[2049];
-    isize count = kernel_read("/proc/meminfo", data, sizeof(data));
-    emit("PRIME_MOB1_V0|mem_total_kib=");
-    if (count < 0) { emit("UNKNOWN\n"); return; }
-    const char key[] = "MemTotal:";
-    for (usize i = 0; i + sizeof(key) < (usize)count; ++i) {
-        usize k = 0;
-        while (k < sizeof(key)-1 && data[i+k] == key[k]) ++k;
-        if (k != sizeof(key)-1) continue;
-        usize n = i + k;
-        while (n < (usize)count && (data[n] == ' ' || data[n] == '\t')) ++n;
-        usize first = n;
-        while (n < (usize)count && data[n] >= '0' && data[n] <= '9' && n - first < 20) ++n;
-        if (n > first) {
-            char result[21];
-            usize j = 0;
-            while (first < n) result[j++] = data[first++];
-            result[j] = 0;
-            emit(result); emit("\n"); return;
+/* Parsed from the guest Linux kernel, never a model-generated estimate.
+ * Missing fields remain explicitly UNKNOWN; swap is never physical RAM. */
+static void emit_meminfo_field(const char *content, usize size,
+                               const char *key, const char *label) {
+    emit("PRIME_MOB1_V0|"); emit(label); emit("=");
+    usize keylen = length(key);
+    for (usize pos = 0; pos < size;) {
+        usize end = pos;
+        while (end < size && content[end] != '\n') ++end;
+        usize i = 0;
+        while (i < keylen && pos+i < end && content[pos+i] == key[i]) ++i;
+        if (i == keylen) {
+            usize k = pos+keylen;
+            while (k < end && (content[k]==' ' || content[k]=='\t')) ++k;
+            usize start = k;
+            while (k < end && content[k]>='0' && content[k]<='9' && k-start < 20) ++k;
+            if (k > start) {
+                usize units = k;
+                while (units < end && (content[units]==' ' || content[units]=='\t')) ++units;
+                if (units+2 == end && content[units]=='k' && content[units+1]=='B') {
+                    char digits[21]; usize n=0;
+                    while (start < k) digits[n++] = content[start++];
+                    digits[n]=0;
+                    emit(digits); emit("\n"); return;
+                }
+            }
         }
+        pos = end < size ? end+1 : size;
     }
     emit("UNKNOWN\n");
+}
+
+static void probe_memory(void) {
+    char data[4096];
+    isize n = kernel_read("/proc/meminfo",data,sizeof(data));
+    usize size = n > 0 ? (usize)n : 0;
+    emit_meminfo_field(data,size,"MemTotal:","mem_total_kib");
+    emit_meminfo_field(data,size,"MemAvailable:","mem_available_kib");
+    emit_meminfo_field(data,size,"SwapTotal:","swap_total_kib");
+    emit_meminfo_field(data,size,"SwapFree:","swap_free_kib");
+}
+
+static void probe_memory_psi(void) {
+    char data[1024];
+    isize n = kernel_read("/proc/pressure/memory",data,sizeof(data));
+    emit("PRIME_MOB1_V0|psi_memory_some_avg10=");
+    if (n <= 0) { emit("UNKNOWN\n"); return; }
+    const char key[] = "some avg10=";
+    const usize keylen=sizeof(key)-1;
+    if ((usize)n < keylen) { emit("UNKNOWN\n"); return; }
+    for (usize j=0;j<keylen;++j)
+        if (data[j]!=key[j]) { emit("UNKNOWN\n"); return; }
+    char avg[17]; usize i=0, offset=keylen;
+    while (offset<(usize)n && i<sizeof(avg)-1 &&
+           ((data[offset]>='0' && data[offset]<='9') || data[offset]=='.')) {
+        avg[i++]=data[offset++];
+    }
+    if (!i || offset >= (usize)n || data[offset]!=' ' || i>8) {
+        emit("UNKNOWN\n"); return;
+    }
+    avg[i]=0; emit(avg); emit("\n");
+}
+
+static void probe_zswap(void) {
+    char data[16];
+    isize n=kernel_read("/sys/module/zswap/parameters/enabled",data,sizeof(data));
+    emit("PRIME_MOB1_V0|zswap_state=");
+    if (n>0 && (data[0]=='Y' || data[0]=='y' || data[0]=='1')) emit("ENABLED\n");
+    else if (n>0 && (data[0]=='N' || data[0]=='n' || data[0]=='0')) emit("DISABLED\n");
+    else emit("UNKNOWN\n");
 }
 
 static void probe_device_tree(void) {
@@ -138,6 +185,8 @@ static void early_init(void) {
     isize sm = syscall5(SYS_MOUNT, (isize)"sysfs", (isize)"/sys", (isize)"sysfs", 0, 0);
     emit(sm == 0 ? "PRIME_MOB1_V0|sys_mount=AVAILABLE\n" : "PRIME_MOB1_V0|sys_mount=UNAVAILABLE\n");
     probe_memory();
+    probe_memory_psi();
+    probe_zswap();
     probe_device_tree();
     emit("PRIME_MOB1_V0|stage=EVIDENCE_ONLY_CORE_NOT_STARTED\n");
     struct guest_timespec pause = {1, 0};
