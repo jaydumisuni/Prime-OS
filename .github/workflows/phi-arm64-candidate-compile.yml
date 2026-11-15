@@ -1,0 +1,45 @@
+# Candidate-only compilation verification for Prime Mobile PHI ARM64.
+# Scoped to this review branch; no deployment, elevated access or KRATOS runner.
+name: PHI ARM64 candidate Rust proof
+on:
+  push:
+    branches:
+      - work/phi-arm64-board-discovery-20261115
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phi-arm64-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: 1
+    steps:
+      - name: Check out the exact candidate commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record exact Rust compiler and source head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+      - name: Test Prime hardware library and observation collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p prime-hardware --all-targets -- --nocapture
+      - name: Cross-check ARM64 Rust compile without device access
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-gnu
+          cargo check --locked -p prime-hardware --all-targets --target aarch64-unknown-linux-gnu
