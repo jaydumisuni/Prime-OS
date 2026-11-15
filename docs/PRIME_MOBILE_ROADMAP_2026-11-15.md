@@ -211,6 +211,14 @@ PHI-0 design inventory and MOB-0 architecture may begin on paper now and should 
 
 **First task after this roadmap (not started here):** recover Galaxy A14 SM-A145P current physical stock/boot/firmware evidence read-only, select a plausible kernel/driver/HAL route, and freeze a device bring-up/recovery plan; in parallel qualify ARM64 virtual Prime Core. There is no authorization to flash, unlock, wipe, factory-reset or replace the daily-driver OS from this document.
 
+## 2026-11-15 D-XQT shadow simulation candidate — NOT MOB-0 physical acceptance
+
+The owner authorized a KRATOS-independent structural SIM using D-XQT and iAM/COG-style currentness. A real D-XQT Rust v6 WASM VM executed 19 synthetic Prime Mobile boot-admission / PHI zRAM-swap-GPU / iAM evidence scenarios in an isolated ChatGPT workspace; 19/19 passed with negative verifier, host-effect, step-limit and deterministic replay checks. The exact source and fixture were fetched back from GitHub and rerun with the same successful result.
+
+Source/evidence authority: [TTG-Simulation draft PR #1](https://github.com/jaydumisuni/TTG-Simulation/pull/1); branch `work/prime-mobile-dxqt-shadow-20261115` at `ac4563c924ebf97dc9ee9cc9a626248c86a20f65`; full readout in `docs/PRIME_MOBILE_DXQT_SHADOW_20261115.md` of that PR. This is **candidate structural shadow evidence only**, not an independently accepted TTG-Simulation generation, a kernel/ARM64 guest boot, phone-driver test, PHI performance benchmark, model/firmware identity confirmation or authorization to flash. The user's photograph shows a TWRP UI unlock overlay, NOT bootloader-state proof; owner separately reports bootloader unlocked.
+
+The D-XQT bundled standalone WASM is a v6 bytecode runtime and did not support the newer v8 `compileModules` entry point. The host used valid compiled v6 bytecode and the real Rust VM rather than a duplicate interpreter. No D-XQT language feature change was needed. Use the TTG-Virtual-Hardware-Lab for later actual ARM64 guest proof, and maintain MOB-0 device boot-chain/restore/physical evidence gates unchanged.
+
 ## Recovery instructions for any new chat
 
 1. Read the current Prime-OS README, Master Plan, accepted supplements, Current Status, existing Desktop Roadmap, AI_HANDOFF and planning/state.json. These retain *shared OS* authority and Desktop proof.
