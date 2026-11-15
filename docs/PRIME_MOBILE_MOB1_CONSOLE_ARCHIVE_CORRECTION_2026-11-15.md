@@ -46,6 +46,8 @@ After the correction, the same Clang/LLD produced:
 | `mobile/first-light/tests/test_first_light.py` | `3cc5ebed58db1983392ffe3492db953f8c15dc9d` |
 | `mobile/first-light/README.md` | `d6d301dd8e43c5cd721cf7db88f8429e974bfdd5` |
 
+Independent format cross-check: the system GNU `cpio -itv` (not the Python archive validator) parsed the corrected archive and explicitly displayed `dev/console` as `crw------- 5,1`, `dev/null` as `crw-rw-rw- 1,3`, executable `/init` 4616 bytes, and the expected directories. `file` independently identified an SVR4 newc cpio; `readelf -h` independently identified ELF64 AArch64, ET_EXEC, entry 0x21039c. This is archive-format corroboration, **not** guest execution.
+
 All associated source files remain in the same PR #224 branch. The original `docs/PRIME_MOBILE_MOB1_OFFLINE_ARM64_CROSSBUILD_2026-11-15.md` is retained as a **historical** build receipt; its original archive hashes describe the earlier, incomplete initramfs and are superseded for new builds by this correction.
 
 ## What this does and does not prove
