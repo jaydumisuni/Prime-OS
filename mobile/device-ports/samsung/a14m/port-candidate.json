@@ -1,0 +1,19 @@
+{
+  "schema": "prime.mobile.device-port.candidate.v0",
+  "board": {
+    "alias": "a14m-reference-not-electronically-verified",
+    "vendor_candidate": "Samsung",
+    "model_candidate": "SM-A145P",
+    "soc_candidate": "MediaTek Helio G80",
+    "notes": "A roadmap reference, not a flashed or qualified Prime phone. Photo + owner statement are not electronic board evidence."
+  },
+  "kernel": {
+    "strategy": "UNKNOWN",
+    "kernel_source_verified": false,
+    "boot_chain_verified": false,
+    "restore_path_verified": false,
+    "license_review_complete": false
+  },
+  "capabilities": {},
+  "release": "NOT_SUPPORTED_YET"
+}
