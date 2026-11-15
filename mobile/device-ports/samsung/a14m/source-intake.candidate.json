@@ -1,0 +1,50 @@
+{
+  "schema": "prime.mobile.a14m-source-intake.candidate.v0",
+  "target": {
+    "proposed_model": "SM-A145P",
+    "proposed_board": "a14m",
+    "proposed_soc_family": "MediaTek MT6768/MT6769 (Helio G80 family)",
+    "live_model_verified": false,
+    "current_firmware_verified": false,
+    "partition_topology_verified": false,
+    "download_mode_lock_verified": false,
+    "stock_restore_verified": false,
+    "boot_image_compatible": false
+  },
+  "public_reference_sources": [
+    {
+      "kind": "OFFICIAL_FIRMWARE_RELEASE_NOTES",
+      "url": "https://doc.samsungmobile.com/SM-A145P/026283230309/eng.html",
+      "model": "SM-A145P",
+      "listed_build": "A145PXXUEDZJ2",
+      "release_date": "2026-10-28",
+      "android_version": "15",
+      "qualification": "Official published release; NOT evidence this particular handset runs this build"
+    },
+    {
+      "kind": "COMMUNITY_KERNEL_SOURCE_OLD",
+      "url": "https://github.com/forforksake/android_kernel_samsung_a145p",
+      "exact_commit": "2ad60c6b7b89f6f37d1eb483696e7d121c8972bd",
+      "reported_firmware": "A145PXXU2AWG1",
+      "qualification": "Android 13-era reference only; not approved for current firmware, modern GKI, kernel or boot image"
+    },
+    {
+      "kind": "COMMUNITY_RECOVERY_TREE_OLD",
+      "url": "https://github.com/forforksake/recovery_device_samsung_a14m",
+      "exact_commit": "cdbc13945796b6863362ed041ce7177ce7cf3ca5",
+      "reported_android": "13",
+      "qualification": "Community recovery experiment; does NOT prove stock restore, current touchscreen, cryptography or present boot chain"
+    },
+    {
+      "kind": "COMMUNITY_FIRMWARE_DUMP_OLD",
+      "url": "https://github.com/forforksake/a14m_dump",
+      "exact_commit": "699855860e672eb5f3582ecf8e2144de0ed8b2d1",
+      "reported_firmware": "A145PXXU2AWG1",
+      "qualification": "Historical reference; NOT a matching or approved backup for current handset"
+    }
+  ],
+  "device_capture": null,
+  "images_built": false,
+  "safe_flash_authorized": false,
+  "release": "NOT_SUPPORTED_YET"
+}
