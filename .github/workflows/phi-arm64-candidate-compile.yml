@@ -16,7 +16,7 @@ concurrency:
 jobs:
   rust-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 22
     env:
       CARGO_TERM_COLOR: never
       CARGO_NET_RETRY: 1
@@ -66,6 +66,50 @@ jobs:
           mkdir -p dist
           cp "$BIN" dist/
           sha256sum dist/prime-phi-arm64-observe | tee dist/SHA256SUMS.txt
+      - name: Execute AArch64 collector in QEMU user-mode with synthetic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends qemu-user
+          qemu-aarch64 --version | head -n 1 | tee dist/qemu-user-version.txt
+          BIN=target/aarch64-unknown-linux-gnu/release/prime-phi-arm64-observe
+          timeout 25s qemu-aarch64 -L /usr/aarch64-linux-gnu "$BIN" --help > dist/qemu-user-help.txt
+          grep -F 'prime-phi-arm64-observe --fixture-root' dist/qemu-user-help.txt
+          FIXTURE=$(mktemp -d -t prime-phi-qemu-XXXXXX)
+          trap 'rm -rf "$FIXTURE"' EXIT
+          mkdir -p "$FIXTURE"/proc/device-tree "$FIXTURE"/proc/sys/kernel
+          mkdir -p "$FIXTURE"/sys/firmware/devicetree/base
+          mkdir -p "$FIXTURE"/sys/devices/system/cpu "$FIXTURE"/sys/devices/platform/mock-device
+          mkdir -p "$FIXTURE"/sys/bus/platform/devices "$FIXTURE"/sys/bus/platform/drivers/mock-driver
+          printf 'Prime synthetic QEMU ARM64 board\\0' > "$FIXTURE/proc/device-tree/model"
+          printf 'Prime synthetic QEMU ARM64 board\\0' > "$FIXTURE/sys/firmware/devicetree/base/model"
+          printf 'ttg,synthetic-board\\0arm,virtual-soc\\0' > "$FIXTURE/proc/device-tree/compatible"
+          printf 'ttg,synthetic-board\\0arm,virtual-soc\\0' > "$FIXTURE/sys/firmware/devicetree/base/compatible"
+          printf '6.12-synthetic-qemu\\n' > "$FIXTURE/proc/sys/kernel/osrelease"
+          printf '0-3\\n' > "$FIXTURE/sys/devices/system/cpu/present"
+          printf '0-2\\n' > "$FIXTURE/sys/devices/system/cpu/online"
+          ln -s "$FIXTURE/sys/devices/platform/mock-device" "$FIXTURE/sys/bus/platform/devices/mock-device"
+          ln -s "$FIXTURE/sys/bus/platform/drivers/mock-driver" "$FIXTURE/sys/devices/platform/mock-device/driver"
+          timeout 25s qemu-aarch64 -L /usr/aarch64-linux-gnu "$BIN" --fixture-root "$FIXTURE" --arch aarch64 > dist/qemu-user-fixture-observation.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("dist/qemu-user-fixture-observation.json").read_text())
+          assert d["capture_mode"] == "SYNTHETIC_FIXTURE", d
+          assert d["host_arch"] == "aarch64", d
+          assert d["host_arch_attested"] is False, d
+          assert d["board_model"] == "Prime synthetic QEMU ARM64 board", d
+          assert d["board_compatible"] == ["ttg,synthetic-board", "arm,virtual-soc"], d
+          assert d["cpu_present"] == [0,1,2,3] and d["cpu_online"] == [0,1,2], d
+          assert len(d["platform_devices"]) == 1, d
+          assert d["platform_devices"][0]["driver_bound"] == "mock-driver", d
+          assert d["any_device_functionality_proven"] is False, d
+          assert d["firmware_or_device_modified"] is False, d
+          assert d["live_device_qualification"] is False, d
+          assert d["source_is_hardware_attestation"] is False, d
+          assert not d["limitations"], d["limitations"]
+          print("QEMU_AARCH64_USER_MODE_FIXTURE_OBSERVATION_PASS (not guest boot)")
+          PY
       - name: Save qualified cross-link artifact for later guest proof
         uses: actions/upload-artifact@v4
         with:
