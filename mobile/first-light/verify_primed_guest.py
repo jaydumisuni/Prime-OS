@@ -12,7 +12,9 @@ from pathlib import Path
 PREFIX='PRIME_MOB1_CORE_V0|'
 REQUIRED=['stage=ENTERED','core_process_spawned=true',
           'versions_status=200','missing_version_status=400',
-          'incompatible_version_status=409','capabilities_status=200',
+          'missing_version_rejection_verified=true',
+          'incompatible_version_status=409',
+          'incompatible_version_rejection_verified=true','capabilities_status=200',
           'stage=TRANSPORT_ONLY_UNQUALIFIED']
 
 def evaluate(uart:str)->dict:
