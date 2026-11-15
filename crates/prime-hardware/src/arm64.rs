@@ -79,6 +79,32 @@ fn first_valid<T>(
     (None, None)
 }
 
+/// Require all available valid Device Tree projections to agree. On real
+/// Linux, /proc/device-tree and /sys/firmware/devicetree normally refer to
+/// the same tree; divergent values must not be silently preferred.
+/// A missing or unreadable path is not evidence of disagreement.
+fn consistent_valid<T: Eq>(
+    root: &Path,
+    candidates: &'static [&'static str],
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> (Option<T>, Option<&'static str>, bool) {
+    let mut first = None;
+    let mut source = None;
+    for path in candidates {
+        if let Some(value) = confined_bytes(root, path).and_then(|bytes| parse(&bytes)) {
+            match first.as_ref() {
+                Some(previous) if previous != &value => return (None, None, true),
+                Some(_) => {},
+                None => {
+                    first = Some(value);
+                    source = Some(*path);
+                }
+            }
+        }
+    }
+    (first, source, false)
+}
+
 fn parse_model(raw: &[u8]) -> Option<String> {
     if !raw.ends_with(&[0]) || raw.len() < 2 || raw.len() > 257 {
         return None;
@@ -165,6 +191,11 @@ fn platform_devices(root: &Path, limitations: &mut Vec<String>) -> Vec<PlatformD
     };
     let driver_root = confined_path(root, "/sys/bus/platform/drivers")
         .filter(|path| path.is_dir());
+    if driver_root.is_none() {
+        // Absence of the driver directory means binding state is incomplete;
+        // an empty driver symlink is not proof that a device is unbound.
+        limitations.push("PLATFORM_DRIVER_ROOT_UNAVAILABLE".to_owned());
+    }
     let mut names = entries.filter_map(Result::ok)
         .filter_map(|x| x.file_name().into_string().ok())
         .filter(|name| safe_kernel_name(name))
@@ -254,18 +285,24 @@ pub fn observe(root: &Path, host_arch: &str) -> Arm64BoardObservation {
         result.limitations.push("HOST_NOT_IDENTIFIED_AS_ARM64".to_owned());
         return result;
     }
-    let (model, model_source) = first_valid(root,
+    let (model, model_source, model_conflict) = consistent_valid(root,
         &["/proc/device-tree/model", "/sys/firmware/devicetree/base/model"], parse_model);
     result.kernel_model = model;
     result.model_source = model_source;
+    if model_conflict {
+        result.limitations.push("MODEL_SOURCES_CONFLICT".to_owned());
+    }
     if result.kernel_model.is_none() {
         result.limitations.push("MODEL_NOT_OBSERVED".to_owned());
     }
-    let (compatible, compatible_source) = first_valid(root,
+    let (compatible, compatible_source, compatible_conflict) = consistent_valid(root,
         &["/proc/device-tree/compatible", "/sys/firmware/devicetree/base/compatible"],
         parse_compatible);
     result.kernel_compatible = compatible;
     result.compatible_source = compatible_source;
+    if compatible_conflict {
+        result.limitations.push("COMPATIBLE_SOURCES_CONFLICT".to_owned());
+    }
     if result.kernel_compatible.is_none() {
         result.limitations.push("COMPATIBLE_NOT_OBSERVED".to_owned());
     }
@@ -557,6 +594,62 @@ mod tests {
             &"PLATFORM_DEVICE_ENTRY_NOT_SYMLINK".to_owned()));
         assert!(observation.limitations.contains(
             &"PLATFORM_DRIVER_ENTRY_NOT_SYMLINK".to_owned()));
+    }
+
+    #[test]
+    fn differing_valid_device_tree_models_fail_closed() {
+        let temp = tempfile::tempdir().expect("fixture");
+        write(temp.path(), "/proc/device-tree/model", b"Model A\0");
+        write(temp.path(), "/sys/firmware/devicetree/base/model", b"Model B\0");
+        let r = observe(temp.path(), "aarch64");
+        assert!(r.kernel_model.is_none());
+        assert!(r.model_source.is_none());
+        assert!(r.limitations.contains(&"MODEL_SOURCES_CONFLICT".to_owned()));
+        assert!(r.limitations.contains(&"MODEL_NOT_OBSERVED".to_owned()));
+        assert!(!r.any_device_functionality_proven);
+    }
+
+    #[test]
+    fn differing_valid_compatible_lists_fail_closed() {
+        let temp = tempfile::tempdir().expect("fixture");
+        write(temp.path(), "/proc/device-tree/compatible", b"acme,board-a\0acme,soc\0");
+        write(temp.path(), "/sys/firmware/devicetree/base/compatible", b"acme,board-b\0acme,soc\0");
+        let r = observe(temp.path(), "aarch64");
+        assert!(r.kernel_compatible.is_none());
+        assert!(r.compatible_source.is_none());
+        assert!(r.limitations.contains(&"COMPATIBLE_SOURCES_CONFLICT".to_owned()));
+        assert!(!r.any_device_functionality_proven);
+    }
+
+    #[test]
+    fn mirrored_device_tree_sources_agree_without_conflict() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let r = temp.path();
+        write(r, "/proc/device-tree/model", b"Same Board\0");
+        write(r, "/sys/firmware/devicetree/base/model", b"Same Board\0");
+        write(r, "/proc/device-tree/compatible", b"acme,board\0acme,soc\0");
+        write(r, "/sys/firmware/devicetree/base/compatible", b"acme,board\0acme,soc\0");
+        let observation = observe(r, "aarch64");
+        assert_eq!(observation.kernel_model.as_deref(), Some("Same Board"));
+        assert_eq!(observation.kernel_compatible.as_ref().map(Vec::len), Some(2));
+        assert!(!observation.limitations.iter().any(|s| s.ends_with("SOURCES_CONFLICT")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn absent_driver_tree_is_reported_even_when_device_is_listed() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().expect("fixture");
+        let root = temp.path();
+        let bus = root.join("sys/bus/platform/devices");
+        let device = root.join("sys/devices/platform/sample");
+        fs::create_dir_all(&bus).expect("bus");
+        fs::create_dir_all(&device).expect("device");
+        symlink(&device, bus.join("sample")).expect("bus entry");
+        let r = observe(root, "aarch64");
+        assert_eq!(r.platform_devices.len(), 1);
+        assert!(r.platform_devices[0].driver_bound.is_none());
+        assert!(r.limitations.contains(&"PLATFORM_DRIVER_ROOT_UNAVAILABLE".to_owned()));
     }
 
     #[test]
