@@ -65,13 +65,44 @@ class FirstLightTests(unittest.TestCase):
             off=(payload_start+size+3)&~3
             items[name]=(mode,data)
             if name=='TRAILER!!!':break
-        self.assertEqual(set(items),{'dev','proc','sys','init','TRAILER!!!'})
+        self.assertEqual(set(items),{'dev','dev/console','dev/null','proc','sys','init','TRAILER!!!'})
         self.assertEqual(items['init'][0]&0o170000,0o100000)
         self.assertEqual(items['init'][0]&0o111,0o111)
         self.assertEqual(items['init'][1],self.elf)
         for name in ('dev','proc','sys'):
             self.assertEqual(items[name][0]&0o170000,0o040000)
         self.assertEqual(off,len(raw))
+        structure=b.inspect_initramfs(raw)
+        self.assertTrue(structure['validated'])
+        self.assertEqual(structure['console'],{'type':'character','major':5,'minor':1})
+
+    def test_cpio_console_and_null_are_explicit_device_nodes(self):
+        raw=(self.out/'initramfs.cpio').read_bytes()
+        inspected=b.inspect_initramfs(raw)
+        self.assertEqual(inspected['null'],{'type':'character','major':1,'minor':3})
+        self.assertEqual(self.receipt['initramfs_structure'], inspected)
+
+    def test_cpio_missing_console_fails_closed(self):
+        original=(self.out/'initramfs.cpio').read_bytes()
+        # Alter pathname without affecting record size or archive offsets.
+        damaged=original.replace(b'dev/console\0',b'dev/consolX\0',1)
+        with self.assertRaisesRegex(ValueError,'CPIO_REQUIRED_ENTRIES'):
+            b.inspect_initramfs(damaged)
+
+    def test_cpio_wrong_console_major_fails_closed(self):
+        raw=bytearray((self.out/'initramfs.cpio').read_bytes())
+        pos=raw.find(b'dev/console\0')
+        self.assertGreater(pos,100)
+        # cpio's rdevmajor field is the 10th 8-hex field at entry+6+9*8.
+        entry=pos-110
+        raw[entry+6+9*8:entry+14+9*8]=b'00000000'
+        with self.assertRaisesRegex(ValueError,'CPIO_DEVICE_NODE_INVALID:dev/console'):
+            b.inspect_initramfs(bytes(raw))
+
+    def test_cpio_trailing_bytes_fail_closed(self):
+        raw=(self.out/'initramfs.cpio').read_bytes()+b'UNTRUSTED'
+        with self.assertRaisesRegex(ValueError,'CPIO_TRAILING_BYTES'):
+            b.inspect_initramfs(raw)
 
     def test_wrong_elf_architecture_fails(self):
         raw=bytearray(self.elf);struct.pack_into('<H',raw,18,62) # x86_64
