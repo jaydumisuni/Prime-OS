@@ -239,6 +239,8 @@ With KRATOS unavailable, isolated development was completed entirely in the Chat
 
 **Source and proof:** `mobile/first-light/{src/early_init.c,build.py,verify_serial.py,README.md,tests/test_first_light.py}` and `docs/PRIME_MOBILE_MOB1_OFFLINE_ARM64_CROSSBUILD_2026-11-15.md` in PR #224. The 5 committed files were fetched back from GitHub and byte-compared, then rebuilt independently with **17/17 tests PASS**. Two build directories yielded identical ELF SHA256 `ea11e6b1c442e587eda841a054e043b93836e775d740e706bef238b4e9925445` and gzip initramfs SHA256 `e46c7d3381a9a4e7b4ea25bf80a447ca2fc0fd390065b05812a43ce780ae7b85`.
 
+**Shared Core audit:** the draft PR additionally includes `docs/PRIME_MOBILE_ARM64_SHARED_CORE_GAP_AUDIT_2026-11-15.md`, tracing exact Rust sources for DMI-only Host fingerprinting, x86 CPU/P1 health assumptions, PCI-centric discovery, and `systemd-run`/`bootc` guest prerequisites. No Core source change or accepted contract amendment resulted from the audit.
+
 **Open gate:** This workspace did not have `qemu-system-aarch64`, a qualified ARM64 Linux kernel Image, `cargo`, `rustc`, or the handset. Therefore **no ARM64 instructions executed**, no Linux guest or actual Prime Rust Core booted and no phone was modified. Use existing TTG-Virtual-Hardware-Lab G0.7 pinned QEMU and reviewed Linux Image for genuine guest proof later. The generated cpio is NOT an Android/Samsung image. This phase supplements, not promotes, earlier draft Prime MOB-0/PHI PR #223, TTG-Simulation D-XQT PR #1 and Virtual Hardware Lab PR #3. Independent review still required.
 
 ## Recovery instructions for any new chat
