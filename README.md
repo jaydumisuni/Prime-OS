@@ -22,7 +22,9 @@ Do not infer completion from branch existence, and do not begin work from conver
 6. [`docs/PRIME_OS_ROADMAP.md`](docs/PRIME_OS_ROADMAP.md) — operational implementation sequence.
 7. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md) — concise recovery instructions for a new chat/AI/engineer.
 8. [`docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md`](docs/PRIME_DESKTOP_CAPABILITY_NATIVE_CROSS_CHAT_RECOVERY_2026-11-15.md) — cross-chat reference covering clean generic desktop capabilities, optional D-XQT/Colibri, Manager/Terminal and future mobile/remote-device paths. **Discussion recovery, not accepted implementation authority.**
-9. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
+9. [`docs/PRIME_MOBILE_ROADMAP_2026-11-15.md`](docs/PRIME_MOBILE_ROADMAP_2026-11-15.md) — separately governed Prime OS Mobile roadmap (MOB-0–MOB-9), shared Core, ARM64 device ports, phone essentials, portable workstation and device-specific release proof. Planning proposal; not production qualification.
+10. [`docs/PRIME_HARDWARE_INTELLIGENCE_PROPOSAL_2026-11-15.md`](docs/PRIME_HARDWARE_INTELLIGENCE_PROPOSAL_2026-11-15.md) — owner-named PHI hardware/memory/accelerator resource adaptation shared across Desktop and Mobile. Proposal; not a second core daemon.
+11. [`planning/state.json`](planning/state.json) — machine-readable current state and resume order.
 
 Donor-specific evidence is kept under [`docs/donors/`](docs/donors/), including [`WINDIRSTAT.md`](docs/donors/WINDIRSTAT.md) and [`APFS.md`](docs/donors/APFS.md).
 
