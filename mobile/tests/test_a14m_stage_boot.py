@@ -105,6 +105,17 @@ class A14mBootV2StagingTests(unittest.TestCase):
         self.assertLessEqual(receipt['total_bytes'],MAX_IMAGE)
         self.assertEqual(len(binary[:BOOT_HEADER_SIZE]),1660)
 
+    def test_absent_second_stage_cannot_advertise_a_load_address(self):
+        info=simple_info();info['kernel_size']=1024;info['dtb_size']=128
+        kernel=b'K'*1024;dtb=sample_android_dt_table()
+        rd,_=make_ramdisk(artificial_arm64_init())
+        packed=boot_image(kernel,rd,dtb,info)
+        self.assertEqual(struct.unpack_from('<II',packed,24),(0,0))
+        broken=bytearray(packed)
+        struct.pack_into('<I',broken,28,0x40f78000)
+        with self.assertRaisesRegex(ValueError,'ABSENT_SECOND_STAGE_ADDRESS_MUST_BE_ZERO'):
+            inspect_boot_image(bytes(broken),info,kernel,rd,dtb)
+
     def test_tampered_image_byte_fails_closed(self):
         info=simple_info();info['kernel_size']=1024;info['dtb_size']=128
         kernel=b'K'*1024;dtb=sample_android_dt_table()
