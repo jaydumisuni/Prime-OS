@@ -48,10 +48,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
+          # GCC alone may omit ARM64 glibc startup objects on ubuntu-24.04.
+          # Check both the compiler and the cross sysroot before linking.
+          if ! command -v aarch64-linux-gnu-gcc >/dev/null || ! test -f /usr/aarch64-linux-gnu/lib/Scrt1.o; then
             sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           fi
+          test -f /usr/aarch64-linux-gnu/lib/Scrt1.o
+          test -f /usr/aarch64-linux-gnu/lib/crti.o
           aarch64-linux-gnu-gcc --version | head -n 1
           cargo build --locked --release -p prime-hardware --bin prime-phi-arm64-observe --target aarch64-unknown-linux-gnu
           BIN=target/aarch64-unknown-linux-gnu/release/prime-phi-arm64-observe
