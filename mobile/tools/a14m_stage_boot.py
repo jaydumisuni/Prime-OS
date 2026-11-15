@@ -110,6 +110,31 @@ def make_ramdisk(init_elf:bytes)->tuple[bytes,dict]:
     inspected=parse_newc(raw)
     return gzip.compress(raw,compresslevel=9,mtime=0),inspected
 
+def inspect_reference_dt_table(dtb:bytes)->dict:
+    """Admit AWG1's actual dt_table container with one bounded FDT entry.
+
+    The pinned 135300-byte boot/dtb.img is NOT a raw FDT at offset 0.
+    Its first 32 bytes are Android's little-endian dt_table_header, then
+    one 32-byte dt_table_entry, then a single big-endian FDT at byte 64.
+    Preserve it as-is: stripping the table would change published boot bytes.
+    """
+    if len(dtb)<72:raise ValueError('DT_TABLE_TRUNCATED')
+    magic,total,header,entry_size,count,entry_offset,page,version=struct.unpack_from('<8I',dtb,0)
+    if (magic,total,header,entry_size,count,entry_offset,page,version)!=(
+            0x1eabb7d7,len(dtb),32,32,1,32,2048,0):
+        raise ValueError('AWG1_DT_TABLE_HEADER_UNEXPECTED')
+    size,offset,board_id,revision,*custom=struct.unpack_from('<8I',dtb,entry_offset)
+    if (offset,size)!=(64,len(dtb)-64) or offset+size!=len(dtb):
+        raise ValueError('AWG1_DT_TABLE_ENTRY_INVALID')
+    if dtb[offset:offset+4]!=bytes.fromhex('d00dfeed'):
+        raise ValueError('AWG1_FDT_MAGIC_MISSING')
+    size_fdt=struct.unpack_from('>I',dtb,offset+4)[0]
+    if size_fdt!=size:raise ValueError('AWG1_FDT_SIZE_MISMATCH')
+    return {'format':'ANDROID_DT_TABLE_V0_WITH_ONE_FDT','total_bytes':len(dtb),
+            'fdt_offset':offset,'fdt_bytes':size,'entry_count':count,
+            'page_size':page,'board_id':board_id,'revision':revision,
+            'custom_fields':custom}
+
 def boot_image(kernel:bytes,ramdisk:bytes,dtb:bytes,info:dict)->bytes:
     page=info['page_size'];base=info['base_addr'];name=info['board'].encode()
     cmdline=info['cmd_line'].encode()
@@ -117,7 +142,7 @@ def boot_image(kernel:bytes,ramdisk:bytes,dtb:bytes,info:dict)->bytes:
     if not 0<len(kernel)<=30*1024*1024 or not 0<len(ramdisk)<=CPIO_MAX or len(dtb)!=info['dtb_size']:
         raise ValueError('BOOT_SECTION_SIZE_INVALID')
     if len(kernel)!=info['kernel_size']:raise ValueError('KERNEL_SIZE_MISMATCH')
-    if not dtb.startswith(bytes.fromhex('d00dfeed')):raise ValueError('DTB_BAD_MAGIC')
+    inspect_reference_dt_table(dtb)  # AWG1 has dt_table header; FDT starts at offset 64
     # Android v2 BOOT_MAGIC, ten u32s, 16/512 fields, 32-byte id, 1024 extra,
     # v1 recovery_dtbo size/offset/header_size and v2 dtb size/address.
     base_header=struct.pack('<8s10I16s512s',b'ANDROID!',len(kernel),base+info['kernel_offset'],
@@ -180,7 +205,7 @@ def stage(kernel_path:Path,dtb_path:Path,info_path:Path,init_path:Path,out:Path,
     manifest={'schema':SCHEMA,'scope':'HISTORICAL_AWG1_A145P_V2_REFERENCE_ONLY',
       'source_commit':source_sha,'kernel_git_blob':KERNEL_GIT_BLOB,'dtb_git_blob':DTB_GIT_BLOB,
       'boot_img_sha256':sha(candidate),'ramdisk_sha256':sha(ramdisk),'kernel_sha256':sha(kernel),'dtb_sha256':sha(dtb),
-      'early_init_sha256':sha(init),'image':geometry,'ramdisk':ramdetail,
+      'early_init_sha256':sha(init),'image':geometry,'dtb_table':inspect_reference_dt_table(dtb),'ramdisk':ramdetail,
       'boot_image_ready':False,'boot_chain_qualified':False,'physical_boot_observed':False,
       'twrp_recovery_modified':False,'flash_authorized':False,'bootc_generation_bound':False,
       'prime_core_running':False,'mobile_shell_running':False,'source_license_review_complete':False,
