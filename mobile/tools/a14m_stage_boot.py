@@ -114,16 +114,16 @@ def inspect_reference_dt_table(dtb:bytes)->dict:
     """Admit AWG1's actual dt_table container with one bounded FDT entry.
 
     The pinned 135300-byte boot/dtb.img is NOT a raw FDT at offset 0.
-    Its first 32 bytes are Android's little-endian dt_table_header, then
+    Its first 32 bytes are Android's big-endian dt_table_header, then
     one 32-byte dt_table_entry, then a single big-endian FDT at byte 64.
     Preserve it as-is: stripping the table would change published boot bytes.
     """
     if len(dtb)<72:raise ValueError('DT_TABLE_TRUNCATED')
-    magic,total,header,entry_size,count,entry_offset,page,version=struct.unpack_from('<8I',dtb,0)
+    magic,total,header,entry_size,count,entry_offset,page,version=struct.unpack_from('>8I',dtb,0)
     if (magic,total,header,entry_size,count,entry_offset,page,version)!=(
-            0x1eabb7d7,len(dtb),32,32,1,32,2048,0):
+            0xd7b7ab1e,len(dtb),32,32,1,32,2048,0):
         raise ValueError('AWG1_DT_TABLE_HEADER_UNEXPECTED')
-    size,offset,board_id,revision,*custom=struct.unpack_from('<8I',dtb,entry_offset)
+    size,offset,board_id,revision,*custom=struct.unpack_from('>8I',dtb,entry_offset)
     if (offset,size)!=(64,len(dtb)-64) or offset+size!=len(dtb):
         raise ValueError('AWG1_DT_TABLE_ENTRY_INVALID')
     if dtb[offset:offset+4]!=bytes.fromhex('d00dfeed'):
