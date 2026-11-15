@@ -81,13 +81,13 @@ jobs:
           mkdir -p "$FIXTURE"/sys/firmware/devicetree/base
           mkdir -p "$FIXTURE"/sys/devices/system/cpu "$FIXTURE"/sys/devices/platform/mock-device
           mkdir -p "$FIXTURE"/sys/bus/platform/devices "$FIXTURE"/sys/bus/platform/drivers/mock-driver
-          printf 'Prime synthetic QEMU ARM64 board\\0' > "$FIXTURE/proc/device-tree/model"
-          printf 'Prime synthetic QEMU ARM64 board\\0' > "$FIXTURE/sys/firmware/devicetree/base/model"
-          printf 'ttg,synthetic-board\\0arm,virtual-soc\\0' > "$FIXTURE/proc/device-tree/compatible"
-          printf 'ttg,synthetic-board\\0arm,virtual-soc\\0' > "$FIXTURE/sys/firmware/devicetree/base/compatible"
-          printf '6.12-synthetic-qemu\\n' > "$FIXTURE/proc/sys/kernel/osrelease"
-          printf '0-3\\n' > "$FIXTURE/sys/devices/system/cpu/present"
-          printf '0-2\\n' > "$FIXTURE/sys/devices/system/cpu/online"
+          printf 'Prime synthetic QEMU ARM64 board\0' > "$FIXTURE/proc/device-tree/model"
+          printf 'Prime synthetic QEMU ARM64 board\0' > "$FIXTURE/sys/firmware/devicetree/base/model"
+          printf 'ttg,synthetic-board\0arm,virtual-soc\0' > "$FIXTURE/proc/device-tree/compatible"
+          printf 'ttg,synthetic-board\0arm,virtual-soc\0' > "$FIXTURE/sys/firmware/devicetree/base/compatible"
+          printf '6.12-synthetic-qemu\n' > "$FIXTURE/proc/sys/kernel/osrelease"
+          printf '0-3\n' > "$FIXTURE/sys/devices/system/cpu/present"
+          printf '0-2\n' > "$FIXTURE/sys/devices/system/cpu/online"
           ln -s "$FIXTURE/sys/devices/platform/mock-device" "$FIXTURE/sys/bus/platform/devices/mock-device"
           ln -s "$FIXTURE/sys/bus/platform/drivers/mock-driver" "$FIXTURE/sys/devices/platform/mock-device/driver"
           timeout 25s qemu-aarch64 -L /usr/aarch64-linux-gnu "$BIN" --fixture-root "$FIXTURE" --arch aarch64 > dist/qemu-user-fixture-observation.json
