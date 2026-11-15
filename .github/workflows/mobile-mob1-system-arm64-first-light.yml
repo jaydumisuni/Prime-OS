@@ -87,6 +87,29 @@ jobs:
           sha256sum dist/guest/* | tee dist/guest-output-sha256.txt
           echo MOB1_REAL_ARM64_LINUX_GUEST_PID1_OBSERVED
 
+      - name: Cross-build real Prime Rust Core for AArch64 (not launched)
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euo pipefail
+          rustc --version | tee dist/rustc-version.txt
+          cargo --version
+          cargo test --locked -p primed --lib -- --nocapture
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          test -f /usr/aarch64-linux-gnu/lib/Scrt1.o
+          cargo check --locked -p primed --target aarch64-unknown-linux-gnu
+          cargo build --locked --release -p primed --target aarch64-unknown-linux-gnu
+          CORE=target/aarch64-unknown-linux-gnu/release/primed
+          test -s "$CORE"
+          file "$CORE" | tee dist/primed-elf-file.txt
+          readelf -h "$CORE" | tee dist/primed-elf-header.txt
+          readelf -h "$CORE" | grep -q 'Machine:.*AArch64'
+          cp "$CORE" dist/primed-aarch64-candidate
+          sha256sum dist/primed-aarch64-candidate | tee dist/primed-aarch64-sha256.txt
+          echo PRIMED_AARCH64_CROSS_LINK_ONLY_NOT_GUEST_EXECUTED
+
       - name: Preserve bounded evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4
