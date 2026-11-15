@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jaydumisuni/Prime-OS/blob/main/mobile/contracts/device-port.candidate.v0.schema.json",
+  "title": "Prime Mobile third-party device port development candidate",
+  "type": "object",
+  "required": ["schema", "board", "kernel", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "prime.mobile.device-port.candidate.v0"},
+    "board": {
+      "type": "object", "required": ["alias"], "additionalProperties": false,
+      "properties": {
+        "alias": {"type": "string", "minLength": 1, "maxLength": 128},
+        "vendor_candidate": {"type": "string", "maxLength": 256},
+        "model_candidate": {"type": "string", "maxLength": 256},
+        "soc_candidate": {"type": "string", "maxLength": 256},
+        "notes": {"type": "string", "maxLength": 4096}
+      }
+    },
+    "kernel": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "strategy": {"enum": ["UNKNOWN", "MAINLINE", "VENDOR", "HYBRID"]},
+        "kernel_source_verified": {"type": "boolean"},
+        "boot_chain_verified": {"type": "boolean"},
+        "restore_path_verified": {"type": "boolean"},
+        "license_review_complete": {"type": "boolean"}
+      }
+    },
+    "release": {"type": "string", "maxLength": 128},
+    "capabilities": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "boot": {"$ref": "#/$defs/capability"},
+        "recovery": {"$ref": "#/$defs/capability"},
+        "display": {"$ref": "#/$defs/capability"},
+        "touch": {"$ref": "#/$defs/capability"},
+        "audio": {"$ref": "#/$defs/capability"},
+        "modem_calls": {"$ref": "#/$defs/capability"},
+        "sms": {"$ref": "#/$defs/capability"},
+        "cellular_data": {"$ref": "#/$defs/capability"},
+        "wifi": {"$ref": "#/$defs/capability"},
+        "bluetooth": {"$ref": "#/$defs/capability"},
+        "charging": {"$ref": "#/$defs/capability"},
+        "suspend_resume": {"$ref": "#/$defs/capability"},
+        "thermal": {"$ref": "#/$defs/capability"},
+        "usb_host": {"$ref": "#/$defs/capability"},
+        "storage_encryption": {"$ref": "#/$defs/capability"},
+        "camera": {"$ref": "#/$defs/capability"},
+        "gnss": {"$ref": "#/$defs/capability"},
+        "ota_rollback": {"$ref": "#/$defs/capability"},
+        "gpu_compute": {"$ref": "#/$defs/capability"}
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object", "required": ["state"], "additionalProperties": false,
+      "properties": {
+        "state": {"enum": ["UNKNOWN", "DRIVER_PRESENT", "DRIVER_BOUND", "FUNCTIONAL_OBSERVED", "PHYSICALLY_VERIFIED", "BLOCKED"]},
+        "board_alias": {"type": "string", "maxLength": 128},
+        "evidence_ref": {"type": "string", "maxLength": 2048}
+      }
+    }
+  }
+}
