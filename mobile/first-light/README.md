@@ -40,6 +40,39 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512 \
 
 Use a bounded child process, no actual phone/USB passthrough, and preserve emulator/kernel/image digests and original guest output in an evidence receipt. Pass the raw serial log to `verify_serial.py` for preliminary classification. Simply feeding fabricated log lines to the parser is **not** a real boot; only a captured, authenticated process observation can count toward guest First Light. The user must not flash the generated cpio/ELF into Samsung boot, recovery or vendor partitions.
 
+## Pinned QEMU guest-proof adapter (new, offline-tested preflight)
+
+`run_qemu_guest.py` is a thin adapter around the **existing TTG Virtual Hardware
+Lab's QEMU**, not another emulator. It verifies exactly pinned SHA-256 digests
+for the reviewed local `qemu-system-aarch64` ELF, raw ARM64 Linux `Image` and
+this corrected initramfs. It inspects the ARM64 Linux Image magic and checks
+that the initramfs contains the real console device. No package install or
+runtime network is performed.
+
+The tool defaults to **admission only**, performing no guest execution. Only
+`--run` launches a subprocess with `virt`, 512 MiB, PL011 UART, no network,
+USB passthrough or drive, and a 3–90 second bounded timeout. It writes raw
+guest UART, QEMU stderr and a candidate receipt to the specified output path.
+A complete guest early-init marker sequence is still **not Prime Core
+readiness**, a phone port or flash approval.
+
+```bash
+python3 mobile/first-light/run_qemu_guest.py \
+  --qemu /REVIEWED/qemu-system-aarch64 \
+  --qemu-sha256 <verified-emulator-sha256> \
+  --kernel /REVIEWED/arm64/Image \
+  --kernel-sha256 <verified-kernel-sha256> \
+  --initramfs .workspace/mobile-mob1-first-light/initramfs.cpio.gz \
+  --initramfs-sha256 9ecb64769e08a54ca290a3d2f08ea629c0b077b1278cb749f1e515c0056f9f28 \
+  --output .workspace/mobile-mob1-guest-proof
+# Add --run only after reviewing the pinned emulator and kernel provenance.
+```
+
+The provided checksum is for this correction's gzip and will change if the
+payload changes. Without an actual trusted emulator/kernel, the command
+cannot qualify a guest and must fail closed. The script does not sandbox
+arbitrary untrusted guests; only reviewed test images are within scope.
+
 ## What a later Prime Core port still requires
 
 1. Recover exact `prime-contracts`, `prime-hardware`, `primed`, service/generation/security and mobile-port authorities before cross-building production Rust crates with an approved AArch64 Rust target and proper Linux sysroot.
