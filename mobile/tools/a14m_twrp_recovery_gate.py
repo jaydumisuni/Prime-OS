@@ -27,6 +27,14 @@ SHA1_HISTORICAL_BLOB_NOTICE = (
     "Git blob checks pin public 2023-era source files, not installed Samsung firmware."
 )
 
+# First-party maintainer statement about a withdrawn experimental TWRP image.
+# It is NOT evidence the owner's installed TWRP is this specific build.
+WITHDRAWN_TWRP_RELEASE = (
+    "https://github.com/forforksake/recovery_device_samsung_a14m/"
+    "releases/tag/TWRP_3.7.0_12_2_CFKod"
+)
+WITHDRAWN_TWRP_IMAGE = "twrp_08092023-2358.img"
+
 
 def git_blob(raw: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw).hexdigest()
@@ -96,6 +104,7 @@ def evaluate(
     blockers = [
         "NO_LIVE_SAMSUNG_BOOT_CHAIN_ATTESTATION",
         "NO_VERIFIED_TWRP_RECOVERY_RESTORE_REHEARSAL",
+        "INSTALLED_TWRP_LINEAGE_NOT_VERIFIED_AGAINST_WITHDRAWN_FSTAB_BUILD",
         "NO_CURRENT_COMPATIBLE_STOCK_RESTORE_IMAGE_HASH",
         "ACTIVE_VENDOR_BOOT_INIT_BOOT_AND_AVB_ROUTE_UNKNOWN",
     ]
@@ -151,6 +160,12 @@ def evaluate(
         "historical_mount_mapping": mapping,
         "legacy_boot_recovery_are_distinct_in_source": True,
         "historical_vendor_boot_init_boot_present": True,
+        "known_historical_recovery_warning": {
+            "source": WITHDRAWN_TWRP_RELEASE,
+            "withdrawn_image": WITHDRAWN_TWRP_IMAGE,
+            "reported_issue": "MAINTAINER_REPORTED_FSTAB_BACKUP_RESTORE_FAILURES",
+            "applies_to_installed_twrp": "UNKNOWN",
+        },
         "candidate": image,
         "blockers": sorted(set(blockers)),
         "read_only_source_audit_passed": True,
@@ -167,6 +182,7 @@ def evaluate(
             "Separate historical boot/recovery entries do not prove that recovery will remain bootable after a boot image change.",
             "Samsung Download Mode and TWRP support do not imply fastboot boot, bootloader bypass, AVB relaxation or safe downgrade.",
             "TWRP-owned boot backups and a compatible stock restore must be verified without replacing existing TWRP.",
+            "The maintainer withdrew a 2023 experimental recovery image after fstab-related restore failures; this does not identify the owner's current installed recovery.",
             "No Android getprop, device scan, flash, erase, reboot, sideload or installer output is used by this audit.",
         ],
     }
