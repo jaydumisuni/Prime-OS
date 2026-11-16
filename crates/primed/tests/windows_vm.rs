@@ -2975,6 +2975,14 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // A UTF-8 BOM before the envelope is not an admitted alternate framing.
+    // Host proof ingestion must reject it rather than silently normalize bytes.
+    let bom_prefixed = format!("\u{feff}{serialized_json}");
+    assert!(
+        serde_json::from_str::<VmRuntimeProofObservation>(&bom_prefixed).is_err(),
+        "BOM-prefixed host observation must fail closed"
+    );
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
