@@ -3017,6 +3017,8 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         (" true", "second scalar"),
         (" []", "second array"),
         (" null", "second null scalar"),
+        (" 0", "second numeric scalar"),
+        (" false", "second false scalar"),
     ] {
         let framed = format!("{serialized_json}{suffix}");
         assert!(
