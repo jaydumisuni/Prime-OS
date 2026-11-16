@@ -36,9 +36,10 @@ jobs:
           APK=mobile/shell/android/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > shell-aapt-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump xmltree "$APK" AndroidManifest.xml > shell-manifest-tree.txt
           grep -q "package: name='com.thetechguy.prime.mobile'" shell-aapt-badging.txt
-          grep -q 'android.intent.category.HOME' shell-aapt-badging.txt
-          ! grep -q 'android.permission.QUERY_ALL_PACKAGES' shell-aapt-badging.txt
+          grep -q 'android.intent.category.HOME' shell-manifest-tree.txt
+          ! grep -q 'android.permission.QUERY_ALL_PACKAGES' shell-manifest-tree.txt
           sha256sum "$APK" > shell-apk-sha256.txt
           python3 - <<'PY'
           from pathlib import Path
@@ -58,5 +59,6 @@ jobs:
             mobile/shell/android/app/build/outputs/apk/debug/app-debug.apk
             mobile/shell/android/app/build/test-results/testDebugUnitTest/
             shell-aapt-badging.txt
+            shell-manifest-tree.txt
             shell-apk-sha256.txt
           retention-days: 7
