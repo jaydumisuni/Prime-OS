@@ -153,6 +153,44 @@ jobs:
           print('A14M_REAL_CORE_PACKAGED_UNQUALIFIED_NOT_FOR_FLASH')
           PY_RECEIPT
 
+      - name: Run fail-closed TWRP boot/recovery source admission on ACTUAL candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bridge/historical-recovery
+          BASE=https://raw.githubusercontent.com
+          REC=forforksake/recovery_device_samsung_a14m/cdbc13945796b6863362ed041ce7177ce7cf3ca5
+          DUMP=forforksake/a14m_dump/699855860e672eb5f3582ecf8e2144de0ed8b2d1
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/$REC/recovery.fstab" \
+            -o dist/bridge/historical-recovery/recovery.fstab
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/$DUMP/pit/PIT_Analysis_001.txt" \
+            -o dist/bridge/historical-recovery/PIT_Analysis_001.txt
+          test "$(git hash-object dist/bridge/historical-recovery/recovery.fstab)" = 7f352215b7de3cfce674cdabfa2f933e10700256
+          test "$(git hash-object dist/bridge/historical-recovery/PIT_Analysis_001.txt)" = 05e2a2010e9d1cba27b0348ed75823be95715f91
+          python3 mobile/tools/a14m_twrp_recovery_gate.py \
+            --ledger mobile/device-ports/samsung/a14m/offline-layout-reference.candidate.json \
+            --fstab dist/bridge/historical-recovery/recovery.fstab \
+            --pit dist/bridge/historical-recovery/PIT_Analysis_001.txt \
+            --image-receipt dist/bridge/source-bridge-receipt.json \
+            --output dist/bridge/twrp-first-boot-recovery-gate.json
+          python3 - <<'PY_TWRP_GATE'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('dist/bridge/twrp-first-boot-recovery-gate.json').read_text())
+          built=json.loads(Path('dist/bridge/source-bridge-receipt.json').read_text())
+          assert r['status']=='REFERENCE_SEPARATE_BOOT_RECOVERY_VERIFIED_NO_FLASH',r
+          assert r['historical_partition_count']==57,r
+          assert r['candidate']['source_bound_core_image_candidate'],r
+          assert r['candidate']['image_sha256']==built['image_sha256'],r
+          assert r['historical_mount_mapping']['/boot']!=r['historical_mount_mapping']['/recovery'],r
+          assert not r['safe_flash_authorized'] and not r['device_boot_qualified'],r
+          assert not r['physical_recovery_fallback_proven'],r
+          assert 'NO_VERIFIED_TWRP_RECOVERY_RESTORE_REHEARSAL' in r['blockers'],r
+          print('A14M_TWRP_SEPARATE_RECOVERY_SOURCE_GATE_PASS_NOT_FLASHABLE')
+          PY_TWRP_GATE
+          sha256sum dist/bridge/historical-recovery/* dist/bridge/twrp-first-boot-recovery-gate.json \
+            > dist/bridge/historical-recovery/evidence-sha256.txt
+
       - name: Independently unpack and recreate complete boot image with pinned AOSP code
         shell: bash
         run: |
