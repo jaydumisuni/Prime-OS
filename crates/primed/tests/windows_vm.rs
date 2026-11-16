@@ -2993,6 +2993,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Record separators and leading NUL are not admitted host-proof framing.
+    // A transport that concatenates JSON records must never let the parser
+    // select a valid object while ignoring a preceding or following record.
+    for (prefix, suffix, label) in [
+        ("\u{0000}", "", "leading NUL"),
+        ("\u{001e}", "", "leading record separator"),
+        ("", "\u{001e}", "trailing record separator"),
+        ("", "\n{}", "second JSON record"),
+    ] {
+        let framed = format!("{prefix}{serialized_json}{suffix}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_err(),
+            "{label} must not be admitted as a single host observation"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
