@@ -71,7 +71,7 @@ static void do_init(void){
  if(pid<0){out("PRIME_MOB1_CORE_V0|error=CLONE\n");goto idle;}
  if(pid==0){
   static char *argv[]={"/usr/bin/primed",(char*)0};
-  static char *env[]={"PRIME_MOB1_LAB=UNQUALIFIED","PRIME_STATE_DIR=/run/prime-mob1-lab","PRIME_CORE_SOCKET=/run/prime-mob1-lab/core.sock","PRIME_SYSTEMD_RUN=/usr/sbin/systemd-run","" PRIME_A14M_PINNED_KERNEL_SHA256","PATH=/usr/bin:/bin",(char*)0};
+  static char *env[]={"PRIME_MOB1_LAB=UNQUALIFIED","PRIME_STATE_DIR=/run/prime-mob1-lab","PRIME_CORE_SOCKET=/run/prime-mob1-lab/core.sock","PRIME_SYSTEMD_RUN=/usr/sbin/systemd-run","PRIME_MOB1_LAB_INPUT_DIGEST=sha256:" PRIME_A14M_PINNED_KERNEL_SHA256,"PATH=/usr/bin:/bin",(char*)0};
   (void)call(SYS_EXECVE,(isize)"/usr/bin/primed",(isize)argv,(isize)env,0,0);
   out("PRIME_MOB1_CORE_V0|error=PRIMED_EXECVE\n");for(;;)sleep_short();
  }
