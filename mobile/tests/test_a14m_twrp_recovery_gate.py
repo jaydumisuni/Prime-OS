@@ -74,6 +74,15 @@ class TWRPRecoverySourceTests(unittest.TestCase):
         self.assertFalse(r["safe_flash_authorized"])
         self.assertIn("NO_VERIFIED_TWRP_RECOVERY_RESTORE_REHEARSAL", r["blockers"])
 
+    def test_withdrawn_twrp_fstab_release_is_not_assumed_installed(self):
+        r = source_only(image=IMAGE, owner=OWNER)
+        warning = r["known_historical_recovery_warning"]
+        self.assertEqual(warning["withdrawn_image"], "twrp_08092023-2358.img")
+        self.assertEqual(warning["applies_to_installed_twrp"], "UNKNOWN")
+        self.assertIn("INSTALLED_TWRP_LINEAGE_NOT_VERIFIED_AGAINST_WITHDRAWN_FSTAB_BUILD", r["blockers"])
+        self.assertFalse(r["physical_recovery_fallback_proven"])
+        self.assertFalse(r["safe_flash_authorized"])
+
     def test_core_image_receipt_accepted_only_as_unqualified_candidate(self):
         r = source_only(image=IMAGE)
         self.assertTrue(r["candidate"]["source_bound_core_image_candidate"])
