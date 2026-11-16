@@ -1776,3 +1776,27 @@ def test_rejects_parent_permission_flip_during_post_index_read(tmp_path: Path, m
         assert "shared-writable review path" in str(error)
     else:
         raise AssertionError("post-index parent permission flip admitted")
+
+
+def test_rejects_parent_permission_flip_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean final index result cannot authorize a newly shared-writable source parent."""
+    root, head = sample_repo(tmp_path)
+    parent = (root / module.INPUTS[-1]).parent
+    original_git = module.git
+    seen = []
+
+    def flip_parent_after_index_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            parent.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", flip_parent_after_index_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "shared-writable review path" in str(error)
+    else:
+        raise AssertionError("post-index parent permission relaxation admitted")
+    assert len(seen) == 1
