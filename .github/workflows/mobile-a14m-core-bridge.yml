@@ -225,6 +225,21 @@ jobs:
           assert not d['phone_qualified'] and not d['flash_authorization'] and not d['bootc_generation_bound'],d
           print('SAME_A14M_USERSpace_PAYLOAD_REAL_CORE_EXECUTED_IN_GENERIC_QEMU_ONLY')
           PY_GUEST
+          python3 mobile/tools/a14m_boot_observation.py \
+            --uart dist/qemu/guest-uart.log \
+            --output dist/qemu/a14m-early-board-observation.json
+          python3 - <<'PY_BOARD'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('dist/qemu/a14m-early-board-observation.json').read_text())
+          assert r['status']=='KERNEL_WITNESS_AND_REAL_CORE_MARKERS_OBSERVED_UNQUALIFIED',r
+          assert r['source_class']=='UNTRUSTED_UART_LOG_NOT_PHYSICAL_ATTESTATION',r
+          assert r['real_primed_transport_marker_observed'] is True,r
+          assert r['image_booted_on_samsung_proven'] is False,r
+          assert r['hardware_identity_qualified'] is False,r
+          assert r['device_flash_authorized'] is False,r
+          print('A14M_EARLY_BOARD_WITNESS_QEMU_ONLY',r['fields'])
+          PY_BOARD
           sha256sum dist/qemu/* > dist/qemu/outputs-sha256.txt
           echo A14M_CORE_TRANSPORT_GUEST_IS_NOT_A14M_HARDWARE
 
