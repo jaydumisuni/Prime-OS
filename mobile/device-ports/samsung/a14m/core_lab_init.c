@@ -1,7 +1,7 @@
 /* A14m source-reference adaptation of reviewed Prime MOB-1 real-Core guest init.
  * This is an UNQUALIFIED lab bridge, never a Samsung install image or release.
  * Source basis: Prime-OS PR #224 head 028aa1cf93f782d0fe8ec295a97c71a485661947.
- * The measured SOURCE KERNEL digest is injected by the pinned CI build. */
+ * The measured SOURCE KERNEL digest is injected by the pinned CI build.
  * NO bootc status impersonation, production admission, network or disk access.
  * This test-only init executes a compile-feature-gated, explicitly unqualified
  * LAB variant of the existing primed binary. Not a bootc-qualified Core.
