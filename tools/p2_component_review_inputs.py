@@ -390,6 +390,14 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if (identity(before) != identity(after)
                 or hashlib.sha256(content).hexdigest() != entry["sha256"]):
             raise ReviewInputError(f"review input changed after index probe: {entry['path']}")
+    # Final index-probe reads can also change a source parent after its
+    # earlier custody check. Reject that change before publishing evidence.
+    for relative in INPUTS:
+        directory = root
+        require_private_directory(directory)
+        for component in Path(relative).parts[:-1]:
+            directory /= component
+            require_private_directory(directory)
     require_protected_ancestors(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",

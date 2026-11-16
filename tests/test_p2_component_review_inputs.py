@@ -1744,3 +1744,35 @@ def test_missing_source_at_post_read_stat_is_controlled(tmp_path: Path, monkeypa
     else:
         raise AssertionError("post-read stat disappearance escaped controlled rejection")
     assert calls == 2
+
+
+def test_rejects_parent_permission_flip_during_post_index_read(tmp_path: Path, monkeypatch) -> None:
+    """A final source read cannot silently make its parent shared-writable."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[-1]
+    parent = source.parent
+    original_read = module.read_review_bytes
+    original_git = module.git
+    index_probe_seen = False
+
+    def track_index(repo: Path, *args: str) -> bytes:
+        nonlocal index_probe_seen
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            index_probe_seen = True
+        return result
+
+    def flip_parent(file: Path) -> bytes:
+        result = original_read(file)
+        if index_probe_seen and file == source:
+            parent.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", track_index)
+    monkeypatch.setattr(module, "read_review_bytes", flip_parent)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "shared-writable review path" in str(error)
+    else:
+        raise AssertionError("post-index parent permission flip admitted")
