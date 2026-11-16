@@ -1719,3 +1719,28 @@ def test_rejects_executable_mode_flip_during_final_index_probe(tmp_path: Path, m
     else:
         raise AssertionError("post-index executable mode flip admitted")
     assert len(seen) == 1
+
+
+def test_missing_source_at_post_read_stat_is_controlled(tmp_path: Path, monkeypatch) -> None:
+    """A source disappearing immediately after its read must fail closed."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_lstat = Path.lstat
+    calls = 0
+
+    def disappear_at_initial_stat(path: Path):
+        nonlocal calls
+        if path == source:
+            calls += 1
+            if calls == 2:
+                raise FileNotFoundError(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", disappear_at_initial_stat)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "review input cannot be inspected" in str(error)
+    else:
+        raise AssertionError("post-read stat disappearance escaped controlled rejection")
+    assert calls == 2

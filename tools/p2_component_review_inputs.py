@@ -150,7 +150,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         expected_mode = tree_record.split(None, 1)[0] if tree_record else ""
         if expected_mode not in ("100644", "100755"):
             raise ReviewInputError(f"unexpected committed review input mode: {relative}")
-        before = file.lstat()
+        before = read_review_stat(file)
         if before.st_mode & 0o7000:
             raise ReviewInputError(f"special permission bits on review input: {relative}")
         if bool(before.st_mode & 0o111) != (expected_mode == "100755"):
@@ -165,7 +165,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         for component in Path(relative).parts[:-1]:
             directory /= component
             require_private_directory(directory)
-        after = file.lstat()
+        after = read_review_stat(file)
         if after.st_nlink != 1:
             raise ReviewInputError(f"hardlinked review input changed during read: {relative}")
         if after.st_uid not in (0, os.geteuid()) or after.st_mode & 0o022:
