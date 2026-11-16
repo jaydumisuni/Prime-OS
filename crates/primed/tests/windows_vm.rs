@@ -2983,6 +2983,16 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         "BOM-prefixed host observation must fail closed"
     );
 
+    // A BOM or NUL appended after the closing object is not valid host-proof
+    // framing. Reject trailing bytes instead of accepting a valid JSON prefix.
+    for (suffix, label) in [("\u{feff}", "trailing BOM"), ("\u{0000}", "trailing NUL")] {
+        let suffixed = format!("{serialized_json}{suffix}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&suffixed).is_err(),
+            "{label} must not be admitted as host observation framing"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
