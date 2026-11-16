@@ -1,0 +1,60 @@
+name: Prime Mobile native Android Shell proof
+on:
+  push:
+    branches: [work/prime-mobile-shell-android-20261116]
+    paths:
+      - 'mobile/shell/**'
+      - '.github/workflows/prime-mobile-shell-android.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-shell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK API 35
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.7'}
+      - name: Compile HOME APK and run pure JVM tests
+        run: |
+          set -euo pipefail
+          gradle -p mobile/shell/android --no-daemon --stacktrace :app:assembleDebug :app:testDebugUnitTest
+      - name: Verify HOME activity and no broad app permission
+        run: |
+          set -euo pipefail
+          APK=mobile/shell/android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" > shell-aapt-badging.txt
+          grep -q "package: name='com.thetechguy.prime.mobile'" shell-aapt-badging.txt
+          grep -q 'android.intent.category.HOME' shell-aapt-badging.txt
+          ! grep -q 'android.permission.QUERY_ALL_PACKAGES' shell-aapt-badging.txt
+          sha256sum "$APK" > shell-apk-sha256.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p=Path('mobile/shell/android/app/build/outputs/apk/debug/app-debug.apk')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              assert 'classes.dex' in z.namelist()
+              assert 'AndroidManifest.xml' in z.namelist()
+          assert p.stat().st_size<8*1024*1024
+          print('PRIME_MOBILE_SHELL_APK_COMPILED_TESTED_NOT_ROM')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prime-mobile-shell-development
+          path: |
+            mobile/shell/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/shell/android/app/build/test-results/testDebugUnitTest/
+            shell-aapt-badging.txt
+            shell-apk-sha256.txt
+          retention-days: 7
