@@ -61,12 +61,54 @@ static int get_response(const char *request,const char *label, int expected_stat
  out("PRIME_MOB1_CORE_V0|");out(label);out("_json=");out_bytes(body,bodylen);out("\n");
  return 1;
 }
+/* Early-boot witness complements board_readonly_probe.py in the future full OS.
+ * The first-light initramfs has no Python. The values below are Linux kernel
+ * projections, not Samsung bootloader identity or a flash approval. */
+#define EARLY_VALUE_MAX 96
+static int read_kernel_field(const char *path,char value[EARLY_VALUE_MAX+1]){
+ isize fd=call(SYS_OPENAT,AT_FDCWD,(isize)path,0,0,0);
+ if(fd<0)return 0;
+ char raw[128];
+ isize n=call(SYS_READ,fd,(isize)raw,(isize)sizeof(raw),0,0);
+ (void)call(SYS_CLOSE,fd,0,0,0,0);
+ if(n<=0)return 0;
+ usize j=0;
+ int ended=0;
+ for(isize i=0;i<n;i++){
+  unsigned char c=(unsigned char)raw[i];
+  if(c==0||c==10){ended=1;break;}
+  if(c<32||c>126||j>=EARLY_VALUE_MAX)return 0;
+  value[j++]=(char)c;
+ }
+ if(!j||(!ended&&n==(isize)sizeof(raw)))return 0;
+ value[j]=0;
+ return 1;
+}
+static void observe_kernel_field(const char *field,const char *primary,
+                                 const char *fallback){
+ char val[EARLY_VALUE_MAX+1];
+ int found=read_kernel_field(primary,val);
+ if(!found&&fallback)found=read_kernel_field(fallback,val);
+ out("PRIME_A14M_BOOT_OBSERVATION_V0|");out(field);out("=");
+ out(found?val:"UNAVAILABLE");out("\n");
+}
+static void emit_unqualified_board_observation(void){
+ out("PRIME_A14M_BOOT_OBSERVATION_V0|source=KERNEL_READ_ONLY\n");
+ observe_kernel_field("model","/proc/device-tree/model",
+                      "/sys/firmware/devicetree/base/model");
+ observe_kernel_field("compatible_first","/proc/device-tree/compatible",
+                      "/sys/firmware/devicetree/base/compatible");
+ observe_kernel_field("kernel_release","/proc/sys/kernel/osrelease",(const char*)0);
+ out("PRIME_A14M_BOOT_OBSERVATION_V0|physical_device_qualified=false\n");
+}
+
 static void do_init(void){
  out("PRIME_A14M_SOURCE_BRIDGE|not_a_phone_boot_proof=true\n");
  out("PRIME_MOB1_CORE_V0|stage=ENTERED\n");
  make("/proc");make("/sys");make("/run");make("/run/prime-mob1-lab");
  if(call(SYS_MOUNT,(isize)"proc",(isize)"/proc",(isize)"proc",0,0)!=0){out("PRIME_MOB1_CORE_V0|error=PROC_MOUNT\n");goto idle;}
  if(call(SYS_MOUNT,(isize)"sysfs",(isize)"/sys",(isize)"sysfs",0,0)!=0){out("PRIME_MOB1_CORE_V0|error=SYS_MOUNT\n");goto idle;}
+ emit_unqualified_board_observation();
  isize pid=call(SYS_CLONE,SIGCHLD,0,0,0,0);
  if(pid<0){out("PRIME_MOB1_CORE_V0|error=CLONE\n");goto idle;}
  if(pid==0){
