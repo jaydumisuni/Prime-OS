@@ -3009,6 +3009,20 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // A transport must not admit JSON comment framing or a second scalar
+    // after the signed host-only observation object.
+    for (suffix, label) in [
+        (" // accepted", "line comment"),
+        (" /* accepted */", "block comment"),
+        (" true", "second scalar"),
+    ] {
+        let framed = format!("{serialized_json}{suffix}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_err(),
+            "{label} must not be admitted as host observation framing"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
