@@ -20,7 +20,9 @@ jobs:
       - name: Prepare Android SDK API 35
         run: |
           set -euo pipefail
-          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+          SDKROOT=/usr/local/lib/android/sdk
+          test -x "$SDKROOT/cmdline-tools/16.0/bin/sdkmanager"
+          "$SDKROOT/cmdline-tools/16.0/bin/sdkmanager" --sdk_root="$SDKROOT" --install 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with: {gradle-version: '8.7'}
       - name: Compile HOME APK and run pure JVM tests
