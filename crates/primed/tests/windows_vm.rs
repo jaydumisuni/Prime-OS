@@ -3119,6 +3119,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("\u{202f}", "narrow no-break space"),
         ("\u{180e}", "Mongolian vowel separator"),
         ("\u{034f}", "combining grapheme joiner"),
+        ("\u{0085}", "next-line control"),
+        ("\u{1680}", "ogham space mark"),
+        ("\u{200e}", "left-to-right mark"),
+        ("\u{200f}", "right-to-left mark"),
         ("\u{feff}", "byte-order mark"),
     ] {
         for framed in [
