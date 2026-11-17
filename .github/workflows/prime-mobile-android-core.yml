@@ -23,6 +23,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+      - name: Install ARM64 Android Rust stdlib for the repository-pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          rustup target add aarch64-linux-android
+          rustup target list --installed | grep -Fx 'aarch64-linux-android'
       - name: Test real shared Prime contracts and read-only routing
         run: |
           set -euo pipefail
@@ -68,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prime-mobile-android-core-candidate-\${{ github.sha }}
+          name: prime-mobile-android-core-candidate-${{ github.sha }}
           path: dist/
           retention-days: 7
           if-no-files-found: warn
