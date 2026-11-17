@@ -341,6 +341,8 @@ fn qemu_plan_rejects_qcow2_v3_header_spilling_past_first_cluster() {
     let runtime = dir.path().join("runtime");
     private_runtime_dir(&runtime);
     let overlay = runtime.join("overlay.qcow2");
+    // Rewrites below retain a private inode under permissive worker umasks.
+    private_overlay(&overlay);
     let request = VmPlanRequest {
         qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
         overlay_image: overlay.clone(),
@@ -2456,28 +2458,25 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     // Identical repeated revision keys are still ambiguous guest authority.
     let same_revision = serialized.replacen(
         "\"guest_revision\":",
-        &format!("\"guest_revision\":{},\"guest_revision\":", envelope.guest_revision),
+        &format!(
+            "\"guest_revision\":{},\"guest_revision\":",
+            envelope.guest_revision
+        ),
         1,
     );
     assert_ne!(same_revision, serialized);
     assert!(serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&same_revision).is_err());
 
     // A duplicated evidence payload is ambiguous even if both byte arrays are valid.
-    let duplicate_evidence = serialized.replacen(
-        "\"evidence\":",
-        "\"evidence\":[1,2,3],\"evidence\":",
-        1,
-    );
+    let duplicate_evidence =
+        serialized.replacen("\"evidence\":", "\"evidence\":[1,2,3],\"evidence\":", 1);
     assert_ne!(duplicate_evidence, serialized);
     assert!(serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&duplicate_evidence).is_err());
 
     // Even an empty first evidence payload cannot precede a second authority key.
     // A consumer must not silently accept them based on parser precedence.
-    let identical_evidence = serialized.replacen(
-        "\"evidence\":",
-        "\"evidence\":[],\"evidence\":",
-        1,
-    );
+    let identical_evidence =
+        serialized.replacen("\"evidence\":", "\"evidence\":[],\"evidence\":", 1);
     assert_ne!(identical_evidence, serialized);
     assert!(
         serde_json::from_str::<VmRuntimeEvidenceEnvelope>(&identical_evidence).is_err(),
@@ -2497,7 +2496,10 @@ fn runtime_evidence_envelope_rejects_forged_authority_and_plan_identity() {
     for (field, value) in [
         ("release_authority", serde_json::json!({"approved": true})),
         ("physical_proof", serde_json::json!(true)),
-        ("guest_attestation_chain", serde_json::json!([{"verified": true}])),
+        (
+            "guest_attestation_chain",
+            serde_json::json!([{"verified": true}]),
+        ),
         ("release_authorized", serde_json::Value::Null),
     ] {
         let mut forged = serde_json::to_value(&envelope).unwrap();
@@ -2613,7 +2615,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     ] {
         let duplicate = serialized_json.replacen(
             &format!("\"{field}\":"),
-            &format!("\"{field}\":{},\"{field}\":", serde_json::to_string(value).unwrap()),
+            &format!(
+                "\"{field}\":{},\"{field}\":",
+                serde_json::to_string(value).unwrap()
+            ),
             1,
         );
         assert_ne!(duplicate, serialized_json);
@@ -2699,7 +2704,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Escaped classification keys decode to the same schema/case custody fields.
     // A second spelling cannot silently replace the admitted classification.
     for (field, value) in [
-        ("evidence_schema", serde_json::to_string(&observation.evidence_schema).unwrap()),
+        (
+            "evidence_schema",
+            serde_json::to_string(&observation.evidence_schema).unwrap(),
+        ),
         ("case", serde_json::to_string(&observation.case).unwrap()),
     ] {
         let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
@@ -2718,9 +2726,18 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Identical escaped digest/observation identifiers remain duplicate custody keys.
     // Escaping must not allow a second identical proof identity to be admitted.
     for (field, value) in [
-        ("proof_id", serde_json::to_string(&observation.proof_id).unwrap()),
-        ("observation_id", serde_json::to_string(&observation.observation_id).unwrap()),
-        ("evidence_sha256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
+        (
+            "proof_id",
+            serde_json::to_string(&observation.proof_id).unwrap(),
+        ),
+        (
+            "observation_id",
+            serde_json::to_string(&observation.observation_id).unwrap(),
+        ),
+        (
+            "evidence_sha256",
+            serde_json::to_string(&observation.evidence_sha256).unwrap(),
+        ),
     ] {
         let escaped = format!("\\u{:04x}{}", field.as_bytes()[0], &field[1..]);
         let duplicate = serialized_json.replacen(
@@ -2792,7 +2809,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // A repeated identical observation revision must also be rejected.
     let same_revision = serialized_json.replacen(
         "\"guest_revision\":",
-        &format!("\"guest_revision\":{},\"guest_revision\":", observation.guest_revision),
+        &format!(
+            "\"guest_revision\":{},\"guest_revision\":",
+            observation.guest_revision
+        ),
         1,
     );
     assert_ne!(same_revision, serialized_json);
@@ -2838,10 +2858,19 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Repeated identical classifications and boolean outcomes are still ambiguous
     // serialized custody; accepting them would depend on parser precedence.
     for (field, value) in [
-        ("evidence_schema", serde_json::to_string(&observation.evidence_schema).unwrap()),
+        (
+            "evidence_schema",
+            serde_json::to_string(&observation.evidence_schema).unwrap(),
+        ),
         ("case", serde_json::to_string(&observation.case).unwrap()),
-        ("passed", serde_json::to_string(&observation.passed).unwrap()),
-        ("zero_residual_state", serde_json::to_string(&observation.zero_residual_state).unwrap()),
+        (
+            "passed",
+            serde_json::to_string(&observation.passed).unwrap(),
+        ),
+        (
+            "zero_residual_state",
+            serde_json::to_string(&observation.zero_residual_state).unwrap(),
+        ),
     ] {
         let duplicate = serialized_json.replacen(
             &format!("\"{field}\":"),
@@ -2858,8 +2887,14 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Identical repeated digest and observation identifiers remain ambiguous custody.
     // No downstream parser may choose which occurrence establishes proof identity.
     for (field, value) in [
-        ("evidence_sha256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
-        ("observation_id", serde_json::to_string(&observation.observation_id).unwrap()),
+        (
+            "evidence_sha256",
+            serde_json::to_string(&observation.evidence_sha256).unwrap(),
+        ),
+        (
+            "observation_id",
+            serde_json::to_string(&observation.observation_id).unwrap(),
+        ),
     ] {
         let duplicate = serialized_json.replacen(
             &format!("\"{field}\":"),
@@ -2876,9 +2911,21 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Interior JSON escapes also decode into the same proof-custody member names.
     // A duplicate must be rejected even when its value matches the original.
     for (field, escaped, value) in [
-        ("proof_id", "pro\\u006ff_id", serde_json::to_string(&observation.proof_id).unwrap()),
-        ("observation_id", "observati\\u006fn_id", serde_json::to_string(&observation.observation_id).unwrap()),
-        ("evidence_sha256", "evidence_sha\\u003256", serde_json::to_string(&observation.evidence_sha256).unwrap()),
+        (
+            "proof_id",
+            "pro\\u006ff_id",
+            serde_json::to_string(&observation.proof_id).unwrap(),
+        ),
+        (
+            "observation_id",
+            "observati\\u006fn_id",
+            serde_json::to_string(&observation.observation_id).unwrap(),
+        ),
+        (
+            "evidence_sha256",
+            "evidence_sha\\u003256",
+            serde_json::to_string(&observation.evidence_sha256).unwrap(),
+        ),
     ] {
         let duplicate = serialized_json.replacen(
             &format!("\"{field}\":"),
@@ -2886,8 +2933,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
             1,
         );
         assert_ne!(duplicate, serialized_json);
-        assert!(serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
-            "interior-escaped duplicate custody {field} must fail closed");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&duplicate).is_err(),
+            "interior-escaped duplicate custody {field} must fail closed"
+        );
     }
 
     // Escaping an interior letter of a boolean outcome key cannot select a
@@ -2911,8 +2960,16 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     // Interior escapes in classification keys must not permit a second schema or
     // case selector, even when the injected classification matches the original.
     for (field, escaped, value) in [
-        ("evidence_schema", "evidence_\\u0073chema", serde_json::to_string(&observation.evidence_schema).unwrap()),
-        ("case", "ca\\u0073e", serde_json::to_string(&observation.case).unwrap()),
+        (
+            "evidence_schema",
+            "evidence_\\u0073chema",
+            serde_json::to_string(&observation.evidence_schema).unwrap(),
+        ),
+        (
+            "case",
+            "ca\\u0073e",
+            serde_json::to_string(&observation.case).unwrap(),
+        ),
     ] {
         let duplicate = serialized_json.replacen(
             &format!("\"{field}\":"),
@@ -2947,11 +3004,7 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("release_\\u0061uthorized", "true"),
         ("physical_\\u0070roof", "true"),
     ] {
-        let forged = serialized_json.replacen(
-            "{",
-            &format!("{{\"{escaped}\":{value},"),
-            1,
-        );
+        let forged = serialized_json.replacen("{", &format!("{{\"{escaped}\":{value},"), 1);
         assert_ne!(forged, serialized_json);
         assert!(
             serde_json::from_str::<VmRuntimeProofObservation>(&forged).is_err(),
@@ -2965,11 +3018,7 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("release_\\u0061uthorized", "true"),
         ("guest_\\u0061ttestation", r#"{"verified":true}"#),
     ] {
-        let forged = serialized_json.replacen(
-            "{",
-            &format!("{{ \"{escaped}\" : {value} , "),
-            1,
-        );
+        let forged = serialized_json.replacen("{", &format!("{{ \"{escaped}\" : {value} , "), 1);
         assert_ne!(forged, serialized_json);
         assert!(
             serde_json::from_str::<VmRuntimeProofObservation>(&forged).is_err(),
@@ -3161,8 +3210,14 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         // Nested authority payloads must not be silently accepted either.
         ("release_authority", serde_json::json!({"approved": true})),
         // Collection-shaped claims cannot be silently treated as auxiliary metadata.
-        ("guest_attestation_chain", serde_json::json!([{"verified": true}])),
-        ("release_signatures", serde_json::json!(["operator-approved"])),
+        (
+            "guest_attestation_chain",
+            serde_json::json!([{"verified": true}]),
+        ),
+        (
+            "release_signatures",
+            serde_json::json!(["operator-approved"]),
+        ),
     ] {
         let mut forged = serialized.clone();
         forged[field] = value;
