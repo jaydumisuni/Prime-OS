@@ -133,6 +133,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         raise ReviewInputError("review candidate HEAD changed")
     entries = []
     executable_modes = {}
+    original_source_identity = {}
     for relative in INPUTS:
         directory = root
         for component in Path(relative).parts[:-1]:
@@ -184,6 +185,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         blob = git(root, "rev-parse", f"{head}:{relative}").decode().strip()
         if not re.fullmatch(r"[0-9a-f]{40}", blob):
             raise ReviewInputError(f"invalid committed blob identity: {relative}")
+        original_source_identity[relative] = after
         executable_modes[relative] = expected_mode == "100755"
         entries.append({
             "path": relative,
@@ -191,6 +193,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             "sha256": hashlib.sha256(committed).hexdigest(),
             "bytes": len(committed),
         })
+    # Preserve the original source inode identity, not only its digest.
+    # A same-byte replacement after Git custody is still an authority change.
     # Earlier input directories may be replaced after their own read.
     # Recheck all source parents before emitting a complete review manifest.
     for relative in INPUTS:
@@ -379,6 +383,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         file = root / entry["path"]
         require_private_directory(file.parent)
         before = read_review_stat(file)
+        if identity(before) != identity(original_source_identity[entry["path"]]):
+            raise ReviewInputError(f"review input custody changed after index probe: {entry['path']}")
         if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
                 or before.st_uid not in (0, os.geteuid())
                 or before.st_mode & (0o022 | 0o7000)

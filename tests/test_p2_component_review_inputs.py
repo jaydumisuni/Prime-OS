@@ -1975,3 +1975,30 @@ def test_rejects_source_symlink_swap_during_final_index_probe(tmp_path: Path, mo
     else:
         raise AssertionError("post-index source symlink substitution admitted")
     assert len(seen) == 1
+
+
+def test_rejects_same_bytes_inode_replacement_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """Identical bytes cannot conceal a source inode swap after index custody."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def replace_after_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            replacement = source.with_name(source.name + "-replacement")
+            replacement.write_bytes(source.read_bytes())
+            replacement.chmod(source.stat().st_mode)
+            replacement.replace(source)
+        return result
+
+    monkeypatch.setattr(module, "git", replace_after_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "custody changed after index probe" in str(error)
+    else:
+        raise AssertionError("post-index same-byte inode substitution admitted")
+    assert len(seen) == 1
