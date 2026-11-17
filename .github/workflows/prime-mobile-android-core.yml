@@ -35,6 +35,8 @@ jobs:
           set -euo pipefail
           cargo test --locked -p prime-mobile-core-android
           cargo test --locked -p prime-contracts
+          cargo build --locked -p prime-mobile-core-android
+          python3 mobile/core-android/verify_runtime.py target/debug/prime-mobile-core-android
           mkdir -p dist
           git rev-parse HEAD > dist/source-commit.txt
       - uses: android-actions/setup-android@v4
