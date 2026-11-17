@@ -45,6 +45,8 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Native Android HOME surface for Prime Mobile. Small by design:
@@ -64,12 +66,16 @@ public final class HomeActivity extends Activity {
     private GridLayout appGrid;
     private TextView clockLabel;
     private TextView stateLabel;
+    private TextView coreStateLabel;
+    private final ExecutorService coreExecutor = Executors.newSingleThreadExecutor();
+    private volatile boolean homeVisible;
     private EditText search;
     private boolean showingApps;
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             updateStatus();
+            queryPrimeCoreAsync();
             ticker.postDelayed(this, 60_000L);
         }
     };
@@ -84,6 +90,7 @@ public final class HomeActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        homeVisible = true;
         ticker.removeCallbacks(refresh);
         refresh.run();
         loadApplications();
@@ -91,8 +98,15 @@ public final class HomeActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        homeVisible = false;
         ticker.removeCallbacks(refresh);
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        homeVisible = false;
+        coreExecutor.shutdownNow();
+        super.onDestroy();
     }
 
     @Override public void onBackPressed() {
@@ -199,6 +213,12 @@ public final class HomeActivity extends Activity {
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
         statusParams.topMargin = dp(22);
         body.addView(stateLabel, statusParams);
+
+        coreStateLabel = label("Core unavailable", 11, MUTED, false);
+        coreStateLabel.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams coreParams = new LinearLayout.LayoutParams(-1, -2);
+        coreParams.topMargin = dp(6);
+        body.addView(coreStateLabel, coreParams);
 
         buildAppSheet();
     }
@@ -379,6 +399,18 @@ public final class HomeActivity extends Activity {
                 Toast.makeText(this, "Internet controls unavailable", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    private void queryPrimeCoreAsync() {
+        coreExecutor.execute(() -> {
+            PrimeCoreClient.Snapshot snapshot =
+                PrimeCoreClient.query(new AndroidPrimeCoreSocket());
+            runOnUiThread(() -> {
+                if (homeVisible && coreStateLabel != null) {
+                    coreStateLabel.setText(snapshot.label());
+                }
+            });
+        });
     }
 
     private void updateStatus() {
