@@ -3082,6 +3082,27 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // The four RFC 8259 whitespace bytes are valid outside the host-only
+    // observation envelope. Preserve this positive boundary while rejecting
+    // Unicode lookalikes and concatenated transport records below.
+    for (prefix, suffix, label) in [
+        (" ", "", "leading space"),
+        ("\t", "", "leading tab"),
+        ("\r", "", "leading carriage return"),
+        ("\n", "", "leading newline"),
+        ("", " ", "trailing space"),
+        ("", "\t", "trailing tab"),
+        ("", "\r", "trailing carriage return"),
+        ("", "\n", "trailing newline"),
+        (" \t\r\n", "\n\r\t ", "combined JSON whitespace"),
+    ] {
+        let framed = format!("{prefix}{serialized_json}{suffix}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_ok(),
+            "{label} must remain valid JSON whitespace framing"
+        );
+    }
+
     // Non-JSON Unicode separators are not interchangeable with the four JSON
     // whitespace bytes. Reject them on either side of a complete observation;
     // permissive transport normalization must not change proof custody.
