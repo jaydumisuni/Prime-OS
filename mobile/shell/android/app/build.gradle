@@ -19,4 +19,6 @@ android {
 }
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    // Android ships org.json; provide a real implementation to host-side JVM tests.
+    testImplementation 'org.json:json:20240303'
 }
