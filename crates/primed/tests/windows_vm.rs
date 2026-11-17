@@ -3077,6 +3077,8 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("\u{3000}", "ideographic space"),
         ("\u{200b}", "zero-width space"),
         ("\u{2060}", "word joiner"),
+        ("\u{034f}", "combining grapheme joiner"),
+        ("\u{feff}", "byte-order mark"),
     ] {
         for framed in [
             format!("{separator}{serialized_json}"),
