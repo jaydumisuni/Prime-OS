@@ -3049,6 +3049,23 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // A JSON transport cannot append a quoted string or structured record
+    // after a complete observation, even if separated by legal whitespace.
+    for (suffix, label) in [
+        (r#" "accepted""#, "second string scalar"),
+        (" {}", "second object"),
+        (" [true]", "second nonempty array"),
+        (" -2", "second negative number"),
+        (" 2.5", "second fractional number"),
+        (" 2e3", "second exponent number"),
+    ] {
+        let framed = format!("{serialized_json}{suffix}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_err(),
+            "{label} must not be admitted as host observation framing"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
