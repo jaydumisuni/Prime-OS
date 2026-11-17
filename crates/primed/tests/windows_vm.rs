@@ -2561,6 +2561,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
     let serialized = serde_json::to_value(&observation).unwrap();
     // Duplicate observation identity keys must not admit ambiguous host evidence.
     let serialized_json = serde_json::to_string(&observation).unwrap();
+    // Host observation custody is byte-exact: invalid UTF-8 cannot be
+    // repaired or discarded before JSON admission.
+    for (mut payload, label) in [
+        (serialized_json.as_bytes().to_vec(), "invalid trailing byte"),
+        (serialized_json.as_bytes().to_vec(), "invalid leading byte"),
+    ] {
+        if label == "invalid trailing byte" {
+            payload.push(0xff);
+        } else {
+            payload.insert(0, 0xff);
+        }
+        assert!(
+            serde_json::from_slice::<VmRuntimeProofObservation>(&payload).is_err(),
+            "{label} must not authorize a host observation"
+        );
+    }
     let duplicate = serialized_json.replacen(
         "\"proof_id\":",
         "\"proof_id\":\"forged-proof\",\"proof_id\":",
