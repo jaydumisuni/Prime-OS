@@ -2061,3 +2061,24 @@ def test_rejects_root_inode_substitution_at_final_index_probe(tmp_path: Path, mo
     with pytest.raises(module.ReviewInputError):
         module.build_manifest(root, head)
     assert root_stat_calls > 0
+
+
+def test_rejects_root_symlink_substitution_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A symlinked replacement worktree root cannot inherit prior review custody."""
+    root, head = sample_repo(tmp_path)
+    moved = root.with_name(root.name + "-original")
+    original_git = module.git
+    seen = []
+
+    def substitute_root(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            root.rename(moved)
+            root.symlink_to(moved, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(module, "git", substitute_root)
+    with pytest.raises(module.ReviewInputError):
+        module.build_manifest(root, head)
+    assert len(seen) == 1
