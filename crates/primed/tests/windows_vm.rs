@@ -3114,6 +3114,10 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("\u{3000}", "ideographic space"),
         ("\u{200b}", "zero-width space"),
         ("\u{2060}", "word joiner"),
+        ("\u{200c}", "zero-width non-joiner"),
+        ("\u{200d}", "zero-width joiner"),
+        ("\u{202f}", "narrow no-break space"),
+        ("\u{180e}", "Mongolian vowel separator"),
         ("\u{034f}", "combining grapheme joiner"),
         ("\u{feff}", "byte-order mark"),
     ] {
