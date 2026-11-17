@@ -2114,3 +2114,23 @@ def test_rejects_root_owner_substitution_during_final_index_probe(tmp_path: Path
     with pytest.raises(module.ReviewInputError):
         module.build_manifest(root, head)
     assert observed > 0
+
+
+def test_rejects_source_executable_bit_change_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean index does not authorize executable-mode drift after the final probe."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def change_mode_after_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.chmod(source.stat().st_mode | 0o100)
+        return result
+
+    monkeypatch.setattr(module, "git", change_mode_after_probe)
+    with pytest.raises(module.ReviewInputError):
+        module.build_manifest(root, head)
+    assert len(seen) == 1
