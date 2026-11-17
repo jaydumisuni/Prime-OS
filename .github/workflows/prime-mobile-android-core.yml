@@ -1,0 +1,74 @@
+name: Prime Mobile Android-native shared-contract Core adapter
+on:
+  push:
+    branches: [work/prime-mobile-shell-android-20261116]
+    paths:
+      - 'mobile/core-android/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/prime-mobile-android-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-core-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Test real shared Prime contracts and read-only routing
+        run: |
+          set -euo pipefail
+          cargo test -p prime-mobile-core-android
+          cargo test -p prime-contracts
+          mkdir -p dist
+          git rev-parse HEAD > dist/source-commit.txt
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Install native Android NDK toolchain (not a Linux/glibc binary)
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "ndk;27.2.12479018"
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          echo "PRIME_ANDROID_NDK=$NDK" >> "$GITHUB_ENV"
+      - name: Cross-compile a real AArch64 Bionic ELF without phone deployment
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$PRIME_ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          cargo build --release -p prime-mobile-core-android --target aarch64-linux-android
+          ELF=target/aarch64-linux-android/release/prime-mobile-core-android
+          test -s "$ELF"
+          file "$ELF" > dist/android-elf-type.txt
+          readelf -h "$ELF" > dist/android-elf-header.txt
+          readelf -l "$ELF" > dist/android-elf-program-headers.txt
+          grep -q 'Machine:.*AArch64' dist/android-elf-header.txt
+          grep -q 'interpreter: /system/bin/linker64' dist/android-elf-program-headers.txt
+          sha256sum "$ELF" > dist/android-elf-sha256.txt
+          cp "$ELF" dist/prime-mobile-core-android.elf
+          cat > dist/README_NOT_FOR_INSTALL.txt <<'EOF'
+          Prime Mobile Android adapter — source/ABI build evidence ONLY.
+          Not the Linux primed production daemon and not a flashable ROM.
+          Requires Android init's inherited socket, qualified SELinux domain,
+          platform image integration, actual device vendor and boot-chain proof.
+          Read-only Prime capability contract; bootc and physical proof NOT established.
+          DO NOT INSTALL ON THE SAMSUNG OR FLASH ANY PARTITION.
+          EOF
+      - name: Retain internal build and ABI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prime-mobile-android-core-candidate-\${{ github.sha }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: warn
