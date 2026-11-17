@@ -2082,3 +2082,35 @@ def test_rejects_root_symlink_substitution_during_final_index_probe(tmp_path: Pa
     with pytest.raises(module.ReviewInputError):
         module.build_manifest(root, head)
     assert len(seen) == 1
+
+
+def test_rejects_root_owner_substitution_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A changed root owner invalidates exact-head custody even with unchanged bytes."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    original_lstat = Path.lstat
+    final_index_seen = False
+    observed = 0
+
+    def observe_index(repo: Path, *args: str) -> bytes:
+        nonlocal final_index_seen
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            final_index_seen = True
+        return result
+
+    def substituted_owner(path: Path):
+        nonlocal observed
+        state = original_lstat(path)
+        if path == root and final_index_seen:
+            observed += 1
+            values = list(state)
+            values[4] = state.st_uid + 1
+            return os.stat_result(values)
+        return state
+
+    monkeypatch.setattr(module, "git", observe_index)
+    monkeypatch.setattr(Path, "lstat", substituted_owner)
+    with pytest.raises(module.ReviewInputError):
+        module.build_manifest(root, head)
+    assert observed > 0
