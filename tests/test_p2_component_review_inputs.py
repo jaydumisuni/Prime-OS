@@ -1800,3 +1800,75 @@ def test_rejects_parent_permission_flip_during_final_index_probe(tmp_path: Path,
     else:
         raise AssertionError("post-index parent permission relaxation admitted")
     assert len(seen) == 1
+
+
+def test_rejects_earlier_parent_permission_flip_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """Final index custody cannot mask a shared-writable earlier input parent."""
+    root, head = sample_repo(tmp_path)
+    parent = (root / module.INPUTS[0]).parent
+    original_git = module.git
+    seen = []
+
+    def relax_earlier_parent(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            parent.chmod(0o777)
+        return result
+
+    monkeypatch.setattr(module, "git", relax_earlier_parent)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "shared-writable review path" in str(error)
+    else:
+        raise AssertionError("earlier parent permission relaxation admitted")
+    assert len(seen) == 1
+
+
+def test_rejects_source_removal_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean final index result cannot authorize a source removed during that probe."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def remove_during_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.unlink()
+        return result
+
+    monkeypatch.setattr(module, "git", remove_during_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "review input" in str(error)
+    else:
+        raise AssertionError("source removal during final index probe admitted")
+    assert len(seen) == 1
+
+
+def test_rejects_source_rewrite_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean index result cannot authorize a rewritten committed input."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def rewrite_during_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.write_bytes(b"substituted P2 review input\n")
+        return result
+
+    monkeypatch.setattr(module, "git", rewrite_during_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "review input" in str(error) or "local changes" in str(error)
+    else:
+        raise AssertionError("source rewrite during final index probe admitted")
+    assert len(seen) == 1
