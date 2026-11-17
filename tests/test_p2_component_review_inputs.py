@@ -1872,3 +1872,27 @@ def test_rejects_source_rewrite_during_final_index_probe(tmp_path: Path, monkeyp
     else:
         raise AssertionError("source rewrite during final index probe admitted")
     assert len(seen) == 1
+
+
+def test_rejects_shared_writable_source_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """Final index cleanliness cannot authorize a source made writable by others."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    original_git = module.git
+    seen = []
+
+    def relax_source_after_index_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.chmod(0o666)
+        return result
+
+    monkeypatch.setattr(module, "git", relax_source_after_index_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "custody changed after index probe" in str(error)
+    else:
+        raise AssertionError("post-index shared-writable source admitted")
+    assert len(seen) == 1
