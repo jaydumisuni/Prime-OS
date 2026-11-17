@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import pytest
 import shlex
 from pathlib import Path
 import subprocess
@@ -2025,3 +2027,37 @@ def test_rejects_root_permission_relaxation_during_final_index_probe(tmp_path: P
     else:
         raise AssertionError("post-index group-writable root admitted")
     assert len(seen) == 1
+
+
+def test_rejects_root_inode_substitution_at_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A private replacement root cannot inherit an earlier exact-head review."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    original_lstat = Path.lstat
+    final_index_seen = False
+    root_stat_calls = 0
+
+    def observe_index(repo: Path, *args: str) -> bytes:
+        nonlocal final_index_seen
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            final_index_seen = True
+        return result
+
+    def substituted_root_stat(path: Path):
+        nonlocal root_stat_calls
+        state = original_lstat(path)
+        if path == root and final_index_seen:
+            root_stat_calls += 1
+            # Simulate a private directory with the same permissions but a
+            # different inode at the final publication boundary.
+            values = list(state)
+            values[1] = state.st_ino + 1
+            return os.stat_result(values)
+        return state
+
+    monkeypatch.setattr(module, "git", observe_index)
+    monkeypatch.setattr(Path, "lstat", substituted_root_stat)
+    with pytest.raises(module.ReviewInputError):
+        module.build_manifest(root, head)
+    assert root_stat_calls > 0

@@ -124,6 +124,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     if not repo.is_absolute() or repo.resolve() != repo:
         raise ReviewInputError("review workspace must be a canonical absolute worktree root")
     require_private_directory(repo)
+    initial_root = repo.lstat()
     require_protected_ancestors(repo)
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
@@ -405,6 +406,11 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             directory /= component
             require_private_directory(directory)
     require_protected_ancestors(root)
+    # An index probe must not authorize a substituted worktree root, even
+    # when its replacement has private permissions and identical inputs.
+    final_root = root.lstat()
+    if (initial_root.st_dev, initial_root.st_ino) != (final_root.st_dev, final_root.st_ino):
+        raise ReviewInputError("review workspace root changed during inspection")
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
