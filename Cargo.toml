@@ -6,6 +6,7 @@ members = [
     "crates/primed",
     "crates/prime-compositor",
     "crates/prime-shell",
+    "mobile/core-android",
 ]
 resolver = "2"
 
