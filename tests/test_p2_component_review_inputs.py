@@ -1896,3 +1896,30 @@ def test_rejects_shared_writable_source_during_final_index_probe(tmp_path: Path,
     else:
         raise AssertionError("post-index shared-writable source admitted")
     assert len(seen) == 1
+
+
+def test_rejects_hardlink_created_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean final index cannot authorize a newly aliased source inode."""
+    import os
+
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    outside = tmp_path / "late-source-alias"
+    original_git = module.git
+    seen = []
+
+    def alias_after_index_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            os.link(source, outside)
+        return result
+
+    monkeypatch.setattr(module, "git", alias_after_index_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "custody changed after index probe" in str(error)
+    else:
+        raise AssertionError("post-index hardlink alias admitted")
+    assert len(seen) == 1
