@@ -3123,6 +3123,15 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         ("\u{1680}", "ogham space mark"),
         ("\u{200e}", "left-to-right mark"),
         ("\u{200f}", "right-to-left mark"),
+        ("\u{202a}", "left-to-right embedding"),
+        ("\u{202b}", "right-to-left embedding"),
+        ("\u{202c}", "pop directional formatting"),
+        ("\u{202d}", "left-to-right override"),
+        ("\u{202e}", "right-to-left override"),
+        ("\u{2066}", "left-to-right isolate"),
+        ("\u{2067}", "right-to-left isolate"),
+        ("\u{2068}", "first strong isolate"),
+        ("\u{2069}", "pop directional isolate"),
         ("\u{feff}", "byte-order mark"),
     ] {
         for framed in [
