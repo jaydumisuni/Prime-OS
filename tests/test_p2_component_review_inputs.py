@@ -1949,3 +1949,29 @@ def test_rejects_parent_symlink_swap_during_final_index_probe(tmp_path: Path, mo
     else:
         raise AssertionError("post-index parent symlink substitution admitted")
     assert len(seen) == 1
+
+
+def test_rejects_source_symlink_swap_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A final index probe cannot authorize a source replaced by a symlink."""
+    root, head = sample_repo(tmp_path)
+    source = root / module.INPUTS[0]
+    moved = source.with_name(source.name + "-original")
+    original_git = module.git
+    seen = []
+
+    def alias_source_after_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            source.rename(moved)
+            source.symlink_to(moved)
+        return result
+
+    monkeypatch.setattr(module, "git", alias_source_after_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("post-index source symlink substitution admitted")
+    assert len(seen) == 1
