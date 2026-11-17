@@ -1923,3 +1923,29 @@ def test_rejects_hardlink_created_during_final_index_probe(tmp_path: Path, monke
     else:
         raise AssertionError("post-index hardlink alias admitted")
     assert len(seen) == 1
+
+
+def test_rejects_parent_symlink_swap_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean final index probe cannot authorize an aliased input parent."""
+    root, head = sample_repo(tmp_path)
+    parent = (root / module.INPUTS[-1]).parent
+    moved = parent.with_name(parent.name + "-original")
+    original_git = module.git
+    seen = []
+
+    def alias_parent_after_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            parent.rename(moved)
+            parent.symlink_to(moved, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(module, "git", alias_parent_after_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("post-index parent symlink substitution admitted")
+    assert len(seen) == 1
