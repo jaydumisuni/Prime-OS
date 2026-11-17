@@ -3066,6 +3066,27 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Non-JSON Unicode separators are not interchangeable with the four JSON
+    // whitespace bytes. Reject them on either side of a complete observation;
+    // permissive transport normalization must not change proof custody.
+    for (separator, label) in [
+        ("\u{00a0}", "non-breaking space"),
+        ("\u{2007}", "figure space"),
+        ("\u{2028}", "line separator"),
+        ("\u{2029}", "paragraph separator"),
+        ("\u{3000}", "ideographic space"),
+    ] {
+        for framed in [
+            format!("{separator}{serialized_json}"),
+            format!("{serialized_json}{separator}"),
+        ] {
+            assert!(
+                serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_err(),
+                "{label} must not be admitted as JSON observation framing"
+            );
+        }
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
