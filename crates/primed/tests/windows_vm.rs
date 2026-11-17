@@ -3027,6 +3027,22 @@ fn runtime_observation_rejects_unrecognized_authority_fields() {
         );
     }
 
+    // Leading comments or scalar records must not be interpreted as a transport
+    // preamble preceding the host-only observation envelope.
+    for (prefix, label) in [
+        ("// accepted\n", "leading line comment"),
+        ("/* accepted */", "leading block comment"),
+        ("true ", "leading boolean scalar"),
+        ("0 ", "leading numeric scalar"),
+        ("null ", "leading null scalar"),
+    ] {
+        let framed = format!("{prefix}{serialized_json}");
+        assert!(
+            serde_json::from_str::<VmRuntimeProofObservation>(&framed).is_err(),
+            "{label} must not be admitted as host observation framing"
+        );
+    }
+
     // Unknown fields must never upgrade a host observation into guest or release authority.
     for (field, value) in [
         ("authority", serde_json::json!("guest-attested")),
