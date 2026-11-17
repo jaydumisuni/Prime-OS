@@ -2002,3 +2002,26 @@ def test_rejects_same_bytes_inode_replacement_during_final_index_probe(tmp_path:
     else:
         raise AssertionError("post-index same-byte inode substitution admitted")
     assert len(seen) == 1
+
+
+def test_rejects_root_permission_relaxation_during_final_index_probe(tmp_path: Path, monkeypatch) -> None:
+    """A clean index cannot certify a root made group-writable during the probe."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    seen = []
+
+    def relax_root_after_probe(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[:4] == ("diff", "--cached", "--name-only", head):
+            seen.append(args)
+            root.chmod(root.stat().st_mode | 0o020)
+        return result
+
+    monkeypatch.setattr(module, "git", relax_root_after_probe)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError:
+        pass
+    else:
+        raise AssertionError("post-index group-writable root admitted")
+    assert len(seen) == 1
