@@ -209,7 +209,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     for entry in entries:
         file = root / entry["path"]
         require_private_directory(file.parent)
-        state = file.lstat()
+        state = read_review_stat(file)
         if (not stat.S_ISREG(state.st_mode) or state.st_nlink != 1
                 or state.st_uid not in (0, os.geteuid())
                 or state.st_mode & (0o022 | 0o7000)
@@ -217,7 +217,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed: {entry['path']}")
         final_bytes = read_review_bytes(file)
-        final_state = file.lstat()
+        final_state = read_review_stat(file)
         if (not stat.S_ISREG(final_state.st_mode) or final_state.st_nlink != 1
                 or final_state.st_uid not in (0, os.geteuid())
                 or final_state.st_mode & (0o022 | 0o7000)
