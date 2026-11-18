@@ -2134,3 +2134,15 @@ def test_rejects_source_executable_bit_change_during_final_index_probe(tmp_path:
     with pytest.raises(module.ReviewInputError):
         module.build_manifest(root, head)
     assert len(seen) == 1
+
+
+
+def test_review_byte_reader_rejects_fifo_without_blocking(tmp_path):
+    import os
+    import pytest
+    from tools import p2_component_review_inputs as module
+
+    pipe = tmp_path / "replaced-source"
+    os.mkfifo(pipe)
+    with pytest.raises(module.ReviewInputError, match="nonregular review input"):
+        module.read_review_bytes(pipe)

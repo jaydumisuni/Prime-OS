@@ -64,10 +64,20 @@ def git(repo: Path, *args: str) -> bytes:
 
 def read_review_bytes(file: Path) -> bytes:
     """Convert source disappearance/read failures into bounded review rejection."""
+    # Fail closed before Path.read_bytes: an existing FIFO would otherwise
+    # block indefinitely, preventing a bounded exact-head review.
     try:
+        fd = os.open(file, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                raise ReviewInputError(f"nonregular review input: {file}")
+        finally:
+            os.close(fd)
         return file.read_bytes()
     except OSError as exc:
         raise ReviewInputError(f"review input cannot be read: {file}") from exc
+
 
 
 def require_private_directory(directory: Path) -> None:
