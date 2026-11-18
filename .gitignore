@@ -1,3 +1,7 @@
 /target/
 *.swp
 *.tmp
+
+# Generated Python bytecode from P2 review-input qualification.
+__pycache__/
+*.py[cod]
