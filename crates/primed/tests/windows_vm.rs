@@ -920,9 +920,11 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
     for unsafe_overlay in [
         runtime.join("overlay,readonly=off.qcow2"),
         runtime.join("overlay\nspoof.qcow2"),
+        runtime.join("overlay\u{202e}spoof.qcow2"),
+        runtime.join("overlay\u{2063}spoof.qcow2"),
     ] {
         fs::write(&unsafe_overlay, b"overlay").unwrap();
-        assert!(build_qemu_plan(&VmPlanRequest {
+        let error = build_qemu_plan(&VmPlanRequest {
             qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
             overlay_image: unsafe_overlay,
             runtime_dir: runtime.clone(),
@@ -930,20 +932,27 @@ fn qemu_plan_rejects_option_injection_through_runtime_paths() {
             vcpus: 2,
             usb_nodes: vec![],
         })
-        .is_err());
+        .unwrap_err();
+        assert!(error.to_string().contains("delimiter"), "{error}");
     }
 
-    let unsafe_runtime = dir.path().join("runtime,server=on");
-    fs::create_dir(&unsafe_runtime).unwrap();
-    assert!(build_qemu_plan(&VmPlanRequest {
-        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
-        overlay_image: overlay,
-        runtime_dir: unsafe_runtime,
-        memory_mib: 2048,
-        vcpus: 2,
-        usb_nodes: vec![],
-    })
-    .is_err());
+    for unsafe_runtime in [
+        dir.path().join("runtime,server=on"),
+        dir.path().join("runtime\u{200d}hidden"),
+        dir.path().join("runtime\u{2066}hidden"),
+    ] {
+        fs::create_dir(&unsafe_runtime).unwrap();
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+            overlay_image: overlay.clone(),
+            runtime_dir: unsafe_runtime,
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("delimiter"), "{error}");
+    }
 }
 
 #[test]

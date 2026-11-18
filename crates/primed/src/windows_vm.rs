@@ -1126,6 +1126,9 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
                 value
                     .bytes()
                     .any(|byte| byte == b',' || byte.is_ascii_control())
+                    || value.chars().any(|ch| {
+                        matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}')
+                    })
             })
         })
     {
