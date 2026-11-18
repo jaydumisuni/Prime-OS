@@ -72,9 +72,15 @@ def read_review_bytes(file: Path) -> bytes:
             opened = os.fstat(fd)
             if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
                 raise ReviewInputError(f"nonregular review input: {file}")
+            # Read the validated inode, not a pathname that can be swapped
+            # between the fstat and a second open.
+            with os.fdopen(fd, "rb", closefd=False) as source:
+                content = source.read(opened.st_size + 1)
+            if len(content) != opened.st_size or os.fstat(fd).st_size != opened.st_size:
+                raise ReviewInputError(f"review input changed during read: {file}")
+            return content
         finally:
             os.close(fd)
-        return file.read_bytes()
     except OSError as exc:
         raise ReviewInputError(f"review input cannot be read: {file}") from exc
 

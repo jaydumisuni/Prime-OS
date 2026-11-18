@@ -143,14 +143,14 @@ def test_cli_fails_closed_and_emits_no_manifest_on_head_mismatch(tmp_path: Path)
 def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     def replaced_read(file: Path) -> bytes:
         content = original_read(file)
         if file == target:
             file.unlink()
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    monkeypatch.setattr(module, "read_review_bytes", replaced_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -162,13 +162,13 @@ def test_rejects_same_bytes_path_replacement_during_read(tmp_path: Path, monkeyp
 def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     def rewritten_read(file: Path) -> bytes:
         content = original_read(file)
         if file == target:
             file.write_bytes(content)
         return content
-    monkeypatch.setattr(Path, "read_bytes", rewritten_read)
+    monkeypatch.setattr(module, "read_review_bytes", rewritten_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -180,7 +180,7 @@ def test_rejects_same_bytes_inplace_rewrite_during_read(tmp_path: Path, monkeypa
 def test_rejects_permission_change_during_review_input_read(tmp_path: Path, monkeypatch) -> None:
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
 
     def changed_mode_during_read(file: Path) -> bytes:
         content = original_read(file)
@@ -188,7 +188,7 @@ def test_rejects_permission_change_during_review_input_read(tmp_path: Path, monk
             file.chmod(0o600)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", changed_mode_during_read)
+    monkeypatch.setattr(module, "read_review_bytes", changed_mode_during_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -874,7 +874,7 @@ def test_rejects_ancestor_permission_change_during_input_read(tmp_path: Path, mo
     moved = parent / "p2"
     root.rename(moved)
     target = moved / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
 
     def change_ancestor(file: Path) -> bytes:
         content = original_read(file)
@@ -882,7 +882,7 @@ def test_rejects_ancestor_permission_change_during_input_read(tmp_path: Path, mo
             parent.chmod(0o777)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", change_ancestor)
+    monkeypatch.setattr(module, "read_review_bytes", change_ancestor)
     try:
         try:
             module.build_manifest(moved, head)
@@ -898,7 +898,7 @@ def test_rejects_earlier_source_parent_changed_after_its_read(tmp_path: Path, mo
     root, head = sample_repo(tmp_path)
     earlier = root / "crates/prime-contracts/src"
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
 
     def change_earlier_parent(file: Path) -> bytes:
         content = original_read(file)
@@ -906,7 +906,7 @@ def test_rejects_earlier_source_parent_changed_after_its_read(tmp_path: Path, mo
             earlier.chmod(0o777)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", change_earlier_parent)
+    monkeypatch.setattr(module, "read_review_bytes", change_earlier_parent)
     try:
         try:
             module.build_manifest(root, head)
@@ -923,7 +923,7 @@ def test_rejects_earlier_input_mutated_during_later_read(tmp_path: Path, monkeyp
     root, head = sample_repo(tmp_path)
     earlier = root / module.INPUTS[0]
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     changed = False
 
     def mutate_earlier(file: Path) -> bytes:
@@ -934,7 +934,7 @@ def test_rejects_earlier_input_mutated_during_later_read(tmp_path: Path, monkeyp
             earlier.write_bytes(original_read(earlier) + b"late mutation\n")
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", mutate_earlier)
+    monkeypatch.setattr(module, "read_review_bytes", mutate_earlier)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -947,7 +947,7 @@ def test_rejects_final_read_permission_change(tmp_path: Path, monkeypatch) -> No
     """A late chmod during final digest verification must fail closed."""
     root, head = sample_repo(tmp_path)
     target = root / module.INPUTS[0]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def mutate_on_final_read(file: Path) -> bytes:
@@ -959,7 +959,7 @@ def test_rejects_final_read_permission_change(tmp_path: Path, monkeypatch) -> No
                 target.chmod(0o666)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", mutate_on_final_read)
+    monkeypatch.setattr(module, "read_review_bytes", mutate_on_final_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -976,7 +976,7 @@ def test_rejects_earlier_input_executable_bit_drift_after_inspection(
     git(root, "config", "core.filemode", "false")
     earlier = root / module.INPUTS[0]
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     changed = False
 
     def change_mode_late(file: Path) -> bytes:
@@ -987,7 +987,7 @@ def test_rejects_earlier_input_executable_bit_drift_after_inspection(
             earlier.chmod(earlier.stat().st_mode | 0o100)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", change_mode_late)
+    monkeypatch.setattr(module, "read_review_bytes", change_mode_late)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -1003,7 +1003,7 @@ def test_rejects_earlier_source_parent_mutated_during_final_read(
     root, head = sample_repo(tmp_path)
     earlier_parent = root / "crates/prime-contracts/src"
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def mutate_during_final(file: Path) -> bytes:
@@ -1015,7 +1015,7 @@ def test_rejects_earlier_source_parent_mutated_during_final_read(
                 earlier_parent.chmod(0o777)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", mutate_during_final)
+    monkeypatch.setattr(module, "read_review_bytes", mutate_during_final)
     try:
         try:
             module.build_manifest(root, head)
@@ -1032,7 +1032,7 @@ def test_rejects_earlier_input_mutated_during_final_read(tmp_path: Path, monkeyp
     root, head = sample_repo(tmp_path)
     earlier = root / module.INPUTS[0]
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def mutate_during_final(file: Path) -> bytes:
@@ -1044,7 +1044,7 @@ def test_rejects_earlier_input_mutated_during_final_read(tmp_path: Path, monkeyp
                 earlier.write_bytes(original_read(earlier) + b"final-pass mutation\n")
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", mutate_during_final)
+    monkeypatch.setattr(module, "read_review_bytes", mutate_during_final)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -1060,7 +1060,7 @@ def test_rejects_final_pass_executable_drift_with_filemode_disabled(
     root, head = sample_repo(tmp_path)
     git(root, "config", "core.filemode", "false")
     first = root / module.INPUTS[0]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def drift_on_last_pass(file: Path) -> bytes:
@@ -1072,7 +1072,7 @@ def test_rejects_final_pass_executable_drift_with_filemode_disabled(
                 first.chmod(first.stat().st_mode | 0o100)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", drift_on_last_pass)
+    monkeypatch.setattr(module, "read_review_bytes", drift_on_last_pass)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -1088,7 +1088,7 @@ def test_rejects_source_parent_mutated_during_last_digest_pass(
     root, head = sample_repo(tmp_path)
     earlier_parent = root / "crates/prime-contracts/src"
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def mutate_on_last_pass(file: Path) -> bytes:
@@ -1100,7 +1100,7 @@ def test_rejects_source_parent_mutated_during_last_digest_pass(
                 earlier_parent.chmod(0o777)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", mutate_on_last_pass)
+    monkeypatch.setattr(module, "read_review_bytes", mutate_on_last_pass)
     try:
         try:
             module.build_manifest(root, head)
@@ -1173,7 +1173,7 @@ def test_rejects_parent_permission_drift_during_post_head_digest(
     root, head = sample_repo(tmp_path)
     earlier_parent = root / "crates/prime-contracts/src"
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def drift_on_post_head_read(file: Path) -> bytes:
@@ -1185,7 +1185,7 @@ def test_rejects_parent_permission_drift_during_post_head_digest(
                 earlier_parent.chmod(0o777)
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", drift_on_post_head_read)
+    monkeypatch.setattr(module, "read_review_bytes", drift_on_post_head_read)
     try:
         try:
             module.build_manifest(root, head)
@@ -1204,7 +1204,7 @@ def test_rejects_earlier_source_rewrite_during_post_head_digest(
     root, head = sample_repo(tmp_path)
     earlier = root / module.INPUTS[0]
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     reads = 0
 
     def rewrite_on_post_head_read(file: Path) -> bytes:
@@ -1216,7 +1216,7 @@ def test_rejects_earlier_source_rewrite_during_post_head_digest(
                 earlier.write_bytes(original_read(earlier) + b"late rewrite\n")
         return content
 
-    monkeypatch.setattr(Path, "read_bytes", rewrite_on_post_head_read)
+    monkeypatch.setattr(module, "read_review_bytes", rewrite_on_post_head_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -1229,7 +1229,7 @@ def test_rejects_head_switch_during_publication_digest(tmp_path: Path, monkeypat
     """The final digest pass must not publish a stale candidate identity."""
     root, head = sample_repo(tmp_path)
     last = root / module.INPUTS[-1]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     original_git = module.git
     reads = 0
     switched = False
@@ -1248,7 +1248,7 @@ def test_rejects_head_switch_during_publication_digest(tmp_path: Path, monkeypat
             return b"0" * 40 + b"\n"
         return original_git(repo, *args)
 
-    monkeypatch.setattr(Path, "read_bytes", switch_on_publication_read)
+    monkeypatch.setattr(module, "read_review_bytes", switch_on_publication_read)
     monkeypatch.setattr(module, "git", observe_switched_head)
     try:
         module.build_manifest(root, head)
@@ -2146,3 +2146,24 @@ def test_review_byte_reader_rejects_fifo_without_blocking(tmp_path):
     os.mkfifo(pipe)
     with pytest.raises(module.ReviewInputError, match="nonregular review input"):
         module.read_review_bytes(pipe)
+
+
+def test_review_read_is_bound_to_opened_inode(tmp_path: Path, monkeypatch) -> None:
+    """Replacing a pathname after fstat cannot substitute bytes into its open fd."""
+    source = tmp_path / "source"
+    source.write_bytes(b"original")
+    original_fstat = module.os.fstat
+    replaced = False
+
+    def swap_after_stat(fd: int):
+        nonlocal replaced
+        result = original_fstat(fd)
+        if not replaced and result.st_size == len(b"original"):
+            replaced = True
+            source.unlink()
+            source.write_bytes(b"attacker")
+        return result
+
+    monkeypatch.setattr(module.os, "fstat", swap_after_stat)
+    assert module.read_review_bytes(source) == b"original"
+    assert source.read_bytes() == b"attacker"
