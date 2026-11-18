@@ -76,7 +76,13 @@ def read_review_bytes(file: Path) -> bytes:
             # between the fstat and a second open.
             with os.fdopen(fd, "rb", closefd=False) as source:
                 content = source.read(opened.st_size + 1)
-            if len(content) != opened.st_size or os.fstat(fd).st_size != opened.st_size:
+            closed = os.fstat(fd)
+            # Bind the read to an unchanged opened inode, including ownership,
+            # permissions and timestamps; a stable byte count alone is insufficient.
+            custody = lambda st: (st.st_dev, st.st_ino, st.st_mode, st.st_uid,
+                                  st.st_gid, st.st_nlink, st.st_size,
+                                  st.st_mtime_ns, st.st_ctime_ns)
+            if len(content) != opened.st_size or custody(closed) != custody(opened):
                 raise ReviewInputError(f"review input changed during read: {file}")
             return content
         finally:

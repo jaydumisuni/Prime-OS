@@ -2165,5 +2165,29 @@ def test_review_read_is_bound_to_opened_inode(tmp_path: Path, monkeypatch) -> No
         return result
 
     monkeypatch.setattr(module.os, "fstat", swap_after_stat)
-    assert module.read_review_bytes(source) == b"original"
+    # The open descriptor still binds original bytes, but unlinking it
+    # changes its link count and invalidates custody before publication.
+    with pytest.raises(module.ReviewInputError, match="changed during read"):
+        module.read_review_bytes(source)
     assert source.read_bytes() == b"attacker"
+
+
+def test_review_byte_reader_rejects_fd_permission_drift(tmp_path: Path, monkeypatch) -> None:
+    """An opened source changing mode during read cannot retain custody."""
+    source = tmp_path / "source-mode"
+    source.write_bytes(b"unchanged")
+    original_fstat = module.os.fstat
+    calls = 0
+
+    def change_mode_after_first_stat(fd: int):
+        nonlocal calls
+        state = original_fstat(fd)
+        calls += 1
+        if calls == 2:
+            source.chmod(source.stat().st_mode | 0o020)
+            state = original_fstat(fd)
+        return state
+
+    monkeypatch.setattr(module.os, "fstat", change_mode_after_first_stat)
+    with pytest.raises(module.ReviewInputError, match="changed during read"):
+        module.read_review_bytes(source)
