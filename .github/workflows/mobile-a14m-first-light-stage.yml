@@ -1,0 +1,187 @@
+# Source-pinned historical A145P boot header staging. Not phone-boot proof.
+name: Prime Mobile A14m historical boot image STAGING only
+on:
+  push:
+    branches:
+      - work/mobile-mob0-phi-readonly-20261115
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a14m-reference-boot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage-historical-a14m:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Check out unmerged A14m candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Execute all source-only Mobile regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/tests -q
+          python3 -m unittest discover -s tests -q
+          mkdir -p dist
+          git rev-parse HEAD | tee dist/source-commit.txt
+
+      - name: Fetch precisely pinned historical AWG1 BOOT kernel and DTB (not recovery kernel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reference
+          BASE=https://raw.githubusercontent.com/forforksake/a14m_dump/699855860e672eb5f3582ecf8e2144de0ed8b2d1/boot
+          curl --fail --location --show-error --silent --retry 3 --max-time 150 "$BASE/kernel" -o reference/kernel
+          curl --fail --location --show-error --silent --retry 3 --max-time 60 "$BASE/dtb.img" -o reference/dtb.img
+          curl --fail --location --show-error --silent --retry 3 --max-time 30 "$BASE/img_info" -o reference/img_info
+          test "$(wc -c < reference/kernel)" -eq 11564226
+          test "$(wc -c < reference/dtb.img)" -eq 135300
+          test "$(git hash-object reference/kernel)" = 1d3968ea089f88deb19c0b8e1efe482b85ef7e65
+          test "$(git hash-object reference/dtb.img)" = db8938c3219ff857dafbf59e0b476ecdb751582b
+          test "$(git hash-object reference/img_info)" = 13c04b85f08d74e3fae7f27cc035feb3ba394d1b
+          file reference/kernel reference/dtb.img | tee dist/reference-file-types.txt
+          sha256sum reference/kernel reference/dtb.img reference/img_info | tee dist/reference-input-sha256.txt
+          echo PINNED_AWG1_BOOT_KERNEL_NOT_RECOVERY_KERNEL
+
+      - name: Compile static AArch64 Prime early-init diagnostic only
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang --version | head -n1 | tee dist/clang-version.txt
+          clang --target=aarch64-linux-gnu -fuse-ld=lld -nostdlib -static \
+            -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra -Werror \
+            -Wl,-e,_start -Wl,--build-id=none \
+            mobile/device-ports/samsung/a14m/first_light_init.c \
+            -o reference/first-light-init-aarch64.elf
+          file reference/first-light-init-aarch64.elf | tee dist/early-init-file.txt
+          readelf -h reference/first-light-init-aarch64.elf | tee dist/early-init-elf-header.txt
+          readelf -h reference/first-light-init-aarch64.elf | grep -q 'Machine:.*AArch64'
+          if readelf -l reference/first-light-init-aarch64.elf | grep -Eq 'INTERP|DYNAMIC'; then
+            echo 'INVALID_DYNAMIC_FIRST_LIGHT_INIT'; exit 1
+          fi
+
+      - name: Construct old AWG1 reference Android boot v2 image, staging ONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 mobile/tools/a14m_stage_boot.py \
+            --kernel reference/kernel --dtb reference/dtb.img \
+            --boot-info reference/img_info \
+            --init reference/first-light-init-aarch64.elf \
+            --source-commit "$GITHUB_SHA" --out dist/staged \
+            | tee dist/staging-build-receipt.json
+          test -s dist/staged/a14m-first-light.reference-v2.boot.img
+          test -s dist/staged/A14M_REFERENCE_STAGING_DO_NOT_FLASH.zip
+          sha256sum dist/staged/* | tee dist/staged-output-sha256.txt
+          python3 -m zipfile -t dist/staged/A14M_REFERENCE_STAGING_DO_NOT_FLASH.zip
+
+      - name: Independently inspect the packed boot v2 header and ZIP payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,struct,zipfile
+          root=pathlib.Path('dist/staged')
+          image=root/'a14m-first-light.reference-v2.boot.img'
+          raw=image.read_bytes()
+          fields=struct.unpack_from('<10I',raw,8)
+          ksize,kaddr,rsize,raddr,ssize,saddr,tags,pages,version,ospatch=fields
+          assert raw[:8]==b'ANDROID!' and version==2 and pages==2048 and ospatch==0
+          assert kaddr==0x40080000 and raddr==0x47c80000 and tags==0x4bc80000
+          assert ssize==0 and ksize==11564226
+          dtbsize,dtbaddr=struct.unpack_from('<IQ',raw,1648)
+          assert dtbsize==135300 and dtbaddr==0x47880000
+          assert len(raw)<=80740352
+          ks=pages
+          rs=pages+((ksize+pages-1)//pages)*pages
+          ds=rs+((rsize+pages-1)//pages)*pages
+          assert raw[ks:ks+ksize]==pathlib.Path('reference/kernel').read_bytes()
+          assert raw[ds:ds+dtbsize]==pathlib.Path('reference/dtb.img').read_bytes()
+          table=raw[ds:ds+dtbsize]
+          magic,total,headsz,entsz,count,entryoff,pgsize,ver=struct.unpack_from('>8I',table,0)
+          assert (magic,total,headsz,entsz,count,entryoff,pgsize,ver)==(0xd7b7ab1e,dtbsize,32,32,1,32,2048,0)
+          payloadsz,payloadoff,*_=struct.unpack_from('>8I',table,32)
+          assert payloadoff==64 and payloadsz==dtbsize-64
+          assert table[64:68]==bytes.fromhex('d00dfeed')
+          assert struct.unpack_from('>I',table,68)[0]==payloadsz
+          assert raw[rs:rs+2]==b'\x1f\x8b'
+          assert raw[576:596]!=bytes(20)
+          manifest=json.loads((root/'manifest.json').read_text())
+          assert manifest['image']['total_bytes']==len(raw)
+          assert manifest['boot_image_ready'] is False
+          assert manifest['flash_authorized'] is False
+          assert manifest['twrp_recovery_modified'] is False
+          assert manifest['prime_core_running'] is False
+          assert not manifest['physical_boot_observed']
+          assert hashlib.sha256(raw).hexdigest()==manifest['boot_img_sha256']
+          with zipfile.ZipFile(root/'A14M_REFERENCE_STAGING_DO_NOT_FLASH.zip') as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              assert len(names)==5 and all(n.startswith('A14M_REFERENCE_STAGING_DO_NOT_FLASH/') for n in names)
+              contents={n.rsplit('/',1)[-1]:z.read(n) for n in names}
+              assert contents[image.name]==raw
+              for line in contents['SHA256SUMS'].decode().splitlines():
+                  h,name=line.split('  ',1)
+                  assert hashlib.sha256(contents[name]).hexdigest()==h
+              assert b'DO NOT INSTALL IN TWRP' in contents['README_NOT_FOR_FLASH.txt']
+          print('A14M_HISTORICAL_BOOT_V2_STRUCTURE_AND_NOT_FOR_FLASH_ZIP_PASS')
+          PY
+
+      - name: Independently AOSP unpack, verify and bitwise rebuild historical boot image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/aosp-tools/gki dist/aosp-unpacked
+          BASE=https://raw.githubusercontent.com/jbeich/platform_system_tools_mkbootimg/d2bb0af5ba6d3198a3e99529c97eda1be0b5a093
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/unpack_bootimg.py" -o dist/aosp-tools/unpack_bootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/mkbootimg.py" -o dist/aosp-tools/mkbootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/gki/generate_gki_certificate.py" -o dist/aosp-tools/gki/generate_gki_certificate.py
+          test "$(git hash-object dist/aosp-tools/unpack_bootimg.py)" = a3f1a508796b5af54216397b05637f1f5e692a3d
+          test "$(git hash-object dist/aosp-tools/mkbootimg.py)" = ec2958179691a434df917cd1b6f196edaa80e31d
+          test "$(git hash-object dist/aosp-tools/gki/generate_gki_certificate.py)" = 739c61b04a9dbd95cafa5196533e3a472c31f2d9
+          IMAGE=dist/staged/a14m-first-light.reference-v2.boot.img
+          python3 dist/aosp-tools/unpack_bootimg.py --boot_img "$IMAGE" --out dist/aosp-unpacked > dist/aosp-unpack-header.txt
+          cmp -s reference/kernel dist/aosp-unpacked/kernel
+          cmp -s reference/dtb.img dist/aosp-unpacked/dtb
+          python3 - <<'PY_AOSP_INSPECT'
+          import gzip, hashlib, json
+          from pathlib import Path
+          r=Path('dist/aosp-unpacked')
+          rd=(r/'ramdisk').read_bytes()
+          raw=gzip.decompress(rd)
+          assert raw.startswith(b'070701') and b'PRIME_A14M_FIRST_LIGHT|stage=ENTERED_UNQUALIFIED' in raw
+          manifest=json.loads(Path('dist/staged/manifest.json').read_text())
+          assert hashlib.sha256(rd).hexdigest()==manifest['ramdisk_sha256']
+          assert manifest['flash_authorized'] is False
+          print('AOSP_INDEPENDENT_UNPACK_EXACT_SECTION_MATCH')
+          PY_AOSP_INSPECT
+          python3 dist/aosp-tools/mkbootimg.py \
+            --header_version 2 --pagesize 2048 \
+            --kernel dist/aosp-unpacked/kernel \
+            --ramdisk dist/aosp-unpacked/ramdisk \
+            --dtb dist/aosp-unpacked/dtb \
+            --base 0x40078000 --kernel_offset 0x8000 \
+            --ramdisk_offset 0x07c08000 --second_offset 0x00f00000 \
+            --tags_offset 0x0bc08000 --dtb_offset 0x07808000 \
+            --board SRPVJ12A002 \
+            --cmdline 'bootopt=64S3,32N2,64N2 loop.max_part=7' \
+            -o dist/aosp-rebuilt.boot.img
+          cmp "$IMAGE" dist/aosp-rebuilt.boot.img
+          sha256sum "$IMAGE" dist/aosp-rebuilt.boot.img | tee dist/aosp-roundtrip-sha256.txt
+          echo AOSP_PINNED_UNPACK_REPACK_BYTE_IDENTICAL_PASS
+
+      - name: Retain historical-only evidence even if a gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a14m-reference-first-light-STAGING-NOT-FOR-FLASH-${{ github.sha }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 7

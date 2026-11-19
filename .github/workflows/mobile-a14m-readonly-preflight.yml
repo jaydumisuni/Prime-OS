@@ -1,0 +1,52 @@
+name: Prime Mobile A14m stock-source gate (read-only)
+on:
+  push:
+    branches:
+      - work/mobile-mob0-phi-readonly-20261115
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Execute all existing candidate test suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/tests -v
+          python3 -m unittest discover -s tests -v
+      - name: Validate read-only source intake and explicit stop
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 mobile/tools/a14m_stock_preflight.py assess \
+            --sources mobile/device-ports/samsung/a14m/source-intake.candidate.json \
+            --out a14m-stock-preflight-receipt.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('a14m-stock-preflight-receipt.json')
+          r=json.loads(p.read_text())
+          assert r['status']=='STOP_DEVICE_IMAGE_NOT_READY',r
+          assert r['public_latest_referenced_build']=='A145PXXUEDZJ2',r
+          assert r['device_flash_authorized'] is False,r
+          assert r['boot_image_compatible'] is False,r
+          assert r['real_phone_identity_cryptographically_verified'] is False,r
+          assert 'LIVE_PHONE_CAPTURE_MISSING' in r['blockers'],r
+          print('A14M_SOURCE_ONLY_FAIL_CLOSED_PASS')
+          PY
+          sha256sum a14m-stock-preflight-receipt.json
+      - name: Preserve source-only result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a14m-source-only-gate-${{ github.sha }}
+          path: a14m-stock-preflight-receipt.json
+          if-no-files-found: warn
+          retention-days: 7

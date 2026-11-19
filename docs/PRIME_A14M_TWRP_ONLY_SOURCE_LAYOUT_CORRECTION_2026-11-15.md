@@ -1,0 +1,29 @@
+# Samsung A14m TWRP-only — offline boot-layout reference correction
+
+**Date:** 2026-11-15. **Owner report:** SM-A145P handset currently has **TWRP only and no installed Android operating system**. Do not request a running Android `getprop` read as the prerequisite to image design. Avoid transforming the current phone's reported state into a claim about its bootloader, Samsung security chain or exact firmware without independent physical proof.
+
+**Correct source route:** recover and audit the documented historical TWRP recovery tree, kernel and AWG1 firmware dump; keep the device itself unchanged. This work extends the **existing PR #223** provisional `a14m` manifest and previous read-only intake, rather than creating a second port authority. The Android-style `a14m_stock_preflight.py` remains an optional tool for a future Android installation but **is not the route for this TWRP-only handset**.
+
+## Recovered pinned reference evidence
+
+- [TWRP recovery tree](https://github.com/forforksake/recovery_device_samsung_a14m/tree/cdbc13945796b6863362ed041ce7177ce7cf3ca5), BoardConfig blob `a57fe4d664e94407771a47e60da6aaaa44578e7a`: AArch64, MT6768 platform, header **v2**, kernel base `0x40078000`, page **2048**, ramdisk offset `0x07c08000`, tags `0x0bc08000`, prebuilt kernel/DTB/DTBO, boot and recovery partition sizes **80,740,352 bytes** as *historical BoardConfig assertions*. Its README describes A145P, Android 13-era TWRP and adjusted touchscreen drivers.
+- [AWG1 dump](https://github.com/forforksake/a14m_dump/tree/699855860e672eb5f3582ecf8e2144de0ed8b2d1), boot `img_info` Git blob `13c04b85f08d74e3fae7f27cc035feb3ba394d1b`, recovery `img_info` `69dfdfb24722f7c6aa4763086ee058a4a1bd2c07`: page/kernel base/ramdisk/tags settings agree with recovery BoardConfig, but boot kernel size **11,564,226 bytes** differs from recovery kernel **11,532,508 bytes**. They cannot silently be treated as interchangeable.
+- PIT analysis Git blob `05e2a2010e9d1cba27b0348ed75823be95715f91` lists **57 partition names**, including `boot`, `recovery`, `vendor_boot`, `init_boot`, `dtbo`, `vbmeta`, `super`; the historical names are useful but cannot establish the current device's active image/header/AVB route.
+- The published TWRP prebuilt `kernel`, `dtb.img` and `dtbo.img` have exactly the **same Git blob IDs** as `a14m_dump/recovery` corresponding files: `cb704f154f9aef83096fcab08db6dbcb871606c2`, `db8938c3219ff857dafbf59e0b476ecdb751582b`, `9c17c4b0fa11ce0574e81acb9a30fe9df2176a74`. This matches historical reference bytes, **not proof of their installed version on this handset**.
+- [Historical kernel source branch](https://github.com/forforksake/android_kernel_samsung_a145p/tree/2ad60c6b7b89f6f37d1eb483696e7d121c8972bd) is specifically `A145PXXU2AWG1`. Device firmware and active partition use must not be assumed identical merely from model name.
+
+## Specific unsafe assumptions to prevent
+
+The TWRP BoardConfig includes `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 3` (disable verified-boot protections), a **2099-12-31 fake platform security patch**, and hardcoded `BOARD_SUPER_PARTITION_SIZE` and dynamic partition values carrying `TODO: Fix hardcoded value`. These are **recovery development hacks, not Prime OS device image authority**. Do not reproduce them in the Prime boot image or claim rollback safety because the TWRP recovery starts. The presence of both `vendor_boot` and `init_boot` in PIT means a header-v2 recovery build alone cannot define the complete stock boot chain.
+
+## New offline proof path
+
+`mobile/tools/a14m_offline_layout.py` compares four files fetched from exact historical Git commits and independently verifies Git blob hashes before admitting their source provenance. It parses PIT names, boot/recovery geometry, checks matching references and records unsafe recovery configuration properties. It returns `REFERENCE_LAYOUT_RECONCILED_NOT_DEVICE_QUALIFIED` on internally consistent historical evidence or `STOP_REFERENCE_LAYOUT_CONFLICT` for discrepancies. Every result sets `boot_image_ready:false`, `boot_chain_qualified:false`, `stock_restore_qualified:false`, `device_flash_authorized:false` and `physical_boot_observed:false`. It never touches Android, ADB, TWRP partitions, the phone, firmware or the Prime Core API.
+
+The source ledger `mobile/device-ports/samsung/a14m/offline-layout-reference.candidate.json` pins commits and blobs without certifying them. Nine regression tests cover missing partitions, boot geometry conflicts, recovery binary mismatches, disabling-AVB/fake-patch hazards, duplicate PIT entries and unknown device boot qualification. A branch-scoped GitHub-hosted CI job fetches only source metadata (no bulky ROM), checks exact Git object hashes and runs the offline gate. This **replaces the premature Android-intake dependency**; it does **not** complete the first Samsung boot.
+
+## Progression toward actual image preparation
+
+Next without KRATOS: review full boot.img, vendor_boot/init_boot and TWRP recovery ramdisk header semantics, build Prime-specific ARM64 early userspace and staging artifacts for the historical source tree, and check kernel device-tree/driver availability. These are design and build tests, not phone-installation authorization. Actual first boot, recovery fallback and display/touch/power acceptance require the TWRP-only physical handset. The user does **not** need to install Android to participate in these tests; TWRP may provide recovery-side status and files when available, but even that is not required for the offline source audit. The Prime Mobile QEMU ZIP remains for virtual test only, never flash it to the Samsung.
+
+**Contribution:** correction of a false Android prerequisite, new reproducible historical source layout proof and honest remaining first-boot dependency. No duplicate architecture, no unsupported flash-ready claim, no physical modification.

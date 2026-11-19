@@ -1,0 +1,35 @@
+{
+  "schema": "prime.mobile.a14m.installed-recovery-owner-report.candidate.v0",
+  "reported_at": "2026-11-19",
+  "model_owner_report": "SM-A145P",
+  "current_runtime_owner_report": "TWRP only; no installed Android OS",
+  "installed_recovery": {
+    "source_class": "OWNER_REPORTED_NOT_DEVICE_ATTESTED",
+    "name_owner_report": "A145P-A145R TWRP Build 3",
+    "attachment_url_owner_supplied": "https://xdaforums.com/attachments/a145p-a145r-twrp-build3-zip.5899923/",
+    "attachment_id": "5899923",
+    "attachment_bytes_retrieved": false,
+    "installed_partition_sha256": null,
+    "local_twrp_version_verified": false,
+    "fstab_extracted_from_installed_recovery": false,
+    "rollback_backup_restored_and_proven": false
+  },
+  "external_leads_not_identity_proof": [
+    {
+      "source": "https://t.me/s/physwizz2?before=823",
+      "reported_name": "A145P-A145R-twrp-build3.tar",
+      "reported_size": "77 MB",
+      "source_description": "A145P A145R twrp build 3; For testing",
+      "same_bytes_as_xda_zip_verified": false
+    },
+    {
+      "source": "https://github.com/forforksake/recovery_device_samsung_a14m/releases/tag/TWRP_3.7.0_12_2_CFKod",
+      "withdrawn_other_release": "twrp_08092023-2358.img",
+      "applies_to_reported_physwizz_build3": "NOT_ESTABLISHED_DIFFERENT_NAMED_RELEASE"
+    }
+  ],
+  "status": "OWNER_VARIANT_NAMED_BINARY_AND_ROLLBACK_UNQUALIFIED",
+  "physical_device_tested_in_this_checkpoint": false,
+  "safe_flash_authorized": false,
+  "working_twrp_preservation_required": true
+}

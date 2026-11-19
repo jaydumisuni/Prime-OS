@@ -1,0 +1,43 @@
+{
+  "schema": "prime.mobile.a14m.offline-source-ledger.candidate.v0",
+  "scope": "HISTORICAL_AWG1_TWRP_REFERENCES_NOT_CURRENT_HANDSET",
+  "twrp_recovery_tree": {
+    "repository": "forforksake/recovery_device_samsung_a14m",
+    "commit": "cdbc13945796b6863362ed041ce7177ce7cf3ca5",
+    "boardconfig_blob": "a57fe4d664e94407771a47e60da6aaaa44578e7a",
+    "recovery_fstab_blob": "7f352215b7de3cfce674cdabfa2f933e10700256"
+  },
+  "historical_firmware_dump": {
+    "repository": "forforksake/a14m_dump",
+    "commit": "699855860e672eb5f3582ecf8e2144de0ed8b2d1",
+    "boot_info_blob": "13c04b85f08d74e3fae7f27cc035feb3ba394d1b",
+    "recovery_info_blob": "69dfdfb24722f7c6aa4763086ee058a4a1bd2c07",
+    "pit_analysis_blob": "05e2a2010e9d1cba27b0348ed75823be95715f91",
+    "pit_reference_partition_count": 57,
+    "historical_boot_kernel_blob": "1d3968ea089f88deb19c0b8e1efe482b85ef7e65"
+  },
+  "recovery_blobs": {
+    "kernel": "cb704f154f9aef83096fcab08db6dbcb871606c2",
+    "dtb.img": "db8938c3219ff857dafbf59e0b476ecdb751582b",
+    "dtbo.img": "9c17c4b0fa11ce0574e81acb9a30fe9df2176a74"
+  },
+  "dump_recovery_blobs": {
+    "kernel": "cb704f154f9aef83096fcab08db6dbcb871606c2",
+    "dtb.img": "db8938c3219ff857dafbf59e0b476ecdb751582b",
+    "dtbo.img": "9c17c4b0fa11ce0574e81acb9a30fe9df2176a74"
+  },
+  "reference_boot_format": {
+    "twrp_recovery_boardconfig_header": 2,
+    "page_size": 2048,
+    "boardconfig_boot_partition_size_bytes_candidate": 80740352,
+    "boardconfig_recovery_partition_size_bytes_candidate": 80740352,
+    "has_vendor_boot_and_init_boot_in_pit": true,
+    "device_verified": false
+  },
+  "operating_system_required_for_reference_audit": false,
+  "no_android_installed_owner_report": true,
+  "twrp_only_owner_report": true,
+  "android_getprop_not_required": true,
+  "flash_authorized": false,
+  "production_boot_image_ready": false
+}

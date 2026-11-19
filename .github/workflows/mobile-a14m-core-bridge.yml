@@ -1,0 +1,300 @@
+# Source-bound, UNQUALIFIED Prime Core Linux userspace in historical A14m boot v2.
+# No phone, no flash/OTA, no OEM boot proof. Core comes from reviewed PR #224.
+name: Prime Mobile A14m real Core lab bridge — source-only
+on:
+  push:
+    branches:
+      - work/mobile-mob0-phi-readonly-20261115
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prime-a14m-core-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge-source-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 27
+    env:
+      MOB1_CORE_SHA: 028aa1cf93f782d0fe8ec295a97c71a485661947
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - name: Check out unmerged A14m candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run all A14m and common regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/tests -q
+          python3 -m unittest discover -s tests -q
+          mkdir -p dist/bridge dist/qemu dist/core-input dist/aosp-tools/gki dist/aosp-unpacked dist/source-evidence
+          git rev-parse HEAD > dist/source-evidence/a14m-commit.txt
+
+      - name: Recover exact reviewed Prime Core source SHA, never silently move PR #224
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$MOB1_CORE_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$MOB1_CORE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/prime-mob1-reviewed" FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/prime-mob1-reviewed" rev-parse HEAD)" = "$MOB1_CORE_SHA"
+          test "$(git -C "$RUNNER_TEMP/prime-mob1-reviewed" hash-object crates/primed/src/mob1_lab.rs)" = 40e4687a17071dcc625192208d009c7762a0890c
+          test "$(git -C "$RUNNER_TEMP/prime-mob1-reviewed" hash-object mobile/first-light/primed_guest_init.c)" = 361cea0382a7d02bdb2510da3164bd5d04980ee7
+          printf '%s\n' "$MOB1_CORE_SHA" > dist/source-evidence/reviewed-core-commit.txt
+          echo PINNED_REVIEWED_CORE_SOURCE_PASS
+
+      - name: Fetch original AWG1 BOOT kernel, DT table and metadata with Git-object pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reference
+          BASE=https://raw.githubusercontent.com/forforksake/a14m_dump/699855860e672eb5f3582ecf8e2144de0ed8b2d1
+          curl --fail --location --show-error --silent --retry 3 --max-time 160 "$BASE/boot/kernel" -o reference/kernel
+          curl --fail --location --show-error --silent --retry 3 --max-time 40 "$BASE/boot/dtb.img" -o reference/dtb.img
+          curl --fail --location --show-error --silent --retry 3 --max-time 30 "$BASE/boot/img_info" -o reference/img_info
+          curl --fail --location --show-error --silent --retry 3 --max-time 40 "$BASE/bootRE/ikconfig" -o reference/ikconfig
+          test "$(git hash-object reference/kernel)" = 1d3968ea089f88deb19c0b8e1efe482b85ef7e65
+          test "$(git hash-object reference/dtb.img)" = db8938c3219ff857dafbf59e0b476ecdb751582b
+          test "$(git hash-object reference/img_info)" = 13c04b85f08d74e3fae7f27cc035feb3ba394d1b
+          test "$(git hash-object reference/ikconfig)" = 05d510dee608c597fffef2ded017f2e71dcd8ad5
+          test "$(wc -c < reference/kernel)" -eq 11564226
+          test "$(wc -c < reference/dtb.img)" -eq 135300
+          grep -Fqx 'CONFIG_BLK_DEV_INITRD=y' reference/ikconfig
+          grep -Fqx 'CONFIG_RD_GZIP=y' reference/ikconfig
+          grep -Fqx '# CONFIG_DEVTMPFS is not set' reference/ikconfig
+          sha256sum reference/kernel reference/dtb.img reference/img_info reference/ikconfig \
+            > dist/source-evidence/historical-source-sha256.txt
+          sha256sum reference/kernel | cut -d' ' -f1 > dist/source-evidence/kernel-sha256-only.txt
+          echo HISTORICAL_AWG1_BOOT_AND_RAMDISK_SOURCE_VERIFIED
+
+      - name: Install isolated Ubuntu host cross-toolchain and QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang lld gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-system-arm
+          rustup target add aarch64-unknown-linux-gnu
+          clang --version | head -n1 | tee dist/source-evidence/clang-version.txt
+          rustc --version | tee dist/source-evidence/rust-version.txt
+          qemu-system-aarch64 --version | head -n1 | tee dist/source-evidence/qemu-version.txt
+
+      - name: Compile actual Rust primed with exact opt-in unqualified guest feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE_WORKTREE="$RUNNER_TEMP/prime-mob1-reviewed"
+          ( cd "$CORE_WORKTREE" && cargo test --locked -p primed --lib --features mob1-guest-lab )
+          ( cd "$CORE_WORKTREE" && cargo build --locked --release -p primed \
+              --target aarch64-unknown-linux-gnu --features mob1-guest-lab )
+          CORE="$CORE_WORKTREE/target/aarch64-unknown-linux-gnu/release/primed"
+          file "$CORE" | tee dist/source-evidence/primed-file.txt
+          readelf -h "$CORE" | grep -q 'Machine:.*AArch64'
+          readelf -l "$CORE" | grep -q '/lib/ld-linux-aarch64.so.1'
+          sha256sum "$CORE" > dist/source-evidence/primed-real-elf-sha256.txt
+          echo ACTUAL_PRIMED_AARCH64_SOURCE_BOUND_LAB_BUILD_PASS
+
+      - name: Build source-kernel-bound A14m Core init and actual dynamic glibc bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="$(cat dist/source-evidence/kernel-sha256-only.txt)"
+          test "${#SHA}" -eq 64
+          clang --target=aarch64-linux-gnu -fuse-ld=lld -nostdlib -static \
+            -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra -Werror \
+            -DPRIME_A14M_PINNED_KERNEL_SHA256=\"${SHA}\" \
+            -Wl,-e,_start -Wl,--build-id=none \
+            mobile/device-ports/samsung/a14m/core_lab_init.c \
+            -o dist/core-input/a14m-core-lab-init
+          file dist/core-input/a14m-core-lab-init
+          readelf -h dist/core-input/a14m-core-lab-init | grep -q 'Machine:.*AArch64'
+          if readelf -l dist/core-input/a14m-core-lab-init | grep -Eq 'INTERP|DYNAMIC'; then
+            echo 'A14M_INIT_NOT_STATIC'; exit 1
+          fi
+          strings dist/core-input/a14m-core-lab-init | grep -F "PRIME_MOB1_LAB_INPUT_DIGEST=sha256:${SHA}"
+          CORE_WORKTREE="$RUNNER_TEMP/prime-mob1-reviewed"
+          python3 "$CORE_WORKTREE/mobile/first-light/build_primed_guest.py" \
+            --core "$CORE_WORKTREE/target/aarch64-unknown-linux-gnu/release/primed" \
+            --init dist/core-input/a14m-core-lab-init \
+            --libroot /usr/aarch64-linux-gnu/lib --out dist/core-input \
+            > dist/core-input/core-bundle-receipt.json
+          test -s dist/core-input/primed-lab-initramfs.cpio.gz
+          test -s dist/core-input/primed-lab-manifest.json
+          echo ACTUAL_ARM64_PRIMED_AND_GLIBC_BUNDLED_NO_PRODUCTION_ADMISSION
+
+      - name: Compose historical A14m boot v2 with actual Core bytes, no installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 mobile/tools/a14m_core_lab_stage.py \
+            --kernel reference/kernel --dtb reference/dtb.img \
+            --boot-info reference/img_info \
+            --initramfs dist/core-input/primed-lab-initramfs.cpio.gz \
+            --core-manifest dist/core-input/primed-lab-manifest.json \
+            --source-commit "$GITHUB_SHA" --core-source-commit "$MOB1_CORE_SHA" \
+            --out dist/bridge | tee dist/bridge-stage-stdout.json
+          test -s dist/bridge/a14m-core-lab.reference-v2.DO_NOT_FLASH.boot.img
+          sha256sum dist/bridge/a14m-core-lab.reference-v2.DO_NOT_FLASH.boot.img \
+            > dist/bridge/image-sha256.txt
+          python3 - <<'PY_RECEIPT'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('dist/bridge/source-bridge-receipt.json').read_text())
+          assert d['primed_arm64_bytes_integrated'] is True
+          assert d['core_running_on_samsung_proven'] is False
+          assert d['device_flash_authorized'] is False
+          assert d['bootc_generation_bound'] is False
+          assert d['prime_shell_ready'] is False
+          print('A14M_REAL_CORE_PACKAGED_UNQUALIFIED_NOT_FOR_FLASH')
+          PY_RECEIPT
+
+      - name: Run fail-closed TWRP boot/recovery source admission on ACTUAL candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bridge/historical-recovery
+          BASE=https://raw.githubusercontent.com
+          REC=forforksake/recovery_device_samsung_a14m/cdbc13945796b6863362ed041ce7177ce7cf3ca5
+          DUMP=forforksake/a14m_dump/699855860e672eb5f3582ecf8e2144de0ed8b2d1
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/$REC/recovery.fstab" \
+            -o dist/bridge/historical-recovery/recovery.fstab
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/$DUMP/pit/PIT_Analysis_001.txt" \
+            -o dist/bridge/historical-recovery/PIT_Analysis_001.txt
+          test "$(git hash-object dist/bridge/historical-recovery/recovery.fstab)" = 7f352215b7de3cfce674cdabfa2f933e10700256
+          test "$(git hash-object dist/bridge/historical-recovery/PIT_Analysis_001.txt)" = 05e2a2010e9d1cba27b0348ed75823be95715f91
+          python3 mobile/tools/a14m_twrp_recovery_gate.py \
+            --ledger mobile/device-ports/samsung/a14m/offline-layout-reference.candidate.json \
+            --fstab dist/bridge/historical-recovery/recovery.fstab \
+            --pit dist/bridge/historical-recovery/PIT_Analysis_001.txt \
+            --image-receipt dist/bridge/source-bridge-receipt.json \
+            --output dist/bridge/twrp-first-boot-recovery-gate.json
+          python3 - <<'PY_TWRP_GATE'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('dist/bridge/twrp-first-boot-recovery-gate.json').read_text())
+          built=json.loads(Path('dist/bridge/source-bridge-receipt.json').read_text())
+          assert r['status']=='REFERENCE_SEPARATE_BOOT_RECOVERY_VERIFIED_NO_FLASH',r
+          assert r['historical_partition_count']==57,r
+          assert r['candidate']['source_bound_core_image_candidate'],r
+          assert r['candidate']['image_sha256']==built['image_sha256'],r
+          assert r['historical_mount_mapping']['/boot']!=r['historical_mount_mapping']['/recovery'],r
+          assert not r['safe_flash_authorized'] and not r['device_boot_qualified'],r
+          assert not r['physical_recovery_fallback_proven'],r
+          assert 'NO_VERIFIED_TWRP_RECOVERY_RESTORE_REHEARSAL' in r['blockers'],r
+          print('A14M_TWRP_SEPARATE_RECOVERY_SOURCE_GATE_PASS_NOT_FLASHABLE')
+          PY_TWRP_GATE
+          sha256sum dist/bridge/historical-recovery/* dist/bridge/twrp-first-boot-recovery-gate.json \
+            > dist/bridge/historical-recovery/evidence-sha256.txt
+
+      - name: Independently unpack and recreate complete boot image with pinned AOSP code
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=https://raw.githubusercontent.com/jbeich/platform_system_tools_mkbootimg/d2bb0af5ba6d3198a3e99529c97eda1be0b5a093
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/unpack_bootimg.py" -o dist/aosp-tools/unpack_bootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/mkbootimg.py" -o dist/aosp-tools/mkbootimg.py
+          curl --fail --location --silent --show-error --retry 3 --max-time 45 "$BASE/gki/generate_gki_certificate.py" -o dist/aosp-tools/gki/generate_gki_certificate.py
+          test "$(git hash-object dist/aosp-tools/unpack_bootimg.py)" = a3f1a508796b5af54216397b05637f1f5e692a3d
+          test "$(git hash-object dist/aosp-tools/mkbootimg.py)" = ec2958179691a434df917cd1b6f196edaa80e31d
+          test "$(git hash-object dist/aosp-tools/gki/generate_gki_certificate.py)" = 739c61b04a9dbd95cafa5196533e3a472c31f2d9
+          IMAGE=dist/bridge/a14m-core-lab.reference-v2.DO_NOT_FLASH.boot.img
+          python3 dist/aosp-tools/unpack_bootimg.py --boot_img "$IMAGE" --out dist/aosp-unpacked > dist/aosp-unpack-header.txt
+          cmp reference/kernel dist/aosp-unpacked/kernel
+          cmp reference/dtb.img dist/aosp-unpacked/dtb
+          cmp dist/core-input/primed-lab-initramfs.cpio.gz dist/aosp-unpacked/ramdisk
+          python3 dist/aosp-tools/mkbootimg.py \
+            --header_version 2 --pagesize 2048 \
+            --kernel dist/aosp-unpacked/kernel \
+            --ramdisk dist/aosp-unpacked/ramdisk \
+            --dtb dist/aosp-unpacked/dtb \
+            --base 0x40078000 --kernel_offset 0x8000 \
+            --ramdisk_offset 0x07c08000 --second_offset 0x00f00000 \
+            --tags_offset 0x0bc08000 --dtb_offset 0x07808000 \
+            --board SRPVJ12A002 \
+            --cmdline 'bootopt=64S3,32N2,64N2 loop.max_part=7' \
+            -o dist/aosp-rebuilt-core-lab.boot.img
+          cmp "$IMAGE" dist/aosp-rebuilt-core-lab.boot.img
+          sha256sum "$IMAGE" dist/aosp-rebuilt-core-lab.boot.img > dist/aosp-roundtrip-sha256.txt
+          echo AOSP_REAL_PRIME_CORE_A14M_HEADER_BYTE_IDENTICAL_SOURCE_ONLY
+
+      - name: Independently execute the SAME packaged Core initramfs under generic QEMU ARM64 Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEB="$RUNNER_TEMP/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb"
+          URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/l/linux-signed/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb
+          curl --fail --location --show-error --silent --retry 3 --max-time 180 "$URL" -o "$DEB"
+          echo "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292  $DEB" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/prime-qemu-kernel"
+          dpkg-deb --extract "$DEB" "$RUNNER_TEMP/prime-qemu-kernel"
+          gzip -dc "$RUNNER_TEMP/prime-qemu-kernel/boot/vmlinuz-6.8.0-31-generic" > "$RUNNER_TEMP/prime-generic-arm64-Image"
+          python3 - "$RUNNER_TEMP/prime-generic-arm64-Image" <<'PY_KERNEL'
+          import sys
+          from pathlib import Path
+          b=Path(sys.argv[1]).read_bytes()
+          assert b[56:60]==b'ARMd'
+          print('PINNED_GENERIC_QEMU_ARM64_IMAGE_VERIFIED')
+          PY_KERNEL
+          set +e
+          timeout --signal=KILL 55s qemu-system-aarch64 \
+            -machine virt -cpu cortex-a57 -m 768M \
+            -display none -serial stdio -monitor none -no-reboot -net none -nodefaults \
+            -kernel "$RUNNER_TEMP/prime-generic-arm64-Image" \
+            -initrd dist/core-input/primed-lab-initramfs.cpio.gz \
+            -append 'console=ttyAMA0 rdinit=/init loglevel=4' \
+            > dist/qemu/guest-uart.log 2> dist/qemu/qemu-stderr.log
+          CODE=$?
+          set -e
+          test "$CODE" -eq 124 -o "$CODE" -eq 137
+          CORE_WORKTREE="$RUNNER_TEMP/prime-mob1-reviewed"
+          python3 "$CORE_WORKTREE/mobile/first-light/verify_primed_guest.py" dist/qemu/guest-uart.log \
+            > dist/qemu/core-transport-receipt.json
+          python3 - <<'PY_GUEST'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('dist/qemu/core-transport-receipt.json').read_text())
+          assert d['transport_responded'] and not d['blockers'], d
+          assert d['capability_count']==7 and d['status']=='CORE_TRANSPORT_RESPONDED_UNQUALIFIED',d
+          assert not d['phone_qualified'] and not d['flash_authorization'] and not d['bootc_generation_bound'],d
+          print('SAME_A14M_USERSpace_PAYLOAD_REAL_CORE_EXECUTED_IN_GENERIC_QEMU_ONLY')
+          PY_GUEST
+          python3 mobile/tools/a14m_boot_observation.py \
+            --uart dist/qemu/guest-uart.log \
+            --output dist/qemu/a14m-early-board-observation.json
+          python3 - <<'PY_BOARD'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('dist/qemu/a14m-early-board-observation.json').read_text())
+          assert r['status']=='KERNEL_WITNESS_AND_REAL_CORE_MARKERS_OBSERVED_UNQUALIFIED',r
+          assert r['source_class']=='UNTRUSTED_UART_LOG_NOT_PHYSICAL_ATTESTATION',r
+          assert r['real_primed_transport_marker_observed'] is True,r
+          assert r['image_booted_on_samsung_proven'] is False,r
+          assert r['hardware_identity_qualified'] is False,r
+          assert r['device_flash_authorized'] is False,r
+          print('A14M_EARLY_BOARD_WITNESS_QEMU_ONLY',r['fields'])
+          PY_BOARD
+          sha256sum dist/qemu/* > dist/qemu/outputs-sha256.txt
+          echo A14M_CORE_TRANSPORT_GUEST_IS_NOT_A14M_HARDWARE
+
+      - name: Preserve source-only, non-installable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prime-a14m-source-core-bridge-NOT-FOR-FLASH-${{ github.sha }}
+          path: |
+            dist/bridge/
+            dist/core-input/core-bundle-receipt.json
+            dist/core-input/primed-lab-manifest.json
+            dist/core-input/primed-lab-initramfs.cpio.gz
+            dist/qemu/
+            dist/source-evidence/
+            dist/aosp-unpack-header.txt
+            dist/aosp-roundtrip-sha256.txt
+            dist/bridge-stage-stdout.json
+          if-no-files-found: warn
+          retention-days: 7
