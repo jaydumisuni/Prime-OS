@@ -234,7 +234,7 @@ pub fn vm_session_paths(
             .any(|byte| byte == b',' || byte.is_ascii_control())
             || value
                 .chars()
-                .any(|ch| matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{2060}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}'))
+                .any(|ch| matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{2060}'..='\u{2064}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}'))
     }) {
         return Err(WindowsVmError::InvalidPlan(
             "session root contains QEMU option delimiters",
@@ -462,7 +462,7 @@ pub fn create_runtime_proof_observation_from_envelope(
     if envelope.evidence.is_empty()
         || envelope.evidence.iter().all(u8::is_ascii_whitespace)
         || std::str::from_utf8(&envelope.evidence)
-            .is_ok_and(|text| text.chars().all(|ch| ch.is_whitespace() || matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}' | '\u{2061}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{e0100}'..='\u{e01ef}')))
+            .is_ok_and(|text| text.chars().all(|ch| ch.is_whitespace() || matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{e0100}'..='\u{e01ef}')))
     {
         return Err(WindowsVmError::InvalidPlan(
             "runtime proof evidence has no substantive bytes",
@@ -901,7 +901,7 @@ pub fn validate_guest_definition(
         || definition
             .base_image
             .chars()
-            .any(|ch| matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{2060}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}'))
+            .any(|ch| matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{2060}'..='\u{2064}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}'))
     {
         return Err(WindowsVmError::InvalidGuest(
             "base image path contains QEMU option delimiters",
