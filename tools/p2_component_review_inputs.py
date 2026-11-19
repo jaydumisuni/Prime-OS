@@ -72,6 +72,10 @@ def read_review_bytes(file: Path) -> bytes:
             opened = os.fstat(fd)
             if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
                 raise ReviewInputError(f"nonregular review input: {file}")
+            # Bound allocation before reading an attacker-replaced regular file.
+            # Review inputs are source/lock files, not arbitrary binary payloads.
+            if opened.st_size > 64 * 1024 * 1024:
+                raise ReviewInputError(f"oversized review input: {file}")
             # Read the validated inode, not a pathname that can be swapped
             # between the fstat and a second open.
             with os.fdopen(fd, "rb", closefd=False) as source:

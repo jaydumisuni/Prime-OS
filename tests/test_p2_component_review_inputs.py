@@ -2207,3 +2207,13 @@ def test_publication_read_never_uses_unbounded_path_read(tmp_path: Path, monkeyp
     monkeypatch.setattr(Path, "read_bytes", reject_unbounded_source_read)
     manifest = module.build_manifest(root, head)
     assert manifest["candidate_head"] == head
+
+
+def test_rejects_oversized_regular_review_input_before_read(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    file = root / module.INPUTS[-1]
+    # A sparse replacement must not allocate its declared size into memory.
+    with file.open("r+b") as handle:
+        handle.truncate(64 * 1024 * 1024 + 1)
+    with pytest.raises(module.ReviewInputError, match="oversized review input"):
+        module.read_review_bytes(file)
