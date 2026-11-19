@@ -924,7 +924,7 @@ pub fn validate_guest_definition(
             ));
         }
         let mode = parent.permissions().mode();
-        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && parent.uid() == 0) {
+        if !trusted_runtime_ancestor(parent.uid(), mode, worker_uid) {
             return Err(WindowsVmError::InvalidGuest(
                 "base image directory is untrusted",
             ));
