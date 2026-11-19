@@ -1154,6 +1154,25 @@ fn qemu_plan_rejects_oversized_usb_allowlist_before_qemu_launch() {
     }
 }
 
+#[test]
+fn qemu_plan_rejects_duplicate_usb_passthrough_identity() {
+    let dir = private_tempdir();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+    let error = build_qemu_plan(&VmPlanRequest {
+        qemu_binary: "/usr/bin/qemu-system-x86_64".into(),
+        overlay_image: overlay,
+        runtime_dir: runtime,
+        memory_mib: 2048,
+        vcpus: 2,
+        usb_nodes: vec!["/dev/bus/usb/001/018".into(), "/dev/bus/usb/001/018".into()],
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("duplicate"), "{error}");
+}
+
 fn vm_profile(backend: ExecutionBackend) -> ApplicationProfile {
     ApplicationProfile {
         schema: APPLICATION_PROFILE_SCHEMA.to_owned(),

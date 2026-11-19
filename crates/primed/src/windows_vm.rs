@@ -1341,7 +1341,14 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
         usb.push(parse_usb_node(node)?);
     }
     usb.sort_unstable();
-    usb.dedup();
+    // A repeated passthrough address is an ambiguous device admission request,
+    // not a second controller port. Reject it instead of silently narrowing
+    // the caller's declared allowlist.
+    if usb.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(WindowsVmError::InvalidPlan(
+            "USB passthrough allowlist contains duplicate device addresses",
+        ));
+    }
 
     let agent = request.runtime_dir.join("agent.sock");
     validate_agent_socket_path(&agent)?;
