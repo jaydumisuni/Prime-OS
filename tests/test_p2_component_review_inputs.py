@@ -2272,3 +2272,19 @@ def test_rejects_nonblob_committed_review_object_before_materialization(tmp_path
         module.build_manifest(root, head)
     assert any(args[:2] == ("cat-file", "-t") for args in observed)
     assert not any(args[0] == "show" for args in observed)
+
+
+def test_review_byte_reader_rejects_group_writable_source(tmp_path: Path) -> None:
+    source = tmp_path / "source-group-writable"
+    source.write_bytes(b"unchanged")
+    source.chmod(0o664)
+    with pytest.raises(module.ReviewInputError, match="unsafe review input permissions"):
+        module.read_review_bytes(source)
+
+
+def test_review_byte_reader_rejects_setgid_source(tmp_path: Path) -> None:
+    source = tmp_path / "source-setgid"
+    source.write_bytes(b"unchanged")
+    source.chmod(0o2644)
+    with pytest.raises(module.ReviewInputError, match="unsafe review input permissions"):
+        module.read_review_bytes(source)

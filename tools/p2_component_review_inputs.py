@@ -72,6 +72,8 @@ def read_review_bytes(file: Path) -> bytes:
             opened = os.fstat(fd)
             if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
                 raise ReviewInputError(f"nonregular review input: {file}")
+            if opened.st_uid not in (0, os.geteuid()) or opened.st_mode & (0o022 | 0o7000):
+                raise ReviewInputError(f"unsafe review input permissions: {file}")
             # Bound allocation before reading an attacker-replaced regular file.
             # Review inputs are source/lock files, not arbitrary binary payloads.
             if opened.st_size > 64 * 1024 * 1024:
