@@ -173,6 +173,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"review input has local changes: {relative}")
         # Bound committed-object allocation before git show materializes the blob.
         # A clean worktree does not prove its committed object is small.
+        blob_type = git(root, "cat-file", "-t", f"{head}:{relative}").strip()
+        if blob_type != b"blob":
+            raise ReviewInputError(f"non-blob committed review input: {relative}")
         blob_size_raw = git(root, "cat-file", "-s", f"{head}:{relative}").strip()
         if not blob_size_raw.isdigit() or int(blob_size_raw) > 64 * 1024 * 1024:
             raise ReviewInputError(f"oversized committed review input: {relative}")

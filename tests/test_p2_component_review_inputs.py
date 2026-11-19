@@ -2251,3 +2251,24 @@ def test_rejects_truncated_committed_blob_materialization(tmp_path: Path, monkey
     monkeypatch.setattr(module, "git", truncate_show)
     with pytest.raises(module.ReviewInputError, match="committed review input length mismatch"):
         module.build_manifest(root, head)
+
+
+def test_rejects_nonblob_committed_review_object_before_materialization(tmp_path: Path, monkeypatch) -> None:
+    """A tree or tag cannot masquerade as a committed source blob."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    observed = []
+
+    def guarded_git(repo: Path, *args: str) -> bytes:
+        observed.append(args)
+        if args[:2] == ("cat-file", "-t"):
+            return b"tree\n"
+        if args[0] == "show":
+            raise AssertionError("nonblob object was materialized")
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", guarded_git)
+    with pytest.raises(module.ReviewInputError, match="non-blob committed review input"):
+        module.build_manifest(root, head)
+    assert any(args[:2] == ("cat-file", "-t") for args in observed)
+    assert not any(args[0] == "show" for args in observed)
