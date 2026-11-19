@@ -158,92 +158,94 @@ def run_probe() -> dict[str, object]:
     prior_mask = os.umask(0o077)
     procs: list[subprocess.Popen[bytes]] = []
     streams = []
+    root = Path(tempfile.mkdtemp(prefix="ttg-w8-synthetic-host-", dir="/tmp"))
     try:
-        with tempfile.TemporaryDirectory(prefix="ttg-w8-synthetic-host-", dir="/tmp") as temp:
-            root = Path(temp)
-            sector = boot_sector(root)
-            one = prepare_session(root, "app-alpha", sector)
-            two = prepare_session(root, "app-beta", sector)
-            sessions = [one, two]
-            paths = [s["overlay"] for s in sessions] + [s["agent"] for s in sessions]
-            if len({str(path) for path in paths}) != len(paths):
-                raise RuntimeError("synthetic session state is not independent")
-            for session in sessions:
-                err = session["stderr"].open("wb")
-                streams.append(err)
-                proc = subprocess.Popen(arguments(qemu, session),
-                                        stdout=subprocess.DEVNULL,
-                                        stderr=err, start_new_session=True)
-                procs.append(proc)
-            started = time.monotonic()
-            ready = False
-            while time.monotonic() - started < TIMEOUT_SECONDS:
-                ready = all(
-                    p.poll() is None
-                    and s["serial"].exists()
-                    and MARKER in s["serial"].read_bytes()
-                    and s["agent"].exists()
-                    and stat.S_ISSOCK(s["agent"].stat().st_mode)
-                    for p, s in zip(procs, sessions)
-                )
-                if ready:
-                    break
-                if any(p.poll() is not None for p in procs):
-                    break
-                time.sleep(0.15)
-            if not ready:
-                raise RuntimeError("concurrent host synthetic guests did not boot")
-            if procs[0].pid == procs[1].pid:
-                raise RuntimeError("guest processes are not independent")
-            terminated_first = stop(procs[0], signal.SIGTERM)
-            other_survived = procs[1].poll() is None
-            if not other_survived:
-                raise RuntimeError("terminating app-alpha also killed app-beta")
-            terminated_second = stop(procs[1], signal.SIGKILL)
-            residual_before = [str(s["agent"]) for s in sessions if s["agent"].exists()]
-            # SIGKILL may leave a stale UNIX socket. This host harness is the
-            # cleanup owner and must not mistake process death for full cleanup.
-            for path in [s["agent"] for s in sessions]:
-                if path.exists():
-                    path.unlink()
-            for err in streams:
-                err.close()
-            streams.clear()
-            stopped = all(p.poll() is not None for p in procs)
-            sockets_cleared = all(not s["agent"].exists() for s in sessions)
-            if not (stopped and sockets_cleared):
-                raise RuntimeError("host harness left residual process or socket")
-            return {
-                "schema": "prime.w8.host-synthetic-runtime.v1",
-                "status": "HOST_SYNTHETIC_PASS_NOT_W8_RELEASE",
-                "qemu_path": qemu,
-                "qemu_sha256": sha256_file(Path(qemu)),
-                "boot_sector_sha256": sha256(sector),
-                "guest_type": "original x86 BIOS bootsector, not Windows",
-                "boot_markers": [MARKER in s["serial"].read_bytes() for s in sessions],
-                "serial_sha256": [sha256(s["serial"].read_bytes()) for s in sessions],
-                "independent_processes": procs[0].pid != procs[1].pid,
-                "distinct_application_storage": True,
-                "distinct_agent_sockets": True,
-                "other_session_survived_first_termination": other_survived,
-                "forced_second_termination": terminated_second,
-                "graceful_first_termination": terminated_first,
-                "stale_socket_paths_cleaned_by_harness": len(residual_before),
-                "managed_qemu_processes_stopped": stopped,
-                "agent_sockets_cleared_after_cleanup": sockets_cleared,
-                "host_networking": False,
-                "usb_passthrough": False,
-                "guest_agent_handoff_proven": False,
-                "windows_guest_execution_proven": False,
-                "release_authority": False,
-            }
+        sector = boot_sector(root)
+        one = prepare_session(root, "app-alpha", sector)
+        two = prepare_session(root, "app-beta", sector)
+        sessions = [one, two]
+        paths = [s["overlay"] for s in sessions] + [s["agent"] for s in sessions]
+        if len({str(path) for path in paths}) != len(paths):
+            raise RuntimeError("synthetic session state is not independent")
+        for session in sessions:
+            err = session["stderr"].open("wb")
+            streams.append(err)
+            proc = subprocess.Popen(arguments(qemu, session),
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=err, start_new_session=True)
+            procs.append(proc)
+        started = time.monotonic()
+        ready = False
+        while time.monotonic() - started < TIMEOUT_SECONDS:
+            ready = all(
+                p.poll() is None
+                and s["serial"].exists()
+                and MARKER in s["serial"].read_bytes()
+                and s["agent"].exists()
+                and stat.S_ISSOCK(s["agent"].stat().st_mode)
+                for p, s in zip(procs, sessions)
+            )
+            if ready:
+                break
+            if any(p.poll() is not None for p in procs):
+                break
+            time.sleep(0.15)
+        if not ready:
+            raise RuntimeError("concurrent host synthetic guests did not boot")
+        if procs[0].pid == procs[1].pid:
+            raise RuntimeError("guest processes are not independent")
+        terminated_first = stop(procs[0], signal.SIGTERM)
+        other_survived = procs[1].poll() is None
+        if not other_survived:
+            raise RuntimeError("terminating app-alpha also killed app-beta")
+        terminated_second = stop(procs[1], signal.SIGKILL)
+        residual_before = [str(s["agent"]) for s in sessions if s["agent"].exists()]
+        # SIGKILL may leave a stale UNIX socket. This host harness is the
+        # cleanup owner and must not mistake process death for full cleanup.
+        for path in [s["agent"] for s in sessions]:
+            if path.exists():
+                path.unlink()
+        for err in streams:
+            err.close()
+        streams.clear()
+        stopped = all(p.poll() is not None for p in procs)
+        sockets_cleared = all(not s["agent"].exists() for s in sessions)
+        if not (stopped and sockets_cleared):
+            raise RuntimeError("host harness left residual process or socket")
+        return {
+            "schema": "prime.w8.host-synthetic-runtime.v1",
+            "status": "HOST_SYNTHETIC_PASS_NOT_W8_RELEASE",
+            "qemu_path": qemu,
+            "qemu_sha256": sha256_file(Path(qemu)),
+            "boot_sector_sha256": sha256(sector),
+            "guest_type": "original x86 BIOS bootsector, not Windows",
+            "boot_markers": [MARKER in s["serial"].read_bytes() for s in sessions],
+            "serial_sha256": [sha256(s["serial"].read_bytes()) for s in sessions],
+            "independent_processes": procs[0].pid != procs[1].pid,
+            "distinct_application_storage": True,
+            "distinct_agent_sockets": True,
+            "other_session_survived_first_termination": other_survived,
+            "forced_second_termination": terminated_second,
+            "graceful_first_termination": terminated_first,
+            "stale_socket_paths_cleaned_by_harness": len(residual_before),
+            "managed_qemu_processes_stopped": stopped,
+            "agent_sockets_cleared_after_cleanup": sockets_cleared,
+            "host_networking": False,
+            "usb_passthrough": False,
+            "guest_agent_handoff_proven": False,
+            "windows_guest_execution_proven": False,
+            "release_authority": False,
+        }
     finally:
         for proc in procs:
             if proc.poll() is None:
                 stop(proc, signal.SIGKILL)
         for stream in streams:
             stream.close()
-        os.umask(prior_mask)
+        try:
+            shutil.rmtree(root)
+        finally:
+            os.umask(prior_mask)
 
 
 if __name__ == "__main__":
