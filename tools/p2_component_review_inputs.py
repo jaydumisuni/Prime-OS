@@ -171,6 +171,11 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
             raise ReviewInputError(f"noncanonical or missing review input: {relative}")
         if git(root, "status", "--porcelain", "--", relative).strip():
             raise ReviewInputError(f"review input has local changes: {relative}")
+        # Bound committed-object allocation before git show materializes the blob.
+        # A clean worktree does not prove its committed object is small.
+        blob_size_raw = git(root, "cat-file", "-s", f"{head}:{relative}").strip()
+        if not blob_size_raw.isdigit() or int(blob_size_raw) > 64 * 1024 * 1024:
+            raise ReviewInputError(f"oversized committed review input: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
         # Git may be configured with core.filemode=false, hiding executable-bit
         # drift from status. Bind the worktree mode to the committed tree.

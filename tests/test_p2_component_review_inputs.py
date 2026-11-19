@@ -2217,3 +2217,23 @@ def test_rejects_oversized_regular_review_input_before_read(tmp_path: Path, monk
         handle.truncate(64 * 1024 * 1024 + 1)
     with pytest.raises(module.ReviewInputError, match="oversized review input"):
         module.read_review_bytes(file)
+
+
+def test_rejects_oversized_committed_blob_before_git_show(tmp_path: Path, monkeypatch) -> None:
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    observed = []
+
+    def guarded_git(repo: Path, *args: str) -> bytes:
+        observed.append(args)
+        if args[:2] == ("cat-file", "-s"):
+            return str(64 * 1024 * 1024 + 1).encode() + b"\n"
+        if args[0] == "show":
+            raise AssertionError("oversized blob was materialized")
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(module, "git", guarded_git)
+    with pytest.raises(module.ReviewInputError, match="oversized committed review input"):
+        module.build_manifest(root, head)
+    assert any(args[:2] == ("cat-file", "-s") for args in observed)
+    assert not any(args[0] == "show" for args in observed)
