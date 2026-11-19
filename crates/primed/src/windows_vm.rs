@@ -1095,6 +1095,26 @@ pub fn build_qemu_plan(request: &VmPlanRequest) -> Result<QemuPlan, WindowsVmErr
             "QEMU executable has set-id permission bits",
         ));
     }
+    // Linux file capabilities can grant QEMU privileges without set-id mode bits.
+    // Inspect the already-open inode, not its pathname, to avoid a replacement race.
+    let capability_name = b"security.capability\0";
+    let capability_size = unsafe {
+        libc::fgetxattr(
+            std::os::fd::AsRawFd::as_raw_fd(&qemu_file),
+            capability_name.as_ptr().cast(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if capability_size >= 0 {
+        return Err(WindowsVmError::InvalidPlan(
+            "QEMU executable carries file capabilities",
+        ));
+    }
+    let capability_error = std::io::Error::last_os_error();
+    if capability_error.raw_os_error() != Some(libc::ENODATA) {
+        return Err(WindowsVmError::Io(capability_error));
+    }
     // A shared-writable QEMU executable is mutable by another local principal
     // after its path is canonicalized and before the VM process starts.
     if qemu_meta.permissions().mode() & 0o022 != 0 {
