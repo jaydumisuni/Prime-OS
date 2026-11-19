@@ -374,7 +374,9 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
                 or file.is_symlink() or file.resolve() != file):
             raise ReviewInputError(f"review input custody changed after publication HEAD: {entry['path']}")
         try:
-            content = file.read_bytes()
+            # Use the bounded descriptor reader even at the final publication
+            # boundary: a pathname swap to a FIFO must not hang the review.
+            content = read_review_bytes(file)
             after = file.lstat()
         except OSError as exc:
             raise ReviewInputError(

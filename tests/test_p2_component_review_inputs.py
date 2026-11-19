@@ -1434,7 +1434,7 @@ def test_missing_source_during_post_publication_read_is_controlled(
     """A source disappearing after lstat must fail as bounded review evidence."""
     root, head = sample_repo(tmp_path)
     source = root / module.INPUTS[0]
-    original_read = Path.read_bytes
+    original_read = module.read_review_bytes
     original_git = module.git
     head_queries = 0
 
@@ -1452,7 +1452,7 @@ def test_missing_source_during_post_publication_read_is_controlled(
         return original_read(file)
 
     monkeypatch.setattr(module, "git", count_head)
-    monkeypatch.setattr(Path, "read_bytes", vanish_during_read)
+    monkeypatch.setattr(module, "read_review_bytes", vanish_during_read)
     try:
         module.build_manifest(root, head)
     except module.ReviewInputError as error:
@@ -2191,3 +2191,19 @@ def test_review_byte_reader_rejects_fd_permission_drift(tmp_path: Path, monkeypa
     monkeypatch.setattr(module.os, "fstat", change_mode_after_first_stat)
     with pytest.raises(module.ReviewInputError, match="changed during read"):
         module.read_review_bytes(source)
+
+
+def test_publication_read_never_uses_unbounded_path_read(tmp_path: Path, monkeypatch) -> None:
+    """The last publication pass must retain nonblocking fd-bound source reads."""
+    root, head = sample_repo(tmp_path)
+    original_read = Path.read_bytes
+    sources = {root / relative for relative in module.INPUTS}
+
+    def reject_unbounded_source_read(path: Path) -> bytes:
+        if path in sources:
+            raise AssertionError("unbounded pathname read at publication")
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_unbounded_source_read)
+    manifest = module.build_manifest(root, head)
+    assert manifest["candidate_head"] == head
