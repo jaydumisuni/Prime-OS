@@ -177,6 +177,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
         if not blob_size_raw.isdigit() or int(blob_size_raw) > 64 * 1024 * 1024:
             raise ReviewInputError(f"oversized committed review input: {relative}")
         committed = git(root, "show", f"{head}:{relative}")
+        if len(committed) != int(blob_size_raw):
+            raise ReviewInputError(f"committed review input length mismatch: {relative}")
         # Git may be configured with core.filemode=false, hiding executable-bit
         # drift from status. Bind the worktree mode to the committed tree.
         tree_record = git(root, "ls-tree", head, "--", relative).decode().strip()

@@ -2237,3 +2237,17 @@ def test_rejects_oversized_committed_blob_before_git_show(tmp_path: Path, monkey
         module.build_manifest(root, head)
     assert any(args[:2] == ("cat-file", "-s") for args in observed)
     assert not any(args[0] == "show" for args in observed)
+
+
+def test_rejects_truncated_committed_blob_materialization(tmp_path: Path, monkeypatch) -> None:
+    """A successful Git show with incomplete bytes cannot certify exact-head inputs."""
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    def truncate_show(repo: Path, *args: str) -> bytes:
+        result = original_git(repo, *args)
+        if args[0] == "show" and args[1] == f"{head}:{module.INPUTS[0]}":
+            return result[:-1]
+        return result
+    monkeypatch.setattr(module, "git", truncate_show)
+    with pytest.raises(module.ReviewInputError, match="committed review input length mismatch"):
+        module.build_manifest(root, head)
