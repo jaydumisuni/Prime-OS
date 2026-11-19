@@ -782,6 +782,34 @@ fn qemu_plan_rejects_shared_writable_executable() {
 
 #[cfg(unix)]
 #[test]
+fn qemu_plan_rejects_setid_executable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = private_tempdir();
+    let qemu = dir.path().join("qemu-test-binary");
+    fs::write(&qemu, b"#!/bin/sh\n").unwrap();
+    let runtime = dir.path().join("runtime");
+    private_runtime_dir(&runtime);
+    let overlay = runtime.join("overlay.qcow2");
+    private_overlay(&overlay);
+
+    for unsafe_mode in [0o4700, 0o2700, 0o6700] {
+        fs::set_permissions(&qemu, fs::Permissions::from_mode(unsafe_mode)).unwrap();
+        let error = build_qemu_plan(&VmPlanRequest {
+            qemu_binary: qemu.clone(),
+            overlay_image: overlay.clone(),
+            runtime_dir: runtime.clone(),
+            memory_mib: 2048,
+            vcpus: 2,
+            usb_nodes: vec![],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("set-id"), "{error}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn qemu_plan_rejects_shared_writable_executable_directory() {
     use std::os::unix::fs::PermissionsExt;
 
