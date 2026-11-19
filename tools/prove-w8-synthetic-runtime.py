@@ -158,8 +158,9 @@ def run_probe() -> dict[str, object]:
     prior_mask = os.umask(0o077)
     procs: list[subprocess.Popen[bytes]] = []
     streams = []
-    root = Path(tempfile.mkdtemp(prefix="ttg-w8-synthetic-host-", dir="/tmp"))
+    root: Path | None = None
     try:
+        root = Path(tempfile.mkdtemp(prefix="ttg-w8-synthetic-host-", dir="/tmp"))
         sector = boot_sector(root)
         one = prepare_session(root, "app-alpha", sector)
         two = prepare_session(root, "app-beta", sector)
@@ -243,7 +244,8 @@ def run_probe() -> dict[str, object]:
         for stream in streams:
             stream.close()
         try:
-            shutil.rmtree(root)
+            if root is not None:
+                shutil.rmtree(root)
         finally:
             os.umask(prior_mask)
 
