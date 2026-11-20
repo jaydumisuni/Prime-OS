@@ -1,0 +1,58 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "shift": "A",
+  "project": "ptah",
+  "implementation_owner": "Prime-OS",
+  "frontier": "Ptah roadmap F04-F07 Prime OS-owned integration: F04 package manifest source-only preflight",
+  "observed_at_utc": "2026-10-31T20:07:25Z",
+  "canonical_authority": {
+    "cookpit_registry": "jaydumisuni/cookpit main:registry.json",
+    "registry_blob": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": "ptah",
+    "profile": "profiles/ptah.json",
+    "ptah_roadmap": "jaydumisuni/ptah-roadmap- main:IMPLEMENTATION_ROADMAP.md",
+    "roadmap_blob": "4c2b2a5346da0aa54bb962bffa69fe6bf6fe07cd",
+    "ptah_e06_e07": "DONE",
+    "prime_f04_f07": "PRIME_OS_OWNED",
+    "prime_main_before": "5c410644ad6fdadac19b5dc9d78a1951803e8b69"
+  },
+  "before_head": "5c410644ad6fdadac19b5dc9d78a1951803e8b69",
+  "source_after_head": "f655c401e4c2a72709bee587c085a994aab74867",
+  "project_pr": "https://github.com/jaydumisuni/Prime-OS/pull/157",
+  "worker": "Shift A authenticated GitHub cloud fallback; Oracle Live roster/terminal unavailable",
+  "action": "Implement non-authorizing Prime-owned F04 Ptah package manifest validator, negative/positive regression suite, contract proposal and focused PR workflow",
+  "movement": {
+    "state": "MATERIAL_SOURCE_PUBLISHED",
+    "files_changed": 4,
+    "head_advanced": true,
+    "independent_release_authority": false
+  },
+  "proof": {
+    "readback": "MATCH",
+    "source_blob": "bae367ea048dc0a4982b7ecd28748f91f9a56929",
+    "test_blob": "588e10adb219daa2bed71a096a11bfb2b8e5947a",
+    "contract_blob": "a7ac223e24d155c2dcd21edb09ccb6085dee271d",
+    "workflow_blob": "4373545bac9a48c596530aadf2cb5c322b622511",
+    "hosted_exact_head": "PENDING_NO_RUN_RETURNED",
+    "native_python": "UNVERIFIED",
+    "kratos_patrol": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_ATTEMPTED"
+  },
+  "health": {
+    "nodie_roster": "UNVERIFIED_ORACLE_INTERNAL_ERROR",
+    "supervisor_pool": "A current slot within grace; B HEALTHY; C HEALTHY; D HEALTHY (21:41 CAT within 21:36+8-minute grace); E HEALTHY; zero missed",
+    "kratos": "UNVERIFIED_ORACLE_ROSTER_FAILED",
+    "local_attention": "QUEUED_KRATOS_RECONCILIATION"
+  },
+  "dependency_linkage": {
+    "selected": "Ptah",
+    "upstream": "Ptah E06/E07 standalone and F01-F03 already complete",
+    "downstream": "Prime OS-owned F04-F07 package/image/rollback/desktop integration, acceptance not granted"
+  },
+  "disposition": "SOURCE_PUBLISHED_PROOF_PENDING",
+  "reconcile_on_kratos": "Recover exact Prime PR #157 and receipt; run Patrol/preflight on actual Prime-owned worktree; execute focused Python unittest; verify PR head and review; update Cookpit local attention/dispatches; do not rebind or promote protected controls without independent authorization",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false
+}
