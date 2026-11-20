@@ -147,13 +147,23 @@ def arguments(qemu: str, session: dict[str, Path]) -> list[str]:
     return argv
 
 
-def stop(proc: subprocess.Popen[bytes], requested_signal: int) -> int:
-    if proc.poll() is None:
+def signal_group_if_running(proc: subprocess.Popen[bytes], requested_signal: int) -> None:
+    """A guest may exit between poll and killpg; that is successful teardown."""
+    if proc.poll() is not None:
+        return
+    try:
         os.killpg(proc.pid, requested_signal)
+    except ProcessLookupError:
+        # The process group vanished after poll; wait still reaps the child.
+        pass
+
+
+def stop(proc: subprocess.Popen[bytes], requested_signal: int) -> int:
+    signal_group_if_running(proc, requested_signal)
     try:
         return proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        signal_group_if_running(proc, signal.SIGKILL)
         return proc.wait(timeout=3)
 
 
