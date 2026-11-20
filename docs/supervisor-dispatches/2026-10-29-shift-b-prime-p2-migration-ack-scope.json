@@ -1,0 +1,53 @@
+{
+  "schema": "ttg.supervisor.cloud-dispatch.v1",
+  "project": "origins-phase8b",
+  "project_owner_repository": "jaydumisuni/Prime-OS",
+  "frontier": "Prime P2 component/package persistent-data removal primitive: reject irrelevant migration acknowledgements",
+  "dependency_linkage": {
+    "blocked_project": "Origins Phase 8B direct release consumption",
+    "safe_upstream": "Prime OS P2 component/package lifecycle preparation",
+    "direct_consumption_authorized": false
+  },
+  "observed_at_utc": "2026-10-29T17:12:57Z",
+  "before": {
+    "branch": "supervisor/shift-e-p2-head-ref-epoch-20261027-1348",
+    "head": "3c79b5019497490b71b41ad53b9a41c414ed5f26",
+    "behavior": "nonmigrating RetainOnRemove and Ephemeral policies accepted true migration-completed claim"
+  },
+  "action": {
+    "transport": "authenticated GitHub cloud connector",
+    "project_owned_branch": "supervisor/shift-b-p2-migration-ack-scope-20261029-1912",
+    "worker": "bounded source-only branch update",
+    "files": [
+      "crates/primed/src/component_package.rs"
+    ],
+    "changes": "public primitive fail-closed guard plus two negative regression assertions",
+    "stolen_device_touched": false,
+    "oracle_production_touched": false
+  },
+  "after": {
+    "implementation_commit": "7ee9876bbea8010a94db1923931314fcf043840e",
+    "behavior": "irrelevant migration completion claims rejected with existing UnexpectedMigrationAcknowledgement; ordinary false acknowledgements preserved",
+    "draft_pr": "https://github.com/jaydumisuni/Prime-OS/pull/140"
+  },
+  "proof": {
+    "exact_source_readback": true,
+    "regression_assertions_present": 2,
+    "pr_head_matched_implementation_commit": true,
+    "patrol_preflight": "UNVERIFIED: Oracle Live terminal unavailable",
+    "native_tests": "UNVERIFIED",
+    "rustfmt": "UNVERIFIED",
+    "hosted_ci": "UNVERIFIED: no matching workflow runs",
+    "independent_review": "REQUESTED; pending",
+    "physical_proof": "NOT_CLAIMED"
+  },
+  "movement": {
+    "state": "MATERIAL_SOURCE_DELTA_PUBLISHED",
+    "health": "UNVERIFIED",
+    "not_a_proof_freshness_claim": true
+  },
+  "disposition": "SOURCE_PATCH_PUBLISHED_REVIEW_AND_NATIVE_PROOF_PENDING",
+  "local_receipt_reconciliation_required": "/home/kratos/.local/state/ttg-cookpit/supervisors/dispatches/ when KRATOS transport returns",
+  "protected_promotion": false,
+  "production_touched": false
+}
