@@ -84,7 +84,13 @@ def sha256_file(path: Path) -> str:
 
 def bounded_serial(path: Path) -> bytes:
     """Reject guest serial output exceeding the bounded host-proof envelope."""
-    with path.open("rb") as stream:
+    # QEMU owns this path while running. A substituted FIFO could otherwise
+    # block the proof worker indefinitely; a symlink could redirect its read.
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise RuntimeError("synthetic guest serial output is not a regular file")
         data = stream.read(MAX_SERIAL_BYTES + 1)
     if len(data) > MAX_SERIAL_BYTES:
         raise RuntimeError("synthetic guest serial output exceeded host-proof bound")

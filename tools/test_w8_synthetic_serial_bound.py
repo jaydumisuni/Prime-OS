@@ -25,6 +25,23 @@ class SerialBoundTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "exceeded host-proof bound"):
                 probe.bounded_serial(path)
 
+    def test_fifo_serial_path_fails_without_blocking(self):
+        import os
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "serial.log"
+            os.mkfifo(path)
+            with self.assertRaisesRegex(RuntimeError, "not a regular file"):
+                probe.bounded_serial(path)
+
+    def test_symlink_serial_path_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "outside.log"
+            target.write_bytes(probe.MARKER)
+            path = Path(root) / "serial.log"
+            path.symlink_to(target)
+            with self.assertRaises(OSError):
+                probe.bounded_serial(path)
+
     def test_exact_bound_is_allowed(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "serial.log"
