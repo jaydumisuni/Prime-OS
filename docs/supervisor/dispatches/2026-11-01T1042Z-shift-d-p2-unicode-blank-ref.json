@@ -1,0 +1,61 @@
+{
+  "after": {
+    "candidate_branch": "supervisor/shift-d-p2-blank-ref-20261101-1236",
+    "pr": 178,
+    "source_commit": "801af64a9ce05954f89b51af68bf56f250d280cb",
+    "state": "Reject five demonstrated Unicode blank aliases, preserve ASCII worktree spaces"
+  },
+  "before": {
+    "head": "e4a0fc06a6e0ed2ae0ee7e5180071f8c9a16236d",
+    "pr": 177,
+    "state": "Git-valid Unicode blank refnames admitted by review manifest"
+  },
+  "canonical_registry": {
+    "enabled_project": true,
+    "oracle_phase27_prep_enabled": false,
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "repository": "jaydumisuni/cookpit"
+  },
+  "dependency_linkage": {
+    "blocked_milestone": "pinned-release consumption",
+    "blocked_project": "Origins Phase 8B",
+    "boundary": "FAIL_CLOSED",
+    "safe_upstream": "Prime P2 component/package review-input custody"
+  },
+  "disposition": "MATERIAL_SOURCE_PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+  "engineering_health": {
+    "proof_is_not_implementation_movement": true,
+    "state": "NATIVE_107_PASS_REVIEW_PENDING"
+  },
+  "frontier": "Prime P2 Git-valid Unicode blank refname identity refusal before review-input admission",
+  "implementation_movement": {
+    "after_source_head": "801af64a9ce05954f89b51af68bf56f250d280cb",
+    "before_head": "e4a0fc06a6e0ed2ae0ee7e5180071f8c9a16236d",
+    "state": "MATERIAL_SOURCE_HEAD_ADVANCED",
+    "time_utc": "2026-11-01T10:41:35Z"
+  },
+  "observed_at_utc": "2026-11-01T10:42:06Z",
+  "project": "origins-phase8b",
+  "proof": {
+    "git_diff_check": "PASS",
+    "hosted_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "native_focused_pytest": "107/107 PASS",
+    "patrol": "check exit 0 with DISPLAY=:0; explicit ALLOW text unobserved",
+    "physical": "NOT_PROVEN",
+    "real_git_before": "5/5 Git-valid blank aliases ADMITTED",
+    "test_first": "RED, DID NOT RAISE"
+  },
+  "protected": {
+    "oracle_runtime_touched": false,
+    "production_touched": false,
+    "protected_merge": false,
+    "stolen_device_touched": false,
+    "supervisor_schedules_changed": false
+  },
+  "schema": "ttg.cookpit.supervisor.project-dispatch.v1",
+  "shift": "D",
+  "upstream_project": "Prime-OS",
+  "worker_action": "Shift D bounded local Prime project worktree source/test patch, exact predecessor PR177, nonforce push"
+}

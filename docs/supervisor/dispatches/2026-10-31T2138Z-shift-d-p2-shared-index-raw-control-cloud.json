@@ -1,0 +1,66 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "D",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-10-31T21:38:54Z",
+  "frontier": "Prime P2 review-input raw Git shared-index absence custody and LF regression repair",
+  "dependency_linkage": {
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "upstream": "Prime P2 component/package review-input authority",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "enabled_project": true,
+    "project_profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 156,
+    "head": "5585c6f49b98da2cadaed1fbca4ac1263266d009",
+    "defects": [
+      "whitespace-only nonempty --shared-index-path stdout normalized to absent by bytes.strip",
+      "existing index-path regression used literal backslash-n byte fixtures"
+    ]
+  },
+  "worker_action": "Cookpit Shift D cloud source-only GitHub exact-parent implementation; no KRATOS local worker resumed",
+  "after": {
+    "implementation_head": "5de76e126e8ae4482c2de618c118e15aa7a981e5",
+    "implementation_tree": "35d4bf267f83924abc4c89fdac18e8609a09830d",
+    "branch": "supervisor/shift-d-p2-shared-index-raw-framing-20261031-2336",
+    "pr": 161,
+    "files": [
+      "tools/p2_component_review_inputs.py",
+      "tests/test_p2_component_review_inputs.py"
+    ],
+    "additions": 31,
+    "deletions": 5
+  },
+  "proof": {
+    "disposable_git_no_split_index_stdout": "zero bytes",
+    "disposable_git_split_index_stdout": "nonempty path with LF",
+    "predecessor_whitespace_bypass": "5/5 reproduced",
+    "corrected_raw_predicate": "5/5 rejected",
+    "existing_index_fixture_escapes_repaired": 5,
+    "github_compare": "1 ahead, 0 behind",
+    "github_source_blob": "8ce3431dad5658ee0e5b500e59678f78fa3533d3",
+    "github_test_blob": "f9eeda9f4c3cc57670a2f5fcabc017192b4d5bf0",
+    "github_exact_head_readback": "MATCH",
+    "patrol": "UNVERIFIED — Oracle Live terminal internal error",
+    "native_prime_pytest": "UNVERIFIED",
+    "hosted_exact_head_ci": "PENDING",
+    "independent_review": "PENDING",
+    "physical_release": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_SOURCE_HEAD_ADVANCED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_PENDING_LOCAL_RECONCILIATION",
+  "local_attention_reconciliation": "QUEUED — on KRATOS return reconcile cloud source and receipt with project-owned worktree; run Patrol and native focused pytest, then write local dispatch/attention without duplicate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}

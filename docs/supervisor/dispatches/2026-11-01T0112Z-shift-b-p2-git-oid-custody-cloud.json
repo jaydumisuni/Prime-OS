@@ -1,0 +1,55 @@
+{
+  "schema": "ttg.cookpit.supervisor.cloud-dispatch.v1",
+  "shift": "B",
+  "project": "origins-phase8b",
+  "upstream_project": "Prime-OS",
+  "observed_at_utc": "2026-11-01T01:12:33.903Z",
+  "material_movement_at_utc": "2026-11-01T01:12:00Z",
+  "frontier": "Prime P2 committed Git OID control framing and exact tree/index blob identity",
+  "dependency_linkage": {
+    "upstream": "Prime P2 component/package review-input authority",
+    "downstream": "Origins Phase 8B pinned-release consumption",
+    "direct_consumption": "FAIL_CLOSED"
+  },
+  "canonical_registry": {
+    "repository": "jaydumisuni/cookpit",
+    "ref": "main",
+    "registry_blob_sha": "b3d88fe65be9b5514b46d1b8d028c844bc4b78eb",
+    "enabled_project": true,
+    "profile": "profiles/origins-phase8b.json",
+    "oracle_phase27_prep_enabled": false
+  },
+  "before": {
+    "repository": "jaydumisuni/Prime-OS",
+    "pr": 163,
+    "head": "a90f30120b6f8d42b0d698019878e98c0c393a3d",
+    "state": "HEAD/blob rev-parse control outputs normalized through decode(strip()); manifest blob ID not checked against tree/index identity"
+  },
+  "worker_action": "Shift B authenticated GitHub cloud source-only fallback; no local KRATOS worker or Patrol claim",
+  "after": {
+    "source_commit": "33479a6d88f3d8b6552d357d27dd86cc6c12239e",
+    "test_commit": "a446822f9712576aa95f53f747879d106a4dcaa1",
+    "branch": "supervisor/shift-b-p2-git-oid-custody-20261101-0312",
+    "pr": 166,
+    "state": "Canonical SHA-1 LF Git OID records, blob/tree-index identity match, three regression tests; Prime P2 unadmitted"
+  },
+  "proof": {
+    "github_source_blob": "b10420fa139f51288f3d2a652c3941a91e74e594",
+    "github_test_blob": "6863613dbd0767aa517e94dac23bc8dd8e342cf0",
+    "github_compare": "2 commits ahead, 0 behind",
+    "isolated_disposable_git": "Git rev-parse HEAD/blob output 40 lowercase hex plus LF; ls-tree blob equals rev-parse blob; six malformed control records rejected; well-framed forged OID disagrees with tree",
+    "project_native_pytest": "UNVERIFIED",
+    "patrol": "UNVERIFIED_ORACLE_TERMINAL_INTERNAL_ERROR",
+    "hosted_ci": "UNVERIFIED",
+    "independent_review": "PENDING",
+    "physical": "NOT_PROVEN"
+  },
+  "engineering_health": "SOURCE_CUSTODY_VERIFIED_NATIVE_UNVERIFIED",
+  "implementation_movement": "MATERIAL_PROJECT_SOURCE_COMMITS_PUBLISHED",
+  "disposition": "SOURCE_PUBLISHED_DRAFT_REVIEW_PENDING_LOCAL_RECONCILIATION",
+  "local_attention_reconciliation": "QUEUED_KRATOS_TRANSPORT_UNAVAILABLE; reconcile branch and project receipt, run Patrol and focused native pytest, write local dispatch without duplicate PASS",
+  "production_touched": false,
+  "stolen_device_touched": false,
+  "supervisor_schedules_changed": false,
+  "protected_promotion": false
+}
