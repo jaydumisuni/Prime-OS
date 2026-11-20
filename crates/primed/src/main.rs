@@ -25,8 +25,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let identity_path = state_dir.join("identity/host.json");
     let mut host = identity::load_or_create(&identity_path)?;
-    let generation =
-        generation::load_or_bind(&generation_seed_file, &bootc, &state_dir, &host.host_arch)?;
+    let generation = {
+        #[cfg(feature = "mob1-guest-lab")]
+        {
+            if env::var("PRIME_MOB1_LAB").as_deref() == Ok("UNQUALIFIED") {
+                let requested = env::var("PRIME_MOB1_LAB_INPUT_DIGEST")?;
+                primed::mob1_lab::unqualified_generation(
+                    &state_dir, &requested, &identity::now_rfc3339()?
+                )?
+            } else {
+                generation::load_or_bind(&generation_seed_file, &bootc, &state_dir, &host.host_arch)?
+            }
+        }
+        #[cfg(not(feature = "mob1-guest-lab"))]
+        {
+            generation::load_or_bind(&generation_seed_file, &bootc, &state_dir, &host.host_arch)?
+        }
+    };
     let observed_at = identity::now_rfc3339()?;
     let probe = prime_hardware::probe(Path::new("/"), &host.host_arch)?;
     host = identity::reconcile_fingerprint(&identity_path, host, &probe.fingerprint, &observed_at)?;

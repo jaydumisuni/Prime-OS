@@ -1,0 +1,187 @@
+# Generic ARM64 Linux /init First Light proof. Does not qualify a Samsung phone or Prime Core.
+name: Mobile MOB-1 ARM64 Linux system boot candidate
+on:
+  push:
+    branches:
+      - work/mobile-mob1-arm64-initramfs-20261115
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-mob1-system-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-first-light:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Check out isolated MOB-1 candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install official Ubuntu emulator and compiler in temporary runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang lld qemu-system-arm
+          qemu-system-aarch64 --version
+          clang --version | head -n 1
+          git rev-parse HEAD
+
+      - name: Run host tests and build actual AArch64 early-init
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s mobile/first-light/tests -q
+          mkdir -p dist
+          python3 mobile/first-light/build.py --out "$RUNNER_TEMP/mob1-build" > dist/build-stdout.json
+          file "$RUNNER_TEMP/mob1-build/init-aarch64"
+          readelf -h "$RUNNER_TEMP/mob1-build/init-aarch64" | tee dist/elf-header.txt
+          readelf -h "$RUNNER_TEMP/mob1-build/init-aarch64" | grep -q 'Machine:.*AArch64'
+          cp "$RUNNER_TEMP/mob1-build/build-receipt.json" dist/
+
+      - name: Acquire exact Ubuntu arm64 Linux Image package and verify published SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL_DEB="$RUNNER_TEMP/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb"
+          KERNEL_URL="https://ports.ubuntu.com/ubuntu-ports/pool/main/l/linux-signed/linux-image-6.8.0-31-generic_6.8.0-31.31_arm64.deb"
+          curl --fail --show-error --silent --location --retry 2 --connect-timeout 15 --max-time 180 "$KERNEL_URL" -o "$KERNEL_DEB"
+          echo "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292  $KERNEL_DEB" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ubuntu-arm64-kernel"
+          dpkg-deb --extract "$KERNEL_DEB" "$RUNNER_TEMP/ubuntu-arm64-kernel"
+          PACKAGED_KERNEL="$RUNNER_TEMP/ubuntu-arm64-kernel/boot/vmlinuz-6.8.0-31-generic"
+          KERNEL="$RUNNER_TEMP/ubuntu-arm64-Image"
+          test -s "$PACKAGED_KERNEL"
+          file "$PACKAGED_KERNEL"
+          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[:2]==bytes.fromhex("1f8b"), "Verified Ubuntu package unexpectedly changed compressed-kernel format"' "$PACKAGED_KERNEL"
+          gzip -dc "$PACKAGED_KERNEL" > "$KERNEL"
+          test -s "$KERNEL"
+          file "$KERNEL"
+          python3 -c 'from pathlib import Path; import sys; b=Path(sys.argv[1]).read_bytes(); assert b[56:60]==bytes.fromhex("41524d64"), "Decompressed kernel is not a raw ARM64 Linux Image"' "$KERNEL"
+          sha256sum "$KERNEL_DEB" "$PACKAGED_KERNEL" "$KERNEL" | tee dist/kernel-sha256.txt
+          printf '%s\n' "$KERNEL" > "$RUNNER_TEMP/mob1-kernel-path.txt"
+
+      - name: Execute Linux kernel and real AArch64 PID1 in QEMU system-mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          QEMU="$(command -v qemu-system-aarch64)"
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          INITRD="$RUNNER_TEMP/mob1-build/initramfs.cpio.gz"
+          QEMU_SHA="$(sha256sum "$QEMU" | cut -d' ' -f1)"
+          KERNEL_SHA="$(sha256sum "$KERNEL" | cut -d' ' -f1)"
+          INITRD_SHA="$(sha256sum "$INITRD" | cut -d' ' -f1)"
+          "$QEMU" --version | head -n 1 | tee dist/qemu-version.txt
+          sha256sum "$QEMU" "$KERNEL" "$INITRD" | tee dist/guest-input-sha256.txt
+          python3 mobile/first-light/run_qemu_guest.py \
+            --qemu "$QEMU" --qemu-sha256 "$QEMU_SHA" \
+            --kernel "$KERNEL" --kernel-sha256 "$KERNEL_SHA" \
+            --initramfs "$INITRD" --initramfs-sha256 "$INITRD_SHA" \
+            --output dist/guest --timeout 50 --run > dist/guest-launch-return.json
+          python3 -c 'import json,pathlib; r=json.loads(pathlib.Path("dist/guest/guest-receipt.json").read_text()); v=r["guest_verdict"]; print("GUEST_STATUS",r["status"]); print("GUEST_BLOCKERS",v["blockers"]); assert r["launched_process"]; assert r["host_timed_out"]; assert v["candidate_init_observed"] and not v["blockers"],r; assert r["status"]=="GUEST_EARLY_INIT_OBSERVED_ONLY"; assert v["observations"]["pid1"]=="true"; assert v["observations"]["kernel_machine"]=="aarch64"; assert not r["prime_core_ready"] and not r["physical_phone_qualified"]; assert b"Kernel panic" not in pathlib.Path("dist/guest/guest-uart.log").read_bytes()'
+          sha256sum dist/guest/* | tee dist/guest-output-sha256.txt
+          echo MOB1_REAL_ARM64_LINUX_GUEST_PID1_OBSERVED
+
+      - name: Cross-build real Prime Rust Core for AArch64 (not launched)
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euo pipefail
+          rustc --version | tee dist/rustc-version.txt
+          cargo --version
+          cargo test --locked -p primed --lib -- --nocapture
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          test -f /usr/aarch64-linux-gnu/lib/Scrt1.o
+          cargo check --locked -p primed --target aarch64-unknown-linux-gnu
+          cargo build --locked --release -p primed --target aarch64-unknown-linux-gnu
+          CORE=target/aarch64-unknown-linux-gnu/release/primed
+          test -s "$CORE"
+          file "$CORE" | tee dist/primed-elf-file.txt
+          readelf -h "$CORE" | tee dist/primed-elf-header.txt
+          readelf -h "$CORE" | grep -q 'Machine:.*AArch64'
+          cp "$CORE" dist/primed-aarch64-candidate
+          sha256sum dist/primed-aarch64-candidate | tee dist/primed-aarch64-sha256.txt
+          echo PRIMED_AARCH64_CROSS_LINK_ONLY_NOT_GUEST_EXECUTED
+
+      - name: Execute actual primed Core server in ARM64 guest (unqualified LAB mode)
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euo pipefail
+          mkdir -p dist/core
+          cargo test --locked -p primed --lib --features mob1-guest-lab
+          cargo build --locked --release -p primed --target aarch64-unknown-linux-gnu --features mob1-guest-lab
+          CORE=target/aarch64-unknown-linux-gnu/release/primed
+          readelf -h "$CORE" | grep -q 'Machine:.*AArch64'
+          clang -target aarch64-linux-gnu -fuse-ld=lld -nostdlib -static -ffreestanding \
+            -fno-stack-protector -fno-builtin -Wall -Wextra -Werror -Wl,-e,_start -Wl,--build-id=none \
+            mobile/first-light/primed_guest_init.c -o dist/core/guest-init-aarch64
+          python3 mobile/first-light/build_primed_guest.py \
+            --core "$CORE" --init dist/core/guest-init-aarch64 \
+            --libroot /usr/aarch64-linux-gnu/lib --out dist/core \
+            > dist/core/build-log.json
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          QEMU="$(command -v qemu-system-aarch64)"
+          sha256sum "$CORE" "$KERNEL" "$QEMU" dist/core/primed-lab-initramfs.cpio.gz \
+            | tee dist/core/input-sha256.txt
+          set +e
+          timeout --signal=KILL 55s "$QEMU" -machine virt -cpu cortex-a57 \
+            -m 768M -display none -serial stdio -monitor none -no-reboot -net none -nodefaults \
+            -kernel "$KERNEL" -initrd dist/core/primed-lab-initramfs.cpio.gz \
+            -append 'console=ttyAMA0 rdinit=/init loglevel=4' \
+            > dist/core/guest-uart.log 2> dist/core/qemu-stderr.log
+          result=$?
+          set -e
+          echo "QEMU_EXIT_CODE=$result"
+          test "$result" -eq 137 -o "$result" -eq 124
+          python3 mobile/first-light/verify_primed_guest.py dist/core/guest-uart.log \
+            > dist/core/core-transport-receipt.json
+          python3 -c 'import json,pathlib; p=pathlib.Path("dist/core/core-transport-receipt.json"); r=json.loads(p.read_text()); print("CORE_TRANSPORT",r["status"],"blockers",r["blockers"],"descriptors",r["capability_count"]); assert r["transport_responded"],r; assert not r["bootc_generation_bound"] and not r["core_deployment_accepted"]; assert r["capability_count"]>=1'
+          sha256sum dist/core/guest-uart.log dist/core/core-transport-receipt.json dist/core/qemu-stderr.log \
+            | tee dist/core/output-sha256.txt
+          echo PRIME_MOB1_ACTUAL_PRIMED_TRANSPORT_LAB_UNQUALIFIED_OBSERVED
+
+      - name: Package a portable ARM64 QEMU ZIP, then boot-test its extracted contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL="$(cat "$RUNNER_TEMP/mob1-kernel-path.txt")"
+          INITRD="dist/core/primed-lab-initramfs.cpio.gz"
+          KIT_ZIP="dist/prime-mobile-arm64-qemu-lab.zip"
+          python3 mobile/first-light/package_qemu_bootkit.py \
+            --kernel "$KERNEL" --initrd "$INITRD" \
+            --verifier mobile/first-light/verify_primed_guest.py \
+            --output "$KIT_ZIP" --commit "$GITHUB_SHA" \
+            --kernel-package-sha256 "7d0168a6ea0ebc7263fed3cce3dc45153ddd4e0e4a4b2737f74f0bd72cbaa292" \
+            > dist/qemu-zip-package-receipt.json
+          python3 -m zipfile -t "$KIT_ZIP"
+          sha256sum "$KIT_ZIP" | tee dist/qemu-zip-sha256.txt
+          EXTRACT="$RUNNER_TEMP/mob1-extracted-qemu-zip"
+          mkdir -p "$EXTRACT"
+          unzip -q "$KIT_ZIP" -d "$EXTRACT"
+          BUNDLE="$EXTRACT/prime-mobile-arm64-qemu-lab"
+          test -f "$BUNDLE/arm64-linux-Image"
+          test -f "$BUNDLE/prime-core-lab-initramfs.cpio.gz"
+          test -f "$BUNDLE/run-qemu.sh"
+          mkdir -p dist/qemu-zip-replay
+          bash "$BUNDLE/run-qemu.sh" "$PWD/dist/qemu-zip-replay" \
+            | tee dist/qemu-zip-replay.log
+          python3 -c 'import json,pathlib; r=json.loads(pathlib.Path("dist/qemu-zip-replay/core-transport-receipt.json").read_text()); assert r["status"]=="CORE_TRANSPORT_RESPONDED_UNQUALIFIED",r; assert r["blockers"]==[] and r["capability_count"]==7,r; assert not r["bootc_generation_bound"] and not r["flash_authorization"]; print("ZIP_BOOTED_ACTUAL_ARM64_LINUX_AND_PRIMED_SOCKET")'
+          echo "PRIME_MOBILE_ARM64_QEMU_ZIP_REPLAY_PASS"
+
+      - name: Preserve bounded evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mob1-system-arm64-first-light-${{ github.sha }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 7

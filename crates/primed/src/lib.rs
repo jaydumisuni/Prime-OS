@@ -3,6 +3,8 @@ pub mod generation;
 pub mod hardware;
 pub mod identity;
 pub mod launcher;
+#[cfg(feature = "mob1-guest-lab")]
+pub mod mob1_lab;
 pub mod p1_health;
 pub mod policy;
 pub mod power;
