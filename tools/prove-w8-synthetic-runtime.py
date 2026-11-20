@@ -63,6 +63,7 @@ message:
 .word 0xaa55
 """
 TIMEOUT_SECONDS = 12
+MAX_SERIAL_BYTES = 1024 * 1024
 
 
 def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -79,6 +80,15 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def bounded_serial(path: Path) -> bytes:
+    """Reject guest serial output exceeding the bounded host-proof envelope."""
+    with path.open("rb") as stream:
+        data = stream.read(MAX_SERIAL_BYTES + 1)
+    if len(data) > MAX_SERIAL_BYTES:
+        raise RuntimeError("synthetic guest serial output exceeded host-proof bound")
+    return data
 
 
 def boot_sector(directory: Path) -> bytes:
@@ -181,7 +191,7 @@ def run_probe() -> dict[str, object]:
             ready = all(
                 p.poll() is None
                 and s["serial"].exists()
-                and MARKER in s["serial"].read_bytes()
+                and MARKER in bounded_serial(s["serial"])
                 and s["agent"].exists()
                 and stat.S_ISSOCK(s["agent"].stat().st_mode)
                 for p, s in zip(procs, sessions)
@@ -220,8 +230,8 @@ def run_probe() -> dict[str, object]:
             "qemu_sha256": sha256_file(Path(qemu)),
             "boot_sector_sha256": sha256(sector),
             "guest_type": "original x86 BIOS bootsector, not Windows",
-            "boot_markers": [MARKER in s["serial"].read_bytes() for s in sessions],
-            "serial_sha256": [sha256(s["serial"].read_bytes()) for s in sessions],
+            "boot_markers": [MARKER in bounded_serial(s["serial"]) for s in sessions],
+            "serial_sha256": [sha256(bounded_serial(s["serial"])) for s in sessions],
             "independent_processes": procs[0].pid != procs[1].pid,
             "distinct_application_storage": True,
             "distinct_agent_sockets": True,
