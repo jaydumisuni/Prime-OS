@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Prime</string>
+    <string name="search_apps">Search installed apps</string>
+    <string name="all_apps">Apps</string>
+</resources>

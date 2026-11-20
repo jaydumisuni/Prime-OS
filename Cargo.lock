@@ -842,6 +842,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "prime-mobile-core-android"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "prime-contracts",
+ "prime-hardware",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "prime-shell"
 version = "0.1.0"
 dependencies = [

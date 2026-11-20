@@ -1,0 +1,14 @@
+// Prime Mobile native HOME UI compiled inside an AOSP product build.
+// Ordinary SDK app: no privileged permissions, mandatory AI or systemd.
+android_app {
+    name: "PrimeMobileShell",
+    srcs: ["android/app/src/main/java/**/*.java"],
+    resource_dirs: ["android/app/src/main/res"],
+    manifest: "android/app/src/main/AndroidManifest.xml",
+    sdk_version: "current",
+    min_sdk_version: "31",
+    product_specific: true,
+    optimize: {
+        enabled: false,
+    },
+}
