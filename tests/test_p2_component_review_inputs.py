@@ -2323,3 +2323,24 @@ def test_rejects_symlinked_git_metadata_before_git_invocation(tmp_path: Path, mo
     monkeypatch.setattr(module, "git", forbidden_git)
     with pytest.raises(module.ReviewInputError, match="noncanonical Git metadata entry"):
         module.build_manifest(root, head)
+
+def test_rejects_late_git_metadata_indirection(tmp_path: Path, monkeypatch) -> None:
+    """A metadata swap after Git's earlier probes cannot certify review evidence."""
+    root, head = sample_repo(tmp_path)
+    original = module.require_git_metadata_entry
+    calls = 0
+
+    def swap_at_final_check(repo: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            metadata = repo / ".git"
+            relocated = repo / "git-metadata-original"
+            metadata.rename(relocated)
+            metadata.symlink_to(relocated, target_is_directory=True)
+        original(repo)
+
+    monkeypatch.setattr(module, "require_git_metadata_entry", swap_at_final_check)
+    with pytest.raises(module.ReviewInputError, match="noncanonical Git metadata entry"):
+        module.build_manifest(root, head)
+    assert calls == 2

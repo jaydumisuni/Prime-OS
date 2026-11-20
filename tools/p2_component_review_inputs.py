@@ -470,6 +470,8 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     final_root = root.lstat()
     if (initial_root.st_dev, initial_root.st_ino) != (final_root.st_dev, final_root.st_ino):
         raise ReviewInputError("review workspace root changed during inspection")
+    # A late .git indirection swap must not survive final source/index custody.
+    require_git_metadata_entry(root)
     return {
         "schema": "prime.p2.component-review-inputs.v1",
         "candidate_head": head,
