@@ -1,0 +1,119 @@
+# Candidate-only compilation verification for Prime Mobile PHI ARM64.
+# Scoped to this review branch; no deployment, elevated access or KRATOS runner.
+name: PHI ARM64 candidate Rust proof
+on:
+  push:
+    branches:
+      - work/phi-arm64-board-discovery-20261115
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phi-arm64-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: 1
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - name: Check out the exact candidate commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record exact Rust compiler and source head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          rustc --version
+          cargo --version
+      - name: Test Prime hardware library and observation collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p prime-hardware --all-targets -- --nocapture
+      - name: Cross-check ARM64 Rust compile without device access
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-gnu
+          cargo check --locked -p prime-hardware --all-targets --target aarch64-unknown-linux-gnu
+      - name: Link real ARM64 collector binary on isolated runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GCC alone may omit ARM64 glibc startup objects on ubuntu-24.04.
+          # Check both the compiler and the cross sysroot before linking.
+          if ! command -v aarch64-linux-gnu-gcc >/dev/null || ! test -f /usr/aarch64-linux-gnu/lib/Scrt1.o; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          fi
+          test -f /usr/aarch64-linux-gnu/lib/Scrt1.o
+          test -f /usr/aarch64-linux-gnu/lib/crti.o
+          aarch64-linux-gnu-gcc --version | head -n 1
+          cargo build --locked --release -p prime-hardware --bin prime-phi-arm64-observe --target aarch64-unknown-linux-gnu
+          BIN=target/aarch64-unknown-linux-gnu/release/prime-phi-arm64-observe
+          test -s "$BIN"
+          file "$BIN"
+          readelf -h "$BIN" | grep -E 'Class:|Machine:|Entry point'
+          readelf -h "$BIN" | grep -q 'Machine:.*AArch64'
+          mkdir -p dist
+          cp "$BIN" dist/
+          sha256sum dist/prime-phi-arm64-observe | tee dist/SHA256SUMS.txt
+      - name: Execute AArch64 collector in QEMU user-mode with synthetic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends qemu-user
+          qemu-aarch64 --version | head -n 1 | tee dist/qemu-user-version.txt
+          BIN=target/aarch64-unknown-linux-gnu/release/prime-phi-arm64-observe
+          timeout 25s qemu-aarch64 -L /usr/aarch64-linux-gnu "$BIN" --help > dist/qemu-user-help.txt
+          grep -F 'prime-phi-arm64-observe --fixture-root' dist/qemu-user-help.txt
+          FIXTURE=$(mktemp -d -t prime-phi-qemu-XXXXXX)
+          trap 'rm -rf "$FIXTURE"' EXIT
+          mkdir -p "$FIXTURE"/proc/device-tree "$FIXTURE"/proc/sys/kernel
+          mkdir -p "$FIXTURE"/sys/firmware/devicetree/base
+          mkdir -p "$FIXTURE"/sys/devices/system/cpu "$FIXTURE"/sys/devices/platform/mock-device
+          mkdir -p "$FIXTURE"/sys/bus/platform/devices "$FIXTURE"/sys/bus/platform/drivers/mock-driver
+          printf 'Prime synthetic QEMU ARM64 board\0' > "$FIXTURE/proc/device-tree/model"
+          printf 'Prime synthetic QEMU ARM64 board\0' > "$FIXTURE/sys/firmware/devicetree/base/model"
+          printf 'ttg,synthetic-board\0arm,virtual-soc\0' > "$FIXTURE/proc/device-tree/compatible"
+          printf 'ttg,synthetic-board\0arm,virtual-soc\0' > "$FIXTURE/sys/firmware/devicetree/base/compatible"
+          printf '6.12-synthetic-qemu\n' > "$FIXTURE/proc/sys/kernel/osrelease"
+          printf '0-3\n' > "$FIXTURE/sys/devices/system/cpu/present"
+          printf '0-2\n' > "$FIXTURE/sys/devices/system/cpu/online"
+          ln -s "$FIXTURE/sys/devices/platform/mock-device" "$FIXTURE/sys/bus/platform/devices/mock-device"
+          ln -s "$FIXTURE/sys/bus/platform/drivers/mock-driver" "$FIXTURE/sys/devices/platform/mock-device/driver"
+          timeout 25s qemu-aarch64 -L /usr/aarch64-linux-gnu "$BIN" --fixture-root "$FIXTURE" --arch aarch64 > dist/qemu-user-fixture-observation.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("dist/qemu-user-fixture-observation.json").read_text())
+          assert d["capture_mode"] == "SYNTHETIC_FIXTURE", d
+          assert d["host_arch"] == "aarch64", d
+          assert d["host_arch_attested"] is False, d
+          assert d["board_model"] == "Prime synthetic QEMU ARM64 board", d
+          assert d["board_compatible"] == ["ttg,synthetic-board", "arm,virtual-soc"], d
+          assert d["cpu_present"] == [0,1,2,3] and d["cpu_online"] == [0,1,2], d
+          assert len(d["platform_devices"]) == 1, d
+          assert d["platform_devices"][0]["driver_bound"] == "mock-driver", d
+          assert d["any_device_functionality_proven"] is False, d
+          assert d["firmware_or_device_modified"] is False, d
+          assert d["live_device_qualification"] is False, d
+          assert d["source_is_hardware_attestation"] is False, d
+          assert not d["limitations"], d["limitations"]
+          print("QEMU_AARCH64_USER_MODE_FIXTURE_OBSERVATION_PASS (not guest boot)")
+          PY
+      - name: Save qualified cross-link artifact for later guest proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: prime-phi-arm64-candidate-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

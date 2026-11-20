@@ -1,3 +1,5 @@
+pub mod arm64;
+
 use prime_contracts::{
     BlockHardware, CpuHardware, DisplayConnector, FingerprintConfidence, FirmwareHardware,
     HardwareFingerprint, HardwareInventory, InputHardware, MemoryHardware, NetworkHardware,
