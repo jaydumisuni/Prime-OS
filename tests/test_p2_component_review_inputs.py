@@ -2288,3 +2288,22 @@ def test_review_byte_reader_rejects_setgid_source(tmp_path: Path) -> None:
     source.chmod(0o2644)
     with pytest.raises(module.ReviewInputError, match="unsafe review input permissions"):
         module.read_review_bytes(source)
+
+
+def test_git_probe_does_not_inherit_executable_or_loader_overrides(tmp_path: Path, monkeypatch) -> None:
+    root, _ = sample_repo(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "attacker-bin"))
+    monkeypatch.setenv("LD_PRELOAD", "/tmp/untrusted-preload.so")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/untrusted-library")
+    observed = {}
+    original = module.subprocess.run
+
+    def checked_run(argv, **kwargs):
+        observed.update(kwargs["env"])
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", checked_run)
+    assert module.git(root, "rev-parse", "HEAD").strip()
+    assert observed["PATH"] == "/usr/bin:/bin"
+    assert "LD_PRELOAD" not in observed
+    assert "LD_LIBRARY_PATH" not in observed

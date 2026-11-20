@@ -33,7 +33,10 @@ def git(repo: Path, *args: str) -> bytes:
     # worktree and falsely certify a different candidate as this exact HEAD.
     # Trust only the repository resolved from the explicit -C path.
     trusted_env = {key: value for key, value in os.environ.items()
-                   if not key.startswith("GIT_")}
+                   if not key.startswith(("GIT_", "LD_"))}
+    # Do not resolve Git from a caller-controlled PATH or preload a foreign
+    # library into the exact-head evidence process.
+    trusted_env["PATH"] = "/usr/bin:/bin"
     # Local refs/replace must not reinterpret the object graph being reviewed.
     # Ignore user/system Git configuration while retaining repository-local settings.
     trusted_env["GIT_CONFIG_NOSYSTEM"] = "1"
