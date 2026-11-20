@@ -2323,3 +2323,31 @@ def test_rejects_symlinked_git_metadata_before_git_invocation(tmp_path: Path, mo
     monkeypatch.setattr(module, "git", forbidden_git)
     with pytest.raises(module.ReviewInputError, match="noncanonical Git metadata entry"):
         module.build_manifest(root, head)
+
+
+
+def test_rejects_git_metadata_mode_change_after_index_probe(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, head = sample_repo(tmp_path)
+    original_git = module.git
+    replaced = False
+
+    def swap_metadata_after_index(repo: Path, *args: str) -> bytes:
+        nonlocal replaced
+        result = original_git(repo, *args)
+        if args[:3] == ("diff", "--cached", "--name-only") and not replaced:
+            metadata = root / ".git"
+            # A late mode change must invalidate the original .git custody.
+            metadata.chmod(0o700)
+            replaced = True
+        return result
+
+    monkeypatch.setattr(module, "git", swap_metadata_after_index)
+    try:
+        module.build_manifest(root, head)
+    except module.ReviewInputError as error:
+        assert "Git metadata entry changed" in str(error)
+    else:
+        raise AssertionError("Git metadata custody change admitted")
+    assert replaced

@@ -173,6 +173,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     initial_root = repo.lstat()
     require_protected_ancestors(repo)
     require_git_metadata_entry(repo)
+    initial_git_metadata = (repo / ".git").lstat()
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
@@ -467,6 +468,15 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     require_protected_ancestors(root)
     # An index probe must not authorize a substituted worktree root, even
     # when its replacement has private permissions and identical inputs.
+    # The Git metadata indirection is part of exact-head custody too.
+    # Replacing a .git pointer after earlier checks invalidates the manifest.
+    require_git_metadata_entry(root)
+    final_git_metadata = (root / ".git").lstat()
+    metadata_identity = lambda st: (st.st_dev, st.st_ino, st.st_mode, st.st_uid,
+                                    st.st_gid, st.st_nlink, st.st_size,
+                                    st.st_mtime_ns, st.st_ctime_ns)
+    if metadata_identity(initial_git_metadata) != metadata_identity(final_git_metadata):
+        raise ReviewInputError("Git metadata entry changed during inspection")
     final_root = root.lstat()
     if (initial_root.st_dev, initial_root.st_ino) != (final_root.st_dev, final_root.st_ino):
         raise ReviewInputError("review workspace root changed during inspection")
