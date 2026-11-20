@@ -2307,3 +2307,19 @@ def test_git_probe_does_not_inherit_executable_or_loader_overrides(tmp_path: Pat
     assert observed["PATH"] == "/usr/bin:/bin"
     assert "LD_PRELOAD" not in observed
     assert "LD_LIBRARY_PATH" not in observed
+
+
+def test_rejects_symlinked_git_metadata_before_git_invocation(tmp_path: Path, monkeypatch) -> None:
+    """A symlinked .git may redirect exact-head evidence to another repository."""
+    root, head = sample_repo(tmp_path)
+    original = root / ".git"
+    relocated = root / "git-metadata-original"
+    original.rename(relocated)
+    original.symlink_to(relocated, target_is_directory=True)
+
+    def forbidden_git(*args, **kwargs):
+        raise AssertionError("Git must not run against symlinked metadata")
+
+    monkeypatch.setattr(module, "git", forbidden_git)
+    with pytest.raises(module.ReviewInputError, match="noncanonical Git metadata entry"):
+        module.build_manifest(root, head)

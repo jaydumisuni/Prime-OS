@@ -140,6 +140,21 @@ def require_protected_ancestors(repo: Path) -> None:
         child = parent
 
 
+def require_git_metadata_entry(repo: Path) -> None:
+    """Reject replaceable .git indirection before trusting Git's HEAD."""
+    entry = repo / ".git"
+    try:
+        state = entry.lstat()
+    except OSError as exc:
+        raise ReviewInputError("Git metadata entry cannot be inspected") from exc
+    if not (stat.S_ISREG(state.st_mode) or stat.S_ISDIR(state.st_mode)):
+        raise ReviewInputError("noncanonical Git metadata entry")
+    if state.st_uid not in (0, os.geteuid()) or state.st_mode & (0o022 | 0o7000):
+        raise ReviewInputError("unsafe Git metadata entry permissions")
+    if stat.S_ISREG(state.st_mode) and state.st_nlink != 1:
+        raise ReviewInputError("hardlinked Git metadata entry")
+
+
 def read_review_stat(file: Path) -> os.stat_result:
     try:
         return file.lstat()
@@ -157,6 +172,7 @@ def build_manifest(repo: Path, expected_head: str) -> dict:
     require_private_directory(repo)
     initial_root = repo.lstat()
     require_protected_ancestors(repo)
+    require_git_metadata_entry(repo)
     root = Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if root != repo.resolve():
         raise ReviewInputError("review workspace must be the exact Git worktree root")
