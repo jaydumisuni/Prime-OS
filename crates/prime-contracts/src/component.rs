@@ -217,11 +217,17 @@ pub fn valid_component_version(value: &str) -> bool {
         })
 }
 
+fn is_unicode_noncharacter(c: char) -> bool {
+    let scalar = c as u32;
+    (0xFDD0..=0xFDEF).contains(&scalar) || (scalar & 0xFFFE) == 0xFFFE
+}
+
 fn valid_bounded_text(value: &str) -> bool {
     !value.trim().is_empty()
         && value == value.trim()
         && value.len() <= 128
         && !value.chars().any(char::is_control)
+        && !value.chars().any(is_unicode_noncharacter)
         && !value.chars().any(|c| c.is_whitespace() && c != ' ')
         && !value.chars().any(|c| matches!(c as u32, 0x00A0 | 0x00AD | 0x034F | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x2007 | 0x200B | 0x202F | 0x200C | 0x200D | 0x2060..=0x2064 | 0x206A..=0x206F | 0xFE00..=0xFE0F | 0xFEFF))
         && !value.chars().any(|c| matches!(c as u32, 0x115F | 0x1160 | 0x3164 | 0xFFA0 | 0x2800 | 0xE0000..=0xE007F))
@@ -328,6 +334,31 @@ mod tests {
     #[test]
     fn generic_component_contract_accepts_exact_origins_shape() {
         validate_component_manifest(&manifest()).unwrap();
+    }
+
+    #[test]
+    fn component_text_rejects_unicode_noncharacters_across_planes() {
+        for scalar in [0xFDD0, 0xFDEF, 0xFFFE, 0xFFFF, 0x1FFFE, 0x10FFFF] {
+            let hidden = char::from_u32(scalar).unwrap();
+            let mut item = manifest();
+            item.version = format!("1.0{hidden}");
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::Version)
+            );
+            item = manifest();
+            item.base_system_requirements = vec![format!("kernel{hidden}module")];
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::BaseSystemRequirement)
+            );
+            item = manifest();
+            item.minimum_prime_generation = Some(format!("prime{hidden}p2"));
+            assert_eq!(
+                validate_component_manifest(&item),
+                Err(ComponentManifestError::CompatibilityRequirement)
+            );
+        }
     }
 
     #[test]
