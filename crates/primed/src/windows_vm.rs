@@ -236,7 +236,8 @@ pub fn vm_session_paths(
                 .chars()
                 .any(|ch| {
                     let scalar = ch as u32;
-                    (0xFDD0..=0xFDEF).contains(&scalar)
+                    (0x80..=0x9F).contains(&scalar)
+                        || (0xFDD0..=0xFDEF).contains(&scalar)
                         || (scalar & 0xFFFE) == 0xFFFE
                         || matches!(ch, '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}' | '\u{2060}'..='\u{2064}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}')
                 })

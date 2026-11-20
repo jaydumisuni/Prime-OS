@@ -2177,6 +2177,8 @@ fn w8_proof_session_root_rejects_qemu_option_delimiters() {
         "runtime\rspoof",
         "runtime\u{000b}spoof",
         "runtime\u{000c}spoof",
+        "runtime\u{0085}spoof",
+        "runtime\u{009b}spoof",
         "runtime\u{034f}spoof",
         "runtime\u{061c}spoof",
         "runtime\u{180e}spoof",
