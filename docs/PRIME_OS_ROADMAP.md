@@ -399,3 +399,9 @@ Current bounded priorities are:
 4. do not infer that P2/P3/P4A implementation branches have been merged into `main` merely because code/evidence exists.
 
 The Store/component additions above remain future authority unless their own phase is independently activated and proven. Android, Ptah integration, the full Storage Intelligence analyzer, APFS write support, and distributed execution remain governed by their phase gates.
+
+## Donor design study: Storytold Craft UI (2026-11-23)
+
+**Research queue only; not boot/runtime scope.** [FigCraft](https://github.com/storytold/figcraft) (interactive frames, auto-layout/components), [VectorCraft](https://github.com/storytold/vectorcraft) (vector tools), [craft-libs](https://github.com/storytold/craft-libs) (selective reusable Rust format/UI components), and optional design/render reference techniques from PhotoCraft/ArtCraft are candidate **authoring and interface-engineering donors**. The cross-project donor cohort is recorded privately at `TTG-ecosystem/docs/DONOR_COHORT_STORYTOLD_VORK_2026-11-23.md`.
+
+Evaluate only after checking Prime's existing Shell/visual-contract work and accepted phase gates. A donor may accelerate mockup/component tooling and visual-acceptance proof; it does not become Prime OS, its window server, package manager, kernel, GPU stack, application authority or release updater. Prefer offline design/asset interchange and scoped editor/CLI adapters; no donor code in boot-critical or physical acceptance paths absent independent qualification. Before reuse: version/asset licensing, layout/typography parity with Prime mockups at actual DPI, Linux native portability, input/performance/fallback and screenshot-replay evidence. No existing Prime status is advanced by this note.
