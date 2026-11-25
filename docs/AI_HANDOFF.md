@@ -168,3 +168,17 @@ Prime may build for a target before it can locally execute that target. Official
 ## Recovery rule
 
 A future chat or engineer should not need this original conversation to continue Prime. Recover the repository documents first and treat them as the durable source of truth.
+
+## KRATOS root Podman cleanup checkpoint (2026-11-26)
+
+**Storage-only action; no Prime OS source or official release state changed.** The working engineer (not Patrol) reviewed root-owned Podman caches and removed 82 untagged Prime bootc build intermediates dated Aug–Sep 2026. These were unused by containers and had no release tags. Source and pinned build recipe remain.
+
+- **Reconstruction source:** original repository commit 83c45c2f882cd71f5247b17cf842a9ef3566f4d9 at cleanup; tools/prove-p1-local.sh, image/fedora-base.lock.json, image/, P1 contract/recovery documents. Rebuild still needs ordinary qualification; do not infer release acceptance.
+- **Protected:** 15 tagged/digested root images, including localhost/prime-os:p1, p1-rootfs, W2/W3 proof tags, pinned Fedora base and image builder; four stopped proof containers; all source/evidence. Four residual untagged images were not removed by standard Podman cleanup.
+- **Exact before/after:** /home/kratos/.local/state/ttg-storage-guard/prime-root-dangling-podman-cleanup-20261126.json SHA-256 e405960242441e1652191176206054606c27d06cf5f69b60d47a0a9ace73e405. Pre-clean image/container inventories and prune output remain in that existing directory.
+- **Storage:** net free-space increase of approximately 43.7 GiB (about 16.35 to 60.08 GiB available). Receipt has exact bytes.
+- **Rootless Podman:** filtered cleanup removed zero images; newer temporary layer, all tagged versions and stopped proof containers remain. Receipt rootless-podman-dangling-cleanup-20261126.json SHA-256 a01c6c805e64c4f70d2284f5c6624bb51cd563f6a2732be6861d0183c9490f51.
+- **Preserved without exception:** iPhone Virtual Hardware Lab, all IPSW/APFS/UDIF files, Oracle runtime/observability, Lumi working binaries, tracked source, unrelated agent worktrees and personal media.
+- **Next agent:** recover this handoff and exact source/lock before retrying build. Check current tags, containers, and free space using sudo podman images, sudo podman ps -a and df -h /. Cargo caches still require the existing 48-hour qualification. Patrol directs agents to project instructions; it never decides retention or deletes files.
+
+This record preserves context without treating intermediate untagged images as authoritative releases or substituting Markdown for unique proof assets.
